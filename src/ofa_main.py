@@ -903,11 +903,15 @@ def retrieve_hpc_context(query: str, top_k: int = 40) -> str:
             filename = meta_map[d].get('filename', '?')
             parts.append(f"[HPC DOCS / {filename}]\n{d}")
             
+        url_ctx = fetch_url_context(query)
+        if url_ctx:
+            parts.append(url_ctx)
+
         return "\n\n---\n\n".join(parts)
     except Exception as e:
         import sys
         print(f"Warning: HPC RAG retrieval failed: {e}", file=sys.stderr)
-        return ""
+        return fetch_url_context(query)
 
 def hpc_single_query(query: str, resume: bool = False):
     context = retrieve_hpc_context(query)

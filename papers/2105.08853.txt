@@ -1,1056 +1,0 @@
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-Pranay P. Nagrania, Federico Municchib,c, Amy M. Marconneta and Ivan C. Christova,∗
-aSchool of Mechanical Engineering, Purdue University, West Lafayette, Indiana 47907, USA
-bFaculty of Engineering, University of Nottingham, University Park, Nottingham NG7 2RD, UK
-cSchool of Mathematical Sciences, University of Nottingham, University Park, Nottingham, NG7 2RD, UK
-ARTICLE INFO
-Keywords:
-Two-ﬂuid model
-Interphase heat transfer
-Concentrated suspension
-Shear-induced migration
-Thermo-rheological ﬂux
-ABSTRACT
-We develop a two-ﬂuid model (TFM) for heat transfer in dense non-Brownian suspensions.
-Speciﬁcally, we propose closure relations for the inter-phase heat transfer coeﬃcient and the
-thermal diﬀusivity of the particle phase based on calibration against experimental data. The
-model is then employed to simulate non-isothermal ﬂow in an annular Couette cell. We ﬁnd
-that, when the shear rate is controlled by the rotation of the inner cylinder, both the shear and
-thermal gradients are responsible for particle migration. Within the TFM framework, we iden-
-tifytheoriginandfunctionalformofa“thermo-rheological”migrationforcethatrationalizesour
-observations. Furthermore, we apply our model to ﬂow in eccentric Couette cells. Our simula-
-tionsrevealthatthesystem’sheattransfercoeﬃcientisaﬀectedbyboththeclassicshear-induced
-migration of particles and the newly identiﬁed thermo-rheological migration eﬀect.
-1. Introduction
-Particles in sheared suspension ﬂows tend to migrate from regions of large shear rate to regions of small shear
-rate. This phenomenon known as particle migration can aﬀect mixing and heat transfer [22]. Understanding particle
-migration is important for a broad range of applications including geothermal energy recovery [61, 62], hydraulic
-fracturing[4,17],hemodynamics[51],microﬂuidics[14,16],electronicscooling[7,9],andfoodprocessing[26,29].
-These applications have driven signiﬁcant research on the topic of ﬂuidized particles and particulate suspensions.
-However,thermaltransportinsuch“complexﬂuids”appearstobelesswellunderstood,especiallyinthecaseofdense
-suspensions. Oftenapproximatemodelswithlimitedgeneralityandlimitedvalidationareappliedtoestimateeﬀective
-material properties of a particle-ﬂuid mixture. To ﬁll this gap in the literature, we develop a continuum two-ﬂuid
-model (TFM) for computational analysis of the interaction between heat transfer and particle migration in the ﬂow
-of dense suspensions. Speciﬁcally, by extending the dense-suspension TFM from [41] to incorporate coupled heat
-transfer within each andbetween the phases, we wish to provide a general and extensible computational framework
-withwhichonecanpredictivelysimulate(uponpropercalibrationperformedherein)theinteractionbetweenshear-rate
-gradients and thermal gradients in dense suspensions, across a variety of ﬂow scenarios.
-Afterbrieﬂyintroducingthebackgroundandstate-of-the-artofdensesuspensionmodelinginSection2,wediscuss
-thegoverningequationspertainingtotheTFMformodelingﬂowsofdensenon-Browniansuspensions,includingtheir
-rheologyinSection3.1andtheirthermophysicalpropertiesinSection3.2. Wedescribetheheattransferclosurerelation
-that we propose to capture coupled thermal-particle migration phenomena via the TFM. In Section 3.3, we provide a
-conceptual argument, based on the temperature-dependent ﬂuid properties of how shear and thermal gradients couple
-and yield migration forces on the particulate phase. Then, in Section 3.4, we summarize the numerical methods used
-to implement the TFM in OpenFOAM®, along with the schemes used, and the criteria employed to obtain accurate
-results. We calibrate our computational model against the heat pulse experiments of Metzger et al. [32] in Section 4.1
-toobtaintheﬁttingparametersintheinter-phaseheattransferclosure. Then,inSection4.2,we(qualitatively)validate
-theﬂowsolver(noﬁttingparametersinthisisothermalcase)againstdatafromSubiaetal.[57]foraneccentricCouette
-cell. Next,tounderstandtheinterplaybetweenthermalandsheargradients,westudyparticlemigrationsubjecttotwo
-thermalboundaryconditions(BCs)inaCouettecell(Section5.1)—oneBCinwhichthethermalandsheargradients
-are in the same direction, and another BC in which they are in opposite directions. We also extend the discussion
-to eccentric Couette cells (Section 5.2) and show that the geometric eccentricity can be used to tune the thermal
-∗Corresponding author
-christov@purdue.edu (I. C. Christov)
-ORCID(s): 0000-0003-4568-9318 (P. P. Nagrani);0000-0002-5105-6173 (F. Municchi);0000-0001-7506-2888 (A. M. Marconnet);
-0000-0001-8531-0531 (I. C. Christov)
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 1 of 20
-arXiv:2105.08853v2  [physics.flu-dyn]  4 Nov 2021
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-performance of the suspension ﬂow. Finally, in Section 6, we summarize our ﬁndings and brieﬂy discuss potential
-avenues for future work.
-2. Background and problem statement
-2.1. Shear-induced particle migration in ﬂows of dense suspensions
-The migration of particles from regions of high shear rate to regions of low shear occurs at low particle Reynolds
-number(i.e.,theregimeofnegligibleparticleinertia)andlargeparticlePeclétnumber( i.e.,thenon-Brownianregime)
-[37, p. 2]. Historical overviews of this phenomenon can be found elsewhere [13, 37]. A standard setup for experi-
-mentally characterizing suspension ﬂows is the Couette cell (i.e., the gap between two, usually concentric, rotating
-cylinders). Past experimental studies sought to explain, with varying levels of ﬁdelity, the irreversible particle migra-
-tion phenomenon [31, 49], including its dependence on the shear rate, the particle volume fraction, and the particle
-size.
-The simplest model of shear-induced particle migration is a phenomenological transport process, in which scalar
-diﬀusive ﬂuxes (in principle, dependent on the gradients of shear rate and particle concentration) are posited [27, 48,
-63]. Themodelresultingfromthisapproachistermedthe diﬀusiveﬂuxmodel (DFM).TheDFMisphenomenological
-and requires empirical calibration of (i) a collision ﬂux (i.e., migration of particles to a region of low collisional
-frequency between particles [27]) and (ii) a viscosity ﬂux (i.e., migration caused caused by viscosity gradients [27]).
-The simplicity of the DFM is appealing, and it yields itself to straightforward computational studies. However, as
-DennandMorris[13,p.212]note,theDFM“givesresultsthatconﬂictwithseveralexperimentsinothersimple-shear
-geometries” beyond the Couette cell.
-In order to obtain deeper insight into particle migration, thesuspension balance model(SBM) was introduced by
-Nott and Brady [44] and further reﬁned in recent years [28, 45]. Rather than treating particle migration simply as an
-extra diﬀusive ﬂux in the particle transport equation, the SBM (in its most common implementation [22]) involves
-solving the suspension’s momentum equation, a particle transport equation, and an energy conservation equation for
-the suspension. For a pressure-driven ﬂow, Nott and Brady [44] used both particle-resolved Stokesian dynamics sim-
-ulations and the SBM to explain how particles, starting with a uniform particle volume fraction, migrate to the center
-of the channel (where the shear rate is low) in inhomogeneous ﬂow due to a force arising from the “average particle
-pressure.”
-In general, normal stresses arise in ﬂows in curvilinear geometries, and they must be accounted for to understand
-particle migration. To this end, Morris and Boulay [38] reformulated the SBM [44] to capture the anisotropy of the
-normal stresses. Their results were further conﬁrmed by the more recent experiments by Dbouk et al. [12]. Conse-
-quently,modelingofshear-inducedparticlemigrationinﬂowsbeyondthecanonicalunidirectionalconﬁguration(such
-as contraction-expansions and cavity ﬂows [34], as well as ﬂows in concentric [11] and eccentric [36] Couette cells)
-became possible. These SBM formulation [11, 38] highlight that the divergence of the particle stress tensor, which
-arises from the stress inhomogeneity, is the driving force for particle migration.
-In contrast to the traditional implementation of the SBM, which lumps the ﬂuid and particles into a single phase,
-two-ﬂuidmodels (TFMs)[18]solvethegoverning(massandmomentumconservation)equationsfortheparticlephase
-andfortheﬂuidphaseseparately. ATFM,therefore,doesnotmaketheequilibriumassumptionbetweenthetwophases,
-whichleadstothetraditionalformoftheSBM.Thus,itisexpectedthataTFMcanbeappliedtoawiderclassofﬂows.
-Buyevich[5]usedthisapproachtoaddressthecoupledeﬀectofBrownianandshear-inducedmigrationinconcentrated
-suspensions. Morerecently,TFMshavebeenappliedtosimulateproppanttransportinhydraulicfracturingapplications
-[17, 53] due to their ability to capture the governing physics in diﬀerent ﬂow regimes. Meanwhile, Municchi et al.
-[41] implemented and benchmarked a TFM for the numerical simulation of dense suspension ﬂows (including shear-
-induced migration) in OpenFOAM®. They showed good agreement with the previous works on particle migration,
-suggesting general curvilinear ﬂows of dense particulate suspensions can be accurately simulated with a TFM using
-the proper rheological closures that account for particle stress anisotropy. Here, we build upon this approach.
-2.2. Heat transfer in ﬂows of dense suspensions
-While particle migration has been studied extensively from a ﬂuid mechanics perspective, the eﬀect of thermal
-gradientsandheattransferonparticlemigrationhasnotreceivedasmuchattention. Yet,whensuspensionsaresheared,
-experiments have demonstrated that the eﬀective suspension thermal conductivity is enhanced [1, 2, 43, 52, 55]. In
-additiontotheshearrate,thethermalconductivityofsuspensionsalsodependsonotherpropertiessuchastheparticle
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 2 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-volume fraction, the particle size, and the particles’ thermal diﬀusivity [1, 2, 52]. Recent research (e.g., [8, 32, 62])
-has focused on modeling this enhancement of thermal transport using eﬀective properties. Our goal is to increase the
-modeling ﬁdelity by using a TFM.
-EarlyworkbySohnandChen[55]demonstratedthatshearingsuspensionsinducesparticlemotioninthemixture,
-which leads to convection that enhances thermal transport. Shin and Lee [52] showed that the suspension’s homog-
-enized thermal conductivity increases with the shear rate, though their experiments appear to be in an inertial ﬂow
-regime. Morerecently,Metzgeretal.[32]performedaheat-pulseexperiment,inwhichtheyheatedtheinnercylinder
-of a Couette cell until steady state was achieved, and then let it cool while observing the temperature decay with and
-withoutshearingofthesuspensioninthegap(viarotationofonecylinderofthecell). Afastertemperaturedecaywas
-observed when the suspension was sheared, suggesting a shear-induced improvement of thermal transport. Metzger
-etal.[32]developedaclosurerelationfortheeﬀective(homogenized)thermaldiﬀusivityofthesuspensionasafunc-
-tion of particle volume fraction and the thermal Péclet numberPeth, by drawing upon functional forms motivated
-in earlier work on shear-enhanced diﬀusion [60, 64].
-Alimitednumberofcomputationalstudieshaveaddressedtheinterplaybetweenshear-andthermal-drivenparticle
-migration in suspensions. Most recently, Wu et al. [63] and Dbouk [8] modiﬁed the DFM and SBM, respectively, to
-accountforthermaltransportindensesuspensionﬂows. Wuetal.[63]thenemployedtheirDFMtoshowadiscernible
-eﬀect of a temperature gradient across a Couette cell’s gap (both concentric and eccentric) on the radial particle dis-
-tribution proﬁle. In a similar vein, Kang et al. [24] performed a computational DFM study of the onset of thermal
-convection in suspensions. Dbouk [8], on the other hand, incorporated a conjugate heat transfer model and the clo-
-sure relation of Metzger et al. [32] into the SBM. He quantiﬁed the enhancement of thermal performance due to a
-suspension, compared to a clear liquid, for forced convection through a rectangular channel. On this basis, Dbouk [9]
-suggested exploiting particle migration eﬀects to improve heat transfer in applications related to CPU cooling. Re-
-cently, this model has been applied to buoyancy-driven ﬂows in immersed granular beds [10]. In our work, gravity
-plays a minor role since we focus on shear-driven ﬂows.
-Whiletheserecentworksbegintodemonstratetheimportanceofthecoupledparticlemigrationandthermaltrans-
-port, DFMs and the typical form of the SBM do not capture the inter-phase heat transfer between the particle phase
-and the ﬂuid phase, since they employ a single thermal transport equation, based on eﬀective properties, for the mix-
-ture. Speciﬁcally,thepriorcomputationalmodelsarebasedontheassumptionofthermalequilibriumbetweenthetwo
-phases, which we relax in the present work.
-3. Governing equations of the TFM
-3.1. Flow and rheology
-In this subsection, we summarize the basic equations of the TFM for dense particulate suspensions, as detailed in
-[41] and [59]. Introducing the particle volume fraction ﬁeld(x,t), wherex is the position vector in 3D space andt
-is time, we write the governing equations for the two phases (‘p’ for particle and ‘f’ for ﬂuid) as:
-)
-)t
- p+( ⋅ pup=0, (1)
-)
-)t
-f(1− )
-+( ⋅fuf(1− )
-=0, (2)
-)
-)t
- pup
-+( ⋅ pup⊗up
-=( ⋅p+pg+fd, (3)
-)
-)t
-f(1− )uf
-+( ⋅f(1− )uf ⊗uf
-=− ( ⋅ pI−f
-−fd+(1− )fg. (4)
-Equations(1)and(2)aretheconservationofmass(continuity)equationsforthetwophases,whileEqs.(3)and(4)are
-the corresponding conservation of linear momentum equations.
-Here, the particle-phase stress tensorp is to be modeled,f is the deviatoric stress tensor of the generalized
-Newtonian ﬂuid phase, and
-fd =Kd
- up−uf
-+( ⋅ f −pI−(1− )(pp (5)
-is theinter-phase force, whereKd is theso-called Clift drag coeﬃcient[15]. Furthermore,p=pf+pp is the‘shared’
-pressure, whichsatisﬁesthePoissonequationinthecaseofanincompressiblesuspension. Importantly, asin[41], we
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 3 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-incorporate the state-of-the art rheological models for dense suspensions via
-p=2p ̇Sp+p
- ( ⋅up
-I+s, (6)
-wherep andp are the shear and bulk viscosities obtained using the kinetic theory of granular ﬂows [21] and the
-general expression for the frictional viscosity described in [40]. For either phase (‘p’ or ‘f’), ̇S = 1
-2[(u+((u)T]−
-(( ⋅u)I is the deviatoric rate of strain.
-The particulate phase’s frictional viscosityp is expressed, as in [40, 41], as the product of the ﬂuid viscosity and
-a function of the particle volume fraction(). Speciﬁcally, it takes the form:
-p=f(Tf)() ,  ()= a+b
-0
-1− 
-m
-1−1
-+c
-0
-1− 
-m
-1−2
-, (7)
-wherem is the maximum packing fraction (here, taken to be0.68 corresponding to BBC sphere packing), whilea,
-b, andc are parameters ﬁtted from data in the literature. We recall from [40, 41] that Eq. (7) returns the closures
-from [38] and [30], under appropriate choices of the model parameters.
-The extra contributions in Eq. (6) is the anisotropic stress, due to the shearing of the particle phase, given by
-s=−fN()̇effQ, ̇ eff =  2̇Sp∶ ̇Sp
-1∕2+ ̇NL, (8)
-where N is the normal scaled viscosity. The nonlocal shear ratėNL regularizes the model by accounting for the
-average stress at the (sub-continuum) particle scale [33]. Speciﬁcally,̇NL ensures thaṫeff ≠ 0, for example, at the
-centerline of a channel [41], as a way to overcome the breakdown of the continuum assumption at the particle scale
-[35, 38, 44].
-In Eq. (8), the extra stress’ anisotropy is represented by means of the tensorQ [38]. This anisotropy tensor can
-be diagonalized by employing a suitable local orthonormal coordinate system based on the particle phase velocity
-ﬁeld:Q= ∑3
-i=1i()ei⊗ei, wherei()are theanisotropy weight functions [38], andei are theunit vectors in the
-direction of the ﬂow (i= 1), gradient (i= 2) and vorticity (i= 3), given bye1 =up
-ðupð,e3 = ((×up)ð(×upð,
-ande2 = e1×e3. In DFMs and SBMs, it is not possible to capture the dense suspension’s stress anisotropy in this
-way because of the assumptions made on Eq. (3) do not allow forup to be resolved. The above deﬁnition of the unit
-vectors, introduced in [41], allows for the straightforward generalization of the model to 3D curvilinear ﬂows.
-3.2. Heat transfer and energy equations
-To succinctly describe how we incorporate heat transfer within the TFM, it is most convenient to express each
-phase’s energy equation using a mixed formulation with their enthalpies, internal energies, and temperatures:
-unsteady
-©­­­­®­­­­ª
-)
-)t
- pHp
- +
-convection
-©­­­­­­­®­­­­­­­ª
-( ⋅ pHpup
- =
-pressure work
-©®ª
-)p
-)t +
-conduction
-©­­­­­­­®­­­­­­­ª
-( ⋅ pp(ep
- −
-inter-phase heat transfer
-©­­­­­®­­­­­ª
-Kℎ(Tp−Tf), (9)
-)
-)t
-f(1− )Hf
-+( ⋅f(1− )Hfuf
-=(1− ))p
-)t +( ⋅ff(1− )(ef
-+Kℎ(Tp−Tf), (10)
-wherethestagnation(or“total”)enthalpies Hp,f = hp,f+1
-2ðup,fð2 havebeenintroducedforconveniencefromthespe-
-ciﬁcenthalpies hp,f ofthephases. Notethattheinternalenergyofeachphaseis ep,f = hp,f−p∕f,p. Inequations(9)
-and (10),Kℎ is the (volumetric,Wm−3K−1) inter-phase heat transfer coeﬃcient to be modeled;f = kf∕(fCp,f)
-andp=kp∕(pCp,p)arethephases’thermaldiﬀusivities,with kp,kf andCp,p,Cp,f beingtheirthermalconductivities
-and speciﬁc heats, respectively;Tp andTf are the phases’ individual temperature ﬁelds. In Eqs. (9) and (10), we have
-neglected viscous dissipation (unlike previous work [8]). This assumption will be justiﬁed upon specifying the ﬂow
-conditions in Section 5 below. Also, there are no volumetric sources of heat present or work done by gravitational
-forces. Work done by buoyancy is not considered in the energy equation in present work, as buoyancy was found to
-have marginal eﬀects in ﬂows similar to those studied herein [8].
-To create a predictive TFM for heat transfer in dense suspensions, we must ensure thatKℎ takes into account the
-non-uniform shear-induced migration within the particle phase, as well as the particle phase’s thermal conductivity
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 4 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-relative to the suspending ﬂuid. In the ﬂuidized beds literature [23, 25], heat transfer is incorporated into TFMs via
-a Nusselt correlation:e.g., the Ranz–Marshall [50] formulaNudp = 2+0.6Re1∕2
-dp
-Pr1∕3, whereRedp = Ufdp∕f
-andPr =f∕f, then,Kℎ,0 =Nudpkf∕d2
-p. Based on this approach, we propose a shear-dependent inter-phase heat
-transfer coeﬃcient
-Kℎ(, ̇)= Kℎ,0[1+ (‖̇Sp‖d2
-p∕p
-«­­­­¯­­­­¬
-∼Peth
-)m], (11)
-where andm are parameters that must be calibrated against experiments (in Section 4.1 below for the heat-pulse
-experiment from [32]),̇=
-√
-2‖̇Sp‖, andPeth is a particle-based thermal Péclet number for the sheared suspension.
-Althoughourexpressionfor Kℎ(, ̇)issimilar(infunctionalform)tothemixturemodels’ eff(̇)[8,32], Kℎ and
-eff represent fundamentally diﬀerent physics (see also [6]). In the TFM, the usualp andf take care of conduction
-within each phase, thus they cannot depend oṅ. Importantly, by writing down separate energy equations for the
-phases, we shed the assumption of “microscopic local thermal equilibrium between the solid and ﬂuid phases” [8,
-p. 437] used in the SBM.
-3.3. The origin of thermo-rheological ﬂuxes
-AsweshowinSection5, thepresenceoftemperaturegradientsinaﬂowresultsinanetﬂuxofparticleswhich, in
-most ﬂuids, is oriented in the direction opposite to the heat ﬂux. This phenomenon results from the interplay between
-the thermal state of the ﬂuid phase and the rheology of the suspended particulate phase. In particular, the dynamic
-viscosity f of liquids is generally a decreasing function of temperature [46, p. 117], so thatf = f
- Tf
- and
-df∕dTf <0.
-Now, consider the forcefΣ =( ⋅p acting on the particulate phase due to the changes in particle stress. Using
-the chain rule, it is also possible to splitfΣ as
-fΣ= f( ⋅p
-«­¯­¬
-shear-induced
-migration and diﬀusion
-−
-thermo-rheological
-©­­­­­®­­­­­ª
-p ⋅ (Tf
-, (12)
-where we deﬁned the scaled particle stress tensorp =p∕f and the thermal variation coeﬃcient of the dynamic
-viscosity:
- =
-óóóóó
-d lnf
-
-dTf
-óóóóó
-. (13)
-The second term on the right-hand side of Eq. (12) represents the thermo-rheological force that couples the energy
-equation with the momentum equation. Speciﬁcally, Eq. (12) shows that there is an additional force oriented in the
-directionoppositetotheprojectionoftheparticlestressonthetemperaturegradient. Hence,ifweconsiderthecasein
-whichtheparticlesarepushedinthepositive x-directionbytheshear-inducedmigrationforces,atemperaturegradient
-aligned with the shear rate gradient will result in an opposing ﬂux. It is also clear that no ﬂux can arise solely due
-to the temperature gradient, but the presence of a shear ﬂow is also required. However, while shear-induced particle
-migration is driven by the spatial variation of the shear-rate, the thermo-rheological ﬂux should also be observable in
-uniformly sheared suspensions.
-Now, disregarding the terms arising from kinetic theory (which do not play a signiﬁcant role in the present study
-due to the low value of the granular temperature and the assumption of a non-Brownian suspension), we can express
-fΣ, via Eq. (6), as:
-fΣ=( ⋅2f(Tf)()̇Sp−f(Tf)N()̇effQ. (14)
-Tobetterillustratethepoint,consideraunidirectionalﬂowscenarioasdepictedschematicallyinFig.1. Inthissituation,
-theforceisactinginthe x-direction,normaltotheshear,andthesuspensionissubjecttoatemperaturegradientalong
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 5 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-uy(x)
-˙γ(x)
-x
-Figure 1: Diagram of a unidirectional shear conﬁguration, which is representative of Couette ﬂow between two cylinders.
-The continuous line represents the velocity in they-direction and the dashed line represents the shear rate.
-x. We denote the shear rate aṡ s(x) = ̇Sp,yx = (1∕2))up,y∕)x. Furthermore, we takėeff = ̇=
-√
-2ð̇ sð = −
-√
-2̇ sas
-in this case the velocity is always decreasing in thex-direction. This conﬁguration is illustrative of the velocity and
-shear proﬁles expected in Couette cells. Under these conditions, after some algebra, Eq. (14) becomes:
-fΣ,x=A()
-H
-f
-)̇
-)x − ̇
-óóóóó
-df
-dTf
-óóóóó
-)Tf
-)x
-I
-+f ̇dA()
-d
-)
-)x , A ()=−
-√
-2−N1. (15)
-It is now clear that an additional ﬂux (second term in the parentheses above) opposing the classical migration ﬂux
-(ﬁrstterm)isinducedbythegradientoftheshearrate. Equation(15)alsoshowsthelineardependenceofthethermo-
-rheologicalforceontheshearrate. Noticethat,since A()isalwaysnegative,thethermo-rheologicalforceisoriented
-in the same direction as the temperature gradient.
-In the absence of other forces perpendicular to the ﬂow direction (such as gravity or pressure gradients), the force
-balance on the particle phase isfΣ,x = 0. Hence, in order to achieve a perfectly mixed suspension without particle
-segregation (i.e.,)∕)x = 0) the following relation between shear rate and temperature gradient should hold:
-)ln ̇
-)x =−
-)Tf
-)x . (16)
-Under the assumption that is not varying signiﬁcantly, Eq. (16) can be easily integrated for a domain bounded
-between two wallsx=w1 andx=w2, leading to:
-ln
-H
-̇ðw1
-̇ðw2
-I
-=−
-
-Tfðw1−Tfðw2
-
-. (17)
-Equation (17) shows that, if the shear rate is uniform (̇ðw1 = ̇ðw2), then only an isothermal suspension can also be
-homogeneous. We also remark that the integration of the logarithm can be carried out only iḟ ≠ 0 throughout the
-domain. This observation also has a physical signiﬁcance since no thermo-rheological ﬂux can exist wherė= 0,
-whileclassicalmigrationﬂuxesmightstillbepresent,astheydependonthegradientof ̇. Hence,asuspensioncannot
-be homogeneous under such circumstances; the classical migration ﬂux would remain unbalanced at such points. It
-is worth noting that such regions (or isolated) points wherė= 0are pathological also in standard shear-induced
-migration,andanon-localnon-zeroeﬀectiveshearratehastobeusedinstead(recallthediscussionfollowingEq.(8)).
-Finally,inthemoregeneralcaseinwhichvariationsof  arenotnegligible(forexampleduetolargetemperature
-gradients), it is more convenient to integrate the right-hand-side of Eq. (16) with respect tof rather thanTf, leading
-to:
-̇ðw1
-̇ðw2
-=
-f(Tfðw1)
-f(Tfðw2). (18)
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 6 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-While Eq. (18) is a more complete expression, it possesses the same characteristics as Eq. (17). However, though
-conceptually enlightening, both expressions are generally of little practical use as the value of the shear at the walls
-due to dense suspension ﬂow is generally unknowna priori(as there is no analytical solution).
-3.4. Simulation methodology
-The governing equations [Eqs. (1), (2), (3), (4), (9), and (10)] are solved numerically via theﬁnite-volume method
-(FVM) [39] in a solver implemented in OpenFOAM® v7. The full description of the numerical approach (based on
-the earlier algorithm of Passalacqua and Fox [47]) can be found in [41]. The FVM discretization ensures that mass
-is conserved “automatically” in all the cell elements that the ﬂow geometry is divided into. A structured mesh was
-employed for computational modeling of coupled thermal-particle migration in the 2D Couette cell (Fig. 2). A grid
-independence study was performed (summarized in Appendix C) to determine the optimal number of mesh elements
-neededtoobtainaccurateresults,whilesimultaneouslyensuringreasonablewall-clocktimerequiredtocompleteeach
-simulation.
-Forthediscretizationofthetransientterms,asecond-orderbackwardschemewasemployed. Althoughthisscheme,
-on an orthogonal mesh, is unconditionally stable, this is rarely the case in reality. Deferred correction for high-order
-schemes, coupling, and nonlinear terms cannot be handled implicitly, introducing a Courant–Friedrichs–Lewy (CFL)
-numberCo constraint [39], which we enforce to ensure convergence of the simulations. Diﬀusion terms were dis-
-cretized using the “Gauss” approach in OpenFOAM®. A second-order linear discretization scheme was employed
-to obtain higher accuracy for the discretization of diﬀusion terms. Furthermore, to account for the eﬀect of non-
-orthogonality of the mesh employed on the discretization of the diﬀusion terms, a “corrected" method was used [39].
-The linear interpolation scheme from OpenFOAM® was chosen to interpolate the diﬀusion coeﬃcients from the cell
-faces to the cell centers. The divergence terms were discretized using the “Gauss” method of OpenFOAM®, and an
-upwind scheme was employed on the convective terms in the equations. The “cellMDLimited Gauss linear" scheme
-wasusedfordiscretizationofthegradientterms. Thegradientschemeensuresboundednessofthegradienttermsafter
-discretization. In the simulations below, the pressure and velocity residual convergence criteria were set to10−7 and
-10−9, respectively.
-The“PIMPLE”method,whichisacombinationofthe pressure-implicitwithsplittingofoperators (PISO)method
-and thesemi-implicit method for pressure-linked equations(SIMPLE) [39] was used to couple the Navier–Stokes
-and energy equations and obtain converged residuals for the transient simulations. The minimum number of linear
-solver iteration was always set to 1, so that convergence of simulations was achieved due to convergence of residuals.
-Moreover, the number of times the entire system of equations was solved was determined by observing the number of
-iterationsrequiredfortheresidualstoconvergeduringeachtimestep. Adynamicadjustabletimestepwasusedinthe
-simulations, which ensured thatmaxCo< 0.5 during the entire simulations.
-4. Calibration and validation of the TFM
-4.1. Heat transfer through a sheared suspension in a concentric Couette cell
-Metzger et al. [32] evaluated heat transfer in a sheared suspension of poly-methyl methacrylate (PMMA) particles
-dispersed within a Newtonian ﬂuid (mixture of Triton X-100, zinc chloride solution and water) in a Couette cell ge-
-ometry (top view shown in Fig. 2). The particles and ﬂuid had identical thermophysical properties in order to isolate
-the eﬀect of shear-induced migration on the heat transfer enhancement. We calibrate the parameters in our TFM via
-their experimental data.
-To simulate the shearing of the suspension in a concentric Couette cell with inner and outer radii ofRin = 5cm
-andRout =6.2cm, respectively, we usea structured mesh(shown inFig. 2). Theinner cylinder rotatesat agiven rate
-ofΩin, while the outer cylinder is held stationary (Ωout = 0). For convenience, we book-keep the applied shear rate
-at steady state via the relatioṅ= (2ΩinR2
-out)∕(R2
-out−R2
-in) at the inner wall, which admittedly only holds true for a
-clear Newtonian ﬂuid ﬂow. In what follows, this quantity is reported, and the value oḟis set by varyingΩin. The
-ﬂuidandparticlethermophysicalpropertiesusedarelistedinTable1. Consistentwiththeexperimentsof[32],weuse
-a neutrally buoyant suspension (p = f) with an initial, uniform bulk particle volume fraction of(x,t = 0) =b
-everywhere across the gap. We do not consider the eﬀect of temperature varying thermophysical properties as the
-maximum temperature diﬀerence in the system is only5K in this case.
-Intheheat-pulseexperiment[32],theentiresystemwasinitiallyatauniformtemperatureof Tinitial =293K . Then,
-the inner cylinder was heated toTin=298K for a duration of5s , while the outer cylinder was kept atTout =293K .
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 7 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-Figure 2: Geometry and structured computational mesh of the annular Couette cell’s ﬂow domain.
-Property Particle (‘p’) Fluid (‘f’)
-Density (kgm−3) 1180 1180
-Dynamic viscosity (Pas) – 3.0
-Thermal conductivityk (Wm−1K−1) 0.19 0.19
-Speciﬁc heatCp (Jkg−1K−1) 1260 1260
-Table 1
-Particle and ﬂuid properties used for the calibration of the TFM against the experimental results of Metzger et al. [32].
-After that, the heater was turned oﬀ, and the temperature of inner cylinder decayed back to293K . This heating and
-cooling process was performed for both the unsheared and sheared (varying inner cylinder rotation rate) suspensions.
-For our calibration, we use the case oḟ= 10s−1. Next, we describe how the heat-pulse experiment was simulated
-using the TFM to calibrate our proposed model.
-The BCs are speciﬁed in Table 2. The outer cylinder was approximated as insulated and always held stationary.
-During the 5s of heating, the inner cylinder was held stationary and the wall temperature was ﬁxed at298K in our
-model; again, this neglects the heating time for the cylinder to reach the set temperature, but agrees with previous
-modeling work [8]. During the cooling process, we approximated the BC at the inner cylinder as adiabatic, which
-neglects the energy storage term in the inner cylinder as it cools. Because the heat transfer depends on shearing
-and the parameters may vary with time, which cannot be established for the published experimental description, we
-insteadapplyanadiabaticBCduringcoolingfortheinnercylinder(similartotheapproachin[8]). Thus,theonlyfree
-parameters in this problem are andmin the shear-dependent inter-phase heat transfer coeﬃcientKℎ from Eq. (11).
-By comparing our model’s prediction to the experimental data from [32], as shown in Fig. 3, we calibrated the
-parameters, yielding = 0.2 andm = 1(see Appendix A). Note that these parameters are not the same as found by
-Metzger et al. [32], who determined = 0.046 in their expression for the shear-dependent eﬀective diﬀusivity. Of
-course,sincetheTFMcapturesdiﬀerentphysics(recallthediscussioninSection3.2),itisnotexpectedthattheﬁtting
-parameter values would be the same. Note thatm= 1indicates that inter-phase heat transfer coeﬃcientKℎ depends
-linearly on the particle-based thermal Péclet numberPeth (recall Eq. (11)), which is generally expected [64].
-4.2. Flow of a sheared suspension in an eccentric Couette cell
-An eccentric Couette cell is another typical geometry in which ﬂows of dense suspensions are studied. In this
-geometry, the center of the inner cylinder is oﬀset from the center of the outer cylinder. The eccentricity is quantiﬁed
-bytheratio E=d∕(Rout−Rin),where disthedistancebetweenthecentersofthetwocylinders. Ingeneral,eccentricity
-canleadtoarecirculatingregion[3]thatinducesadditionalmixing[58]. Subiaetal.[57]performedexperimentsand
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 8 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0 1 02 03 04 05 06 07 08 09 0 1 0 0
-100
-Metzger  et al. (2013) experiment (0 s-1)
-Present Study (0 s-1)
-Metzger  et al. (2013) experiment (10 s-1)
-Present Study (10 s-1)
-Figure 3: Unsteady temperature responseTsusðr=Rin at the inner cylinder (r=Rin) for the heat-pulse experiment, starting
-from a uniform temperatureTinitial =293 K. This plot shows the successful calibration the TFM to the experimental data
-of Metzger et al. [32]. The calibration against thė=10s −1 experimental data yields=0.2 andm=1 (see Appendix A).
-The case oḟ=0 s−1 is provided for completeness only and discussed in Appendix B.
-Location BC t< 5 s(heating) t> 5 s(cooling)
-Inner cylinder Thermal Tin=298 K Adiabatic
-Shear rate ̇=0 s−1 ̇=10 s−1
-Outer cylinder Thermal Adiabatic Adiabatic
-Shear rate ̇=0 s−1 ̇=0 s−1
-Table 2
-Boundary conditions for the TFM simulations of the Couette cell heat-pulse experiment. The adiabatic condition enforces
-(Tf ⋅n = (Tp ⋅n = 0 on the appropriate boundaries with unit normaln. The speciﬁed shear rate is estimated as
-̇=(2Ω inR2
-out)∕(R2
-out−R2
-in) and achieved by setting a suitable rotation rate of the inner wallΩin.
-ﬁnite element modeling of suspension ﬂow using the parameters listed in Table 3. Next, we qualitatively validate our
-TFM against the numerical model and experiments of Subia et al. [57] by plotting contours in Fig. 4 after diﬀerent
-number of revolutions (turns) of the inner cylinder. Our TFM results are in good agreement with the previous ones.
-Note that this validation is for the isothermal case. In Section 5.2, we explore heat transfer in the eccentric Couette
-cell.
-5. Particle migration in the presence of coupled thermal and shear gradients
-In this section, we discuss our main computational results on the interaction of shear-induced migration with
-thermal gradients across the system. Speciﬁcally, we will consider the two cases in which the temperature diﬀerence
-ΔT =Tin−Tout across the gap is either positive or negative (i.e., heat transfer occurs from the inner to the out wall,
-orvice versa).
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 9 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-Quantity Rin Rout E Ωin dp f b f
-Value 0.64 cm 2.54 cm 0.5 90 rpm 675 µm 4.95 Pas 0.5 1180 kgm−3
-Table 3
-Geometric parameters, particle and ﬂuid properties used in the simulations that validate our TFM against the results of
-Subia et al. [57]. The suspension is comprised of PMMA particles suspended in a Newtonian ﬂuid.
-Turns,𝑁
-Subiaet al. (1998) Present study
-NumericalExperimental Numerical
-𝑁=40
-𝑁=1000
-𝑁=2000
-𝑁=3000
-𝑁=5000
-Figure 4: Qualitative validation of the TFM simulation against the results of Subia et al. [57] for dense suspension ﬂow
-(see Table 3 for the parameters) in an eccentric Couette cell. Color shows contours of the particle volume fraction
-for diﬀerent number of turnsN of the inner cylinder. The ﬁrst and second columns are reproduced, with permission,
-from [Subia, S.R., Ingber, M.S., Mondy, L.A., Altobelli, S.A., Graham, A.L., 1998. Modelling of concentrated suspensions
-using a continuum constitutive equation. Journal of Fluid Mechanics 373, 193–219. doi:10.1017/S0022112098002651©
-Cambridge University Press.]
-5.1. Concentric Couette cell
-After calibrating the inter-phase heat transfer coeﬃcient as described in Section 4.1, we performed a parametric
-study to understand the interplay between shear and thermal gradients on particle migration. Speciﬁcally, we varied
-the bulk particle volume fractionb, the thermal Péclet numberPeth = ̇d2
-p∕p and the temperature diﬀerenceΔT
-acrossgap. AsinthecalibrationdescribedinSection4.1,weusetheconcentricCouettecellgeometryshowninFig.2.
-Keeping in mind the salient application of suspension ﬂows to electronics cooling [9], in these simulations we
-consider boron nitride (BN) particles dispersed in a ﬂuoro-carbon (FC) ﬂuid. This choice of suspension is to ensure
-thattheparticlesandﬂuidhavenearlyidenticaldensities,andhence,thesuspensionisneutrallybuoyant. Theparticles
-have constant thermophysical properties as given in Table 4. The thermophysical properties of the FC-43 ﬂuid are
-temperature dependent [19]. We ﬁt a fourth-order polynomial to the data for the FC-43 ﬂuid viscosity as a function
-of temperature from [19], as given in Table 4. The choice of such particles and ﬂuid is due to large contrast in their
-thermal conductivities, which we hypothesize will allow us to observe signiﬁcant thermal performance enhancement.
-The thermophysical properties of the particles are taken to be constant because measurements of the temperature-
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 10 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-Property Particle (‘p’) Fluid (‘f’)
-Density (kgm−3) 1900 2508−2 .18Tf
-Dynamic viscosity (Pas) – 0.3933−0 .0035Tf +(1.13×10 −5)T2
-f
-−(1.5×10 −8)T3
-f +(6.7×10 −12)T4
-f
-Thermal conductivityk (Wm−1K−1) 35.5 0.08611−(7×10 −5)Tf
-Speciﬁc heatCp (Jkg−1K−1) 960 589.8+1 .554Tf
-Table 4
-Thermophysical properties of the suspension of boron nitride (BN) particles into a ﬂuoro-carbon (FC) ﬂuid [19]. For the
-temperature-dependent ﬂuid properties’ formulas, the coeﬃcients are in the appropriate (implied) SI units.
-Temperature BC Notation Tin Tout
-Case 1: migration with thermal gradient ΔT >0 323K 293K
-Case 2: migration against thermal gradient ΔT <0 293K 323K
-Table 5
-Temperature boundary conditions for the inner (‘in’) and outer (‘out’) cylinders of the Couette cell.
-dependenceof Cp,p,kp, andp forBNshowthatitisquiteweakoverthetemperatureranges( ≈200 –400K )explored
-in this work [20, 54, 56].
-In these simulations, we use BN particles withdp = 675µm at an initial (spatially uniform) volume fraction of
-b =0.5, unless otherwise stated. The inner cylinder is rotated so as to maintaiṅ=3s −1 at steady state. The outer
-cylinderisheldstationary. Consequently,duetotheshearing,particlesareexpectedtomigratefromtheinnercylinder
-towards the outer one. We consider two diﬀerent sets of thermal BCs as described in Table 5. In doing so, we wish
-to characterize the radial particle migration ﬁelds when the shear-induced particle migration and heat transfer are in
-same (ΔT >0) vs. opposite (ΔT <0) directions across the gap.
-Having speciﬁed the ﬂow conditions, we can now justify why viscous dissipation is neglected in the energy equa-
-tions (Eqs. (9) and (10)). Speciﬁcally, the Eckert number for this ﬂow isEc =U2
-c∕(CpΔT)≃10 −11, indicating that
-conductionisthedominantheattransfermechanisminthissystem. Here,wehavetakenthecharacteristicvelocity Uc
-tobetheinnerwallvelocity(correspondingtothe 3s−1 shearrate),and Cp=bCp,p+(1− b)Cp,f isthesuspension’s
-speciﬁc heat estimated as the bulk-volume-fraction weighted average at the initial temperature of293K .
-5.1.1. Interplay between heat transfer and shear migration
-The impact of the direction of the temperature gradient across the Couette cell on the radial particle migration
-proﬁles at diﬀerent bulk volume fractions (b = 0.1 tob = 0.5) is shown in Fig. 5. ForΔT <0, the thermal and
-sheargradientsleadtomigrationﬂuxesinthesamedirectionand,hence,enhancemigration(incomparisonto ΔT >0,
-forwhichtheﬂuxesareinoppositedirections). Therefore,ateach b,weobserveparticlemigrationtowardstheouter
-wall (segregation of the mixture). From Fig. 5, we also observe that the particle distribution proﬁles are similar for
-bothΔT >0andΔT <0forsmall b,whileaprominentdiﬀerenceemergesas b increases. Therefore,theinterplay
-between shear and thermal gradients is more pronounced for dense suspensions.
-To fully explore the possible behaviors, we next analyze the impact of thermal Péclet numberPeth on the particle
-migration. We varyPeth by changing eitheṙordp: we performed simulations withdp = 0.5−1 .5mm (Fig. 6a)
-̇=1−8s −1(Fig.6b),forboth ΔT >0andΔT <0. ForboththetemperatureBCs,particlemigrationissuppressedat
-largerdpand ̇(⇒largerPeth). Moreover,ΔT >0resultsinamorehomogeneoussuspensionbecausethecontribution
-ofthethermalgradientstothemigrationﬂuxopposesthatofthesheargradients. Signiﬁcantparticlesegregationacross
-the gap is observed forΔT <0 because the ﬂuxes due to thermal and shear gradients enhance each other, which aids
-particle migration. WhenΔT >0, almost no particle migration is observed for the strongly sheared suspensions with
-largestPeth (corresponding to,e.g.,dp=0.5mm and ̇=8s −1).
-5.1.2. How the thermo-rheological ﬂuxes aﬀect particle migration
-InSection3.3,weprovidedanabstractdiscussionontheoriginofthethermo-rheologicalparticlemigrationﬂuxes
-withintheTFMframework. Inthissubsection,wequantifytheeﬀectoftemperaturegradientsontheparticlemigration
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 11 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0 0.2 0.4 0.6 0.8 1
-0
-0.2
-0.4
-0.6
-0.8
-Figure 5: Eﬀect of bulk particle volume fractionb on the radial distribution of particles for the concentric Couette cell
-fordp=675 µm and ̇=3 s−1. Arrows indicate the direction of increasingb.
-0 0.2 0.4 0.6 0.8 1
-0.68
-0.7
-0.72
-0.74
-0.76
-0.78
-(a)
-0 0.2 0.4 0.6 0.8 1
-0.7
-0.72
-0.74
-0.76
-0.78 (b)
-Figure 6: Eﬀect of varying the thermal Péclet numberPeth = ̇d2
-p∕p via (a) the particle diameterdp and (b) the imposed
-shear rate ̇(by rotation of the inner cylinder) on the radial distribution of particles in the concentric Couette cell for
-b=0.5. Arrows indicate the direction of increasingdp or ̇.
-proﬁles for a ﬁxed shear gradient. We now subject the Couette cell toðΔTð = 5−30K for each temperature BC.
-Figure 7 shows that, for the BC withΔT >0, as the temperature diﬀerence increases, particle migration is reduced
-due to the opposing shear- and thermal-driven particle migration ﬂuxes. The black dashed curve in Fig. 7 represents
-the isothermal case in which the migration is solely due to the shear gradient. For BC with opposing heat transfer
-(ΔT <0), the contribution of the thermal-gradient-induced particle ﬂux aids the shear-gradient-induced one, leading
-to enhanced particle migration towards the outer wall. AsðΔTð is increased (in thisΔT <0 case), the augmentation
-from the thermal gradients on the overall migration ﬂux is evidently stronger as well.
-5.2. Eccentric Couette cell
-FortheconcentricCouettecell,theheattransfercharacteristicsaredominatedbythesuspension’seﬀectivethermal
-conductivity, showing only weak dependence on the various parameters varied, which is why we did not discuss this
-pointinSection5.1. Amoreinterestingsetupinwhichtocharacterizetheoverallsystem’sthermalperformanceisthe
-dense suspension ﬂow in an eccentric Couette cell (recall Section 4.2). For example, eccentric Couette cells are an
-eﬀectivewaytoenhancemixingatlowReynoldsnumber[58]duetotheaddedcomplexityoftherecirculatingregions.
-We quantify the system’s heat transfer by calculating the heat transfer coeﬃcientℎin=q¨¨∕(Tin−Tout), whereq¨¨
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 12 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0 0.2 0.4 0.6 0.8 1
-0.7
-0.71
-0.72
-0.73
-0.74
-0.75
-0.76
-0.77
-Figure 7: Eﬀect of the temperature diﬀerenceΔT across the gap on the radial distribution of particles in the concentric
-Couette cell forb=0.5, ̇=3 s−1 and dp=675 µm. Arrows indicate the direction of increasingðΔTð. The black dashed
-curve represents the isothermal case (ΔT =0 ).
-istheheat ﬂuxfromtheinner cylinder. Note thatthisconvectioncoeﬃcient ℎin, characterizingtheheat transferinthe
-entire system, is not the same as inter-phase heat transfer coeﬃcientKℎ from Eq. (11), which captures heat transfer
-between the particles and ﬂuid phases. Then, makingℎ dimensionless, we calculate the Nusselt numberNu of the
-system. In this section, we show the dependence ofNu on the eccentricityE=d∕(Rout−Rin) of the Couette cell.
-We use the basic Couette cell geometry from Section 4.2 with varying eccentricities fromE = 0to0.6 (above
-which we observe jamming of particles). The eccentricity in the geometry renders the mesh non-orthogonal. Hence,
-additional non-orthogonality correction loops are run in each time step in order to obtain accurate results [41]. We
-focus on the neutrally buoyant suspension of BN particles withdp = 675 µm and b = 0.3 in an FC ﬂuid. The
-thermophysical properties of the two phases are given in Table 4, as before. Finally, the same sets of thermal BCs as
-given in Table 5 are simulated to highlight the diﬀerences between the case when the thermal gradient across the gap
-aides or opposes the shear-induced particle migration.
-As mentioned above, our ﬁgure of merit for quantifying heat transfer is the system’s Nusselt numberNu. It is
-calculated by applying an energy balance at the surface of the hotter cylinder. For the case 1 BC, at steady state, this
-energy balance on the inner cylinder wall gives
-q¨¨ðr=Rin =−
-4
-kp
-dTp
-dr +kf(1− )
-dTf
-dr
-5
-r=Rin
-=ℎin(Tin−Tout). (19)
-The second equality above is used to calculate the heat transfer coeﬃcientℎin=ℎðr=Rin for the case 1 BC. Similarly,
-ℎout =ℎðr=Rout for case 2 BC is calculated by applying the same energy balance now at the stationary outer cylinder
-(r=Rout). For comparison purposes,ℎin is also calculated for the case 2 BC fromℎout via the steady energy balance
-asℎinRin=ℎoutRout. InEq.(19),theparticlevolumefractionandtemperaturegradientsatthehotterwallareobtained
-from the TFM simulation. Finally,Nu = ℎin(Rout −Rin)∕ksus (deﬁned the same way for all eccentricities), where
-the suspension thermal conductivity is taken asksus = bkp+(1− b)kf for the purposes of computingNu. The
-Nusselt number is a ‘coarse’ measure of the system heat transfer, thus in our deﬁnition of it, we do not account for
-the shear-induced migration explicitly. Furthermore, sincekp ≈500kf ≫ kf,q¨¨ from Eq. (19) is dominated by the
-particle heat ﬂux. Hence, the particle phase’s heat ﬂuxes at the inner (forΔT >0) and outer (forΔT <0) cylinders
-drive the thermal performance of the system.
-Figure 8a shows that the Nusselt number increases with the eccentricity of the cell forΔT > 0 case, while an
-optimum atE = 0.4 is observed forΔT <0 case. The Nusselt number for both thermal BCs is comparable up to
-E =0.4, after whichΔT >0 performs better thanΔT <0 forE =0.5 andE =0.6. This behavior can be explained
-by considering the results shown in Fig. 9. Diﬀerences in the particle migration ﬁelds are observed forE = 0.5 and
-E = 0.6 between the two thermal BCs (especially near the outer wall in the wider gap), while the particle migration
-ﬁelds forE=0.4 are visually indistinguishable for both BCs.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 13 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0 0.1 0.2 0.3 0.4 0.5 0.6
-1.8
-1.9
-2
-2.1
-(a)
-0 0.1 0.2 0.3 0.4 0.5 0.6
-80
-100
-120
-140 (b)
-Figure 8: EﬀectofCouettecelleccentricity E on(a)Nusseltnumber Nu ofthesuspensionand(b)theNusseltenhancement
-factorNusus∕Nufc (with respect to clear FC-43 ﬂuid with no particles) forb=0.3, ̇=3 s−1 and dp=675 µm.
-ForE =0.5 andE =0.6 withΔT <0, particle migration is more pronounced than forΔT >0, as evidenced by
-the larger variation in the volume fraction along the outer wall. The additional migration forΔT <0 is due to shear
-and thermal gradients aiding each other (to increase the overall particle ﬂux). This migration, in turn, decreases the
-particle ﬂux term in Eq. (19) (forE = 0.5 andE = 0.6 withΔT <0) and, hence, the Nusselt number is reduced
-compared to theΔT >0 case. For this same case, particle migration is also enhanced by the recirculating ﬂow (a
-‘vortex’)observedinthevelocityﬁeldsinFig.9. Foreccentricityratio E ≲0.4,therecirculatingﬂowisnotobserved
-(consistent withthe knowntheory for aNewtonian eccentricCouette ﬂow [3, Fig.17]), therefore particle migrationis
-diminished forE=0.4compared toE=0.5andE=0.6. In addition, the vortex becomes larger and moves towards
-the outer wall forΔT <0 (compared toΔT >0). Once again, this observation highlights the interplay between heat
-transferandparticlemigration,furthersuggestingthattheﬂowcharacteristicscanalsobetunedinthissystemviasaid
-interplay.
-Figure 8b shows the dependence of the enhancement factorNusus∕Nufc (with respect to clear FC-43 ﬂuid with
-no particles) on the eccentricity ratioE. Even thoughNusus (up toE =0.4 for theΔT <0 case) andNufc are both
-augmented at higherE, the enhancement factor decreases withE. This observation suggests that there is a trade-oﬀ
-in the eccentric Couette cell ﬂow. The suspension yields the largest enhancement (compared to the clear FC ﬂuid) for
-theconcentriccase( E=0 ). Therelativeimprovementisreducedthereafter,althoughitisstillsigniﬁcant. Thereason
-for the diminished improvement with increasingE is that the suspension entrains particles near the outer wall in the
-widergapsection(asevidentfromthetoprowofFig.9),whereastheclearFCﬂuidﬂow(havingnoparticles)doesnot
-exhibitthispathology. Therefore, Nusus∕Nufc showsamilddecreasingtrendwith E,astheaccumulationofparticles
-near the outer wall cancels out some of the heat transfer enhancement enabled by the highly-conductive BN particles.
-Considerable deviation between the two BCs is observed atE = 0.5 andE = 0.6 due to the enhanced particle
-migration for the case 2 BC resulting in lowerNusus and hence lowerNusus∕Nufc.
-6. Conclusion
-Inthepresentwork,wedevelopedatwo-ﬂuidmodel(TFM)forsimulationofheattransferindensenon-Brownian
-suspensions. We used this TFM to investigate the eﬀect of combined shear and thermal gradients on the phenomenon
-of particle migration in a Couette cell. We built upon our previous work, Municchi et al. [41], in which we focused
-only on the anisotropy stress tensor (recall Eq. (8)) and the shear-induced particle migration aspect. In this work, we
-extendedthelatterbycalibratingaclosurerelationfortheinter-phaseheattransfercoeﬃcient,giveninEq.(11),which
-takes into account the joint eﬀect of the particle thermal diﬀusivity and rate-of-strain tensor of the particulate phase
-on the inter-phase (ﬂuid-particle) heat transfer. In this respect, unlike previous models, the proposed TFM allows for
-thermaldisequilibriumbetweenthephases. Speciﬁcally,intheTFM,shearingthesuspensionenhancestheinter-phase
-heattransfercoeﬃcient,ratherthantheintrinsicthermalconductivityofparticles(asinpreviousmodels),whichshould
-be a ﬁxed thermophysical quantity. This approach allowed us to explain the origin of a novel thermo-rheological ﬂux
-and its eﬀect on the particle migration phenomenon. Speciﬁcally, Eq. (15) shows that a ﬂux due to thermal gradients
-can act to oppose a ﬂux generated by shear gradients.
-Tofurtherunderstandtheinterplayofshearandthermalgradientsonparticlemigration,weconductedaparametric
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 14 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-𝐸=0.4 𝐸=0.5 𝐸=0.6
-Δ𝑇>0 Δ𝑇<0 Δ𝑇>0 Δ𝑇<0 Δ𝑇>0 Δ𝑇<0
-Volume fraction Temperature (K)Velocity (m/s)
-Figure 9: Comparison of the volume fraction, suspension temperature ﬁeld, and suspension velocity (visualized by stream-
-lines color-coded by the velocity magnitude) for diﬀerentE in the eccentric Couette cell ﬂow, considering both types of
-thermal BCs.
-study of dense suspension ﬂow in a Couette cell by varyingb,Peth (by varyinġanddp) andΔT across the gap.
-An enhanced particle segregation is seen whenΔT <0 because the signs of the shear and thermal gradients term in
-Eq. (15) are the same (ﬂuxes are in the same direction). On the other hand, forΔT >0, the ﬂuxes due to shear and
-thermalgradientsopposeeachotherresultinginahomogeneousparticledistributionacrossthegap. Thediﬀerencein
-particle migration proﬁles between the two cases increase as the suspension is made denser. This observation follows
-from the fact that the eﬀect of individual migration ﬂux terms is more pronounced when more particles (by volume)
-are added to the system. In addition, we observed that particle migration is reduced for both thermal BCs in strongly
-sheared suspensions (larger thermal Péclet number).
-Moreover, for theΔT >0 case, asðΔTð across the gap is increased, the opposing thermal-gradient-induced ﬂux
-strengthens, and ultimately cancels out more of the shear-gradient-induced ﬂux. The result is a more homogeneous
-suspension across the gap. Therefore, from a practical point of view, to reduce particle migration and improve the
-thermalperformanceofthisﬂowsystem,itisrecommendedthattheCouettecellisdenselyﬁlled(say, b=0.5)with
-large particles (say,dp=0.5mm) and subjected to high shear rates (say,̇=8s −1) with heat transfer in the direction
-towards the outer wall (ΔT >0).
-Finally, we investigated the eﬀect of eccentricity of the Couette cell on the overall heat transfer characteristics.
-The eccentricity was varied fromE = 0to E = 0.6 above which jamming of particles (ﬂow arrest) occurs. We
-observed an increase in the Nusselt numberNu withE for theΔT >0 BC, while an optimum atE = 0.4 exists for
-theΔT <0 BC. Decrease inNu at largerE (for theΔT <0 case) is due to enhanced particle migration arising from
-the combined eﬀect of shear- and thermal-induced particle migration aiding each other and a large recirculation zone
-resulting in a diminished particle ﬂux, hence diminished heat transfer across the system. In addition, the heat transfer
-enhancement factor (Nusus∕Nufc) is maximum for a concentric Couette cell. Even thoughNusus andNufc increase
-with eccentricity, their ratio decreases because particles are entrained near the outer wall for the suspension ﬂow at
-largeE, whereas they are not present in clear FC-43 ﬂuid, and reduce the overall enhancement brought by the high
-particle conductivity.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 15 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-Ultimately,Fig.8ashowsthattherangeof Nu isquitenarrowforthetemperatureBCsunderconsiderationbecause
-heat transfer in the system is dictated by the overall properties of the suspension, as also shown in previous studies
-[8, 32]. The main take-away from in this study that we wish to highlight to the reader is the novel eﬀect of the
-temperaturediﬀerencedirectionalityontheenhancementordiminutionofparticlemigration,arisingfromthethermo-
-rheological migration ﬂuxes (Section 3.3). This eﬀect is most clearly observed by contrasting the curves in Fig. 6 for
-the two BCs. In future work, it would be of interest to experimentally interrogate this phenomenon.
-In future work, it would be of interest to also explore engineering applications of the TFM for computational
-modeling of heat transfer in dense suspensions, along the lines of our preliminary study of electronics cooling via
-microchannels [42].
-Acknowledgements
-Acknowledgment is made to the donors of the American Chemical Society Petroleum Research Fund for partial
-supportofthisresearchunderACSPRFaward#57371-DNI9,inparticularforsupportingP.P.N.andI.C.C.duringthe
-initial development of the dense suspension TFM and thetwoFluidsNBSuspensionFoam solver [40]. A.M.M. and
-I.C.C. are also aﬃliated with the Center for Particulate Products and Processes (CP3) at Purdue University.
-CRediT authorship contribution statement
-Pranay P. Nagrani:Formal analysis, Validation, Data Curation, Visualization, Writing.Federico Municchi:
-Software, Methodology, Formal analysis, Supervision, Writing.Amy M. Marconnet:Conceptualization, Method-
-ology, Project administration, Supervision, Writing.Ivan C. Christov:Conceptualization, Methodology, Funding
-acquisition, Formal analysis, Project administration, Supervision, Writing.
-References
-[1] Ahuja,A.S.,1975a. Augmentationofheattransportinlaminarﬂowofpolystyrenesuspensions.I.Experimentsandresults. JournalofApplied
-Physics 46, 3408–3416. doi:10.1063/1.322107.
-[2] Ahuja, A.S., 1975b. Augmentation of heat transport in laminar ﬂow of polystyrene suspensions. II. Analysis of the data. Journal of Applied
-Physics 46, 3417–3425. doi:10.1063/1.322062.
-[3] Ballal, B.Y., Rivlin, R.S., 1976. Flow of a Newtonian ﬂuid between eccentric rotating cylinders: Inertial eﬀects. Archive for Rational
-Mechanics and Analysis 62, 237–294. doi:10.1007/BF00280016.
-[4] Barbati, A.C., Desroches, J., Robisson, A., McKinley, G.H., 2016. Complex Fluids and Hydraulic Fracturing. Annual Review of Chemical
-and Biomolecular Engineering 7, 415–453. doi:10.1146/annurev-chembioeng-080615-033630.
-[5] Buyevich, Y., 1996. Particle distribution in suspension shear ﬂow. Chemical Engineering Science 51, 635–647. doi: 10.1016/
-0009-2509(95)00243-X.
-[6] Chen, X., Louge, M., 2008. Heat transfer enhancement in dense suspensions of agitated solids. Part I: Theory. International Journal of Heat
-and Mass Transfer 51, 5108–5118. doi:10.1016/j.ijheatmasstransfer.2008.04.059.
-[7] Colangelo, G., Favale, E., Milanese, M., de Risi, A., Laforgia, D., 2017. Cooling of electronic devices: Nanoﬂuids contribution. Applied
-Thermal Engineering 127, 421–435. doi:10.1016/j.applthermaleng.2017.08.042.
-[8] Dbouk, T., 2018. Heat transfer and shear-induced migration in dense non-Brownian suspension ﬂows: modelling and simulation. Journal of
-Fluid Mechanics 840, 432–454. doi:10.1017/jfm.2018.72.
-[9] Dbouk, T., 2019. A new technology for CPU chip cooling by concentrated suspension ﬂow of non-colloidal particles. Applied Thermal
-Engineering 146, 664–673. doi:10.1016/j.applthermaleng.2018.10.044.
-[10] Dbouk, T., Bahrani, S.A., 2021. Modeling of buoyancy-driven thermal convection in immersed granular beds. International Journal of
-Multiphase Flow 134, 103471. doi:10.1016/j.ijmultiphaseflow.2020.103471.
-[11] Dbouk, T., Lemaire, E., Lobry, L., Moukalled, F., 2013a. Shear-induced particle migration: Predictions from experimental evaluation of the
-particle stress tensor. Journal of Non-Newtonian Fluid Mechanics 198, 78–95. doi:10.1016/j.jnnfm.2013.03.006.
-[12] Dbouk, T., Lobry, L., Lemaire, E., 2013b. Normal stresses in concentrated non-Brownian suspensions. Journal of Fluid Mechanics 715,
-239–272. doi:10.1017/jfm.2012.516.
-[13] Denn, M.M., Morris, J.F., 2014. Rheology of Non-Brownian Suspensions. Annual Review of Chemical and Biomolecular Engineering 5,
-203–228. doi:10.1146/annurev-chembioeng-060713-040221.
-[14] DiCarlo,D.,Irimia,D.,Tompkins,R.G.,Toner,M.,2007.Continuousinertialfocusing,ordering,andseparationofparticlesinmicrochannels.
-Proceedings of the National Academy of Sciences 104, 18892–18897. doi:10.1073/pnas.0704958104.
-[15] Di Felice, R., 1995. Hydrodynamics of liquid ﬂuidisation. Chemical Engineering Science 50, 1213–1245. doi:10.1016/0009-2509(95)
-98838-6.
-[16] van Dinther, A., Schroën, C., Vergeldt, F., van der Sman, R., Boom, R., 2012. Suspension ﬂow in microﬂuidic devices — A review of
-experimental techniques focussing on concentration and velocity gradients. Advances in Colloid and Interface Science 173, 23–34. doi:10.
-1016/j.cis.2012.02.003.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 16 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-[17] Dontsov, E.V., Boronin, S.A., Osiptsov, A.A., Derbyshev, D.Y., 2019. Lubrication model of suspension ﬂow in a hydraulic fracture with
-frictional rheology for shear-induced migration and jamming. Proceedings of the Royal Society A: Mathematical, Physical and Engineering
-Sciences 475, 20190039. doi:10.1098/rspa.2019.0039.
-[18] Drew, D.A., Passman, P.L., 1999. Theory of Multicomponent Fluids. volume 135 ofApplied Mathematical Sciences. Springer-Verlag, New
-York, NY. doi:10.1007/b97678.
-[19] Electronics Materials Solutions Division, 2020. 3M ™ Fluorinert™ Electronic Liquid FC-43. Technical Report.
-Electronics Materials Solutions Division. St. Paul, MN. URL: https://multimedia.3m.com/mws/media/64889O/
-3m-novec-fluorinert-electronic-liquid-fc43.pdf .
-[20] Gavrichev,K.S.,Solozhenko,V.L.,Gorbunov,V.E.,Golushina,L.N.,Totrova,G.A.,Lazarev,V.B.,1993. Low-temperatureheatcapacityand
-thermodynamic properties of four boron nitride modiﬁcations. Thermochimica Acta 217, 77–89. doi:10.1016/0040-6031(93)85099-U.
-[21] Gidaspow, D., 1986. Hydrodynamics of Fiuidizatlon and Heat Transfer: Supercomputer Modeling. Applied Mechanics Reviews 39, 1–23.
-doi:10.1115/1.3143702.
-[22] Guazzelli, E., Morris, J.F., 2011. A Physical Introduction to Suspension Dynamics. volume 45 ofCambridge Texts in Applied Mathematics.
-Cambridge University Press, New York. doi:10.1017/CBO9780511894671.
-[23] Gunn, D.J., 1978. Transfer of heat or mass to particles in ﬁxed and ﬂuidised beds. International Journal of Heat and Mass Transfer 21,
-467–476. doi:10.1016/0017-9310(78)90080-7.
-[24] Kang, C., Yoshikawa, H.N., Mirbod, P., 2021. Onset of thermal convection in non-colloidal suspensions. Journal of Fluid Mechanics 915,
-A128. doi:10.1017/jfm.2021.59.
-[25] Kuipers, J.A.M., van Duin, K.J., van Beckum, F.P.H., van Swaaij, W.P.M., 1993. Computer simulation of the hydrodynamics of a two-
-dimensional gas-ﬂuidized bed. Computers & Chemical Engineering 17, 839–858. doi:10.1016/0098-1354(93)80067-W.
-[26] Lareo, C., Fryer, P., Barigou, M., 1997. The Fluid Mechanics of Two-Phase Solid-Liquid Food Flows: A Review. Food and Bioproducts
-Processing 75, 73–105. doi:10.1205/096030897531405.
-[27] Leighton, D., Acrivos, A., 1987. Measurement of shear induced self diﬀusion in concentrated suspensions of spheres. Journal of Fluid
-Mechanics 177, 109–131. doi:10.1017/S0022112087000880.
-[28] Lhuillier, D., 2009. Migration of rigid particles in non-Brownian viscous suspensions. Physics of Fluids 21, 023302. doi:10.1063/1.
-3079672.
-[29] Lin, S.X.Q., Chen, X.D., Chen, Z.D., Bandopadhayay, P., 2003. Shear rate dependent thermal conductivity measurement of two fruit juice
-concentrates. Journal of Food Engineering 57, 217–224. doi:10.1016/S0260-8774(02)00300-X.
-[30] Maron, S.H., Pierce, P.E., 1956. Application of Ree-Eyring generalized ﬂow theory to suspensions of spherical particles. Journal of Colloid
-Science 11, 80–95. doi:10.1016/0095-8522(56)90023-X.
-[31] Metzger, B., Butler, J.E., 2010. Irreversibility and chaos: Role of long-range hydrodynamic interactions in sheared suspensions. Physical
-Review E 82, 051406. doi:10.1103/PhysRevE.82.051406.
-[32] Metzger,B.,Rahli,O.,Yin,X.,2013. Heattransferacrossshearedsuspensions: roleoftheshear-induceddiﬀusion. JournalofFluidMechanics
-724, 527–552. doi:10.1017/jfm.2013.173.
-[33] Miller, R.M., Morris, J.F., 2006. Normal stress-driven migration and axial development in pressure-driven ﬂow of concentrated suspensions.
-Journal of Non-Newtonian Fluid Mechanics 135, 149–165. doi:10.1016/j.jnnfm.2005.11.009.
-[34] Miller,R.M.,Singh,J.P.,Morris,J.F.,2009. Suspensionﬂowmodelingforgeneralgeometries. ChemicalEngineeringScience64,4597–4610.
-doi:10.1016/j.ces.2009.04.033.
-[35] Mills, P., Snabre, P., 1995. Rheology and Structure of Concentrated Suspensions of Hard Spheres. Shear Induced Particle Migration. Journal
-de Physique II 5, 1597–1608. doi:10.1051/jp2:1995201.
-[36] Mirbod, P., 2016. Two-dimensional computational ﬂuid dynamical investigation of particle migration in rotating eccentric cylinders using
-suspension balance model. International Journal of Multiphase Flow 80, 79–88. doi:10.1016/j.ijmultiphaseflow.2015.11.002.
-[37] Morris,J.F.,2020. Towardaﬂuidmechanicsofsuspensions. PhysicalReviewFluids5,110519. doi: 10.1103/PhysRevFluids.5.110519.
-[38] Morris,J.F.,Boulay,F.,1999. Curvilinearﬂowsofnoncolloidalsuspensions: Theroleofnormalstresses. JournalofRheology43,1213–1237.
-doi:10.1122/1.551021.
-[39] Moukalled, F., Mangani, L., Darwish, M., 2016. The Finite Volume Method in Computational Fluid Dynamics: An Advanced Introduction
-with OpenFOAM® and Matlab. volume 113 ofFluid Mechanics and Its Applications. Springer International Publishing, Cham. doi:10.
-1007/978-3-319-16874-6 .
-[40] Municchi, F., 2019. twoFluidsNBSuspensionFoam. doi:10.5281/zenodo.3558677.
-[41] Municchi, F., Nagrani, P.P., Christov, I.C., 2019. A two-ﬂuid model for numerical simulation of shear-dominated suspension ﬂows. Interna-
-tional Journal of Multiphase Flow 120, 103079. doi:10.1016/j.ijmultiphaseflow.2019.07.015.
-[42] Nagrani,P.P.,Christov,I.C.,Marconnet,A.M.,2021. Two-FluidModelingofDenseParticulateSuspensionsforElectronicsCooling,in: 2021
-20th IEEE Intersociety Conference on Thermal and Thermomechanical Phenomena in Electronic Systems (iTherm), IEEE, San Diego, CA.
-pp. 1190–1197. doi:10.1109/ITherm51669.2021.9503267.
-[43] NiaziArdekani,M.,Asmar,L.A.,Picano,F.,Brandt,L.,2018. Numericalstudyofheattransferinlaminarandturbulentpipeﬂowwithﬁnite-
-size spherical particles. International Journal of Heat and Fluid Flow 71, 189–199. doi:10.1016/j.ijheatfluidflow.2018.04.002.
-[44] Nott,P.R.,Brady,J.F.,1994. Pressure-drivenﬂowofsuspensions: simulationandtheory. JournalofFluidMechanics275,157–199. doi: 10.
-1017/S0022112094002326.
-[45] Nott, P.R., Guazzelli, E., Pouliquen, O., 2011. The suspension balance model revisited. Physics of Fluids 23, 043304. doi:10.1063/1.
-3570921.
-[46] Panton, R.L., 2013. Incompressible Flow. 4th ed., John Wiley & Sons, Inc., Hoboken, NJ, USA. doi:10.1002/9781118713075.
-[47] Passalacqua, A., Fox, R.O., 2011. Implementation of an iterative solution procedure for multi-ﬂuid gas–particle ﬂow models on unstructured
-grids. Powder Technology 213, 174–187. doi:10.1016/j.powtec.2011.07.030.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 17 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-[48] Phillips, R.J., Armstrong, R.C., Brown, R.A., Graham, A.L., Abbott, J.R., 1992. A constitutive equation for concentrated suspensions that
-accounts for shear-induced particle migration. Physics of Fluids A: Fluid Dynamics 4, 30–40. doi:10.1063/1.858498.
-[49] Pine, D.J., Gollub, J.P., Brady, J.F., Leshansky, A.M., 2005. Chaos and threshold for irreversibility in sheared suspensions. Nature 438,
-997–1000. doi:10.1038/nature04380.
-[50] Ranz, W.E., Marshall, W.R., 1952. Evaporation from drops. Part I. Chemical Engineering Progress 48, 141–146.
-[51] Segré, G., Silberberg, A., 1961. Radial Particle Displacements in Poiseuille Flow of Suspensions. Nature 189, 209–210. doi:10.1038/
-189209a0.
-[52] Shin, S., Lee, S.H., 2000. Thermal conductivity of suspensions in shear ﬂow ﬁelds. International Journal of Heat and Mass Transfer 43,
-4275–4284. doi:10.1016/S0017-9310(00)00050-8.
-[53] Shiozawa, S., McClure, M., 2016. Simulation of proppant transport with gravitational settling and fracture closure in a three-dimensional
-hydraulic fracturing simulator. Journal of Petroleum Science and Engineering 138, 298–314. doi:10.1016/j.petrol.2016.01.002.
-[54] Shipilo, V.B., Guseva, I.P., Leushkina, G.V., Makovetskaya, L.A., Popel’nyuk, G.P., 1986. Electrical and thermal conductivity of beta-BN.
-Inorganic Materials 22, 361–365.
-[55] Sohn, C.W., Chen, M.M., 1981. Microconvective Thermal Conductivity in Disperse Two-Phase Mixtures as Observed in a Low Velocity
-Couette Flow Experiment. Journal of Heat Transfer 103, 47–51. doi:10.1115/1.3244428.
-[56] Solozhenko, V.L., Peun, T., 1997. Compression and thermal expansion of hexagonal graphite-like boron nitride up to 7 GPa and 1800 K.
-Journal of Physics and Chemistry of Solids 58, 1321–1323. doi:10.1016/S0022-3697(97)00037-1.
-[57] Subia, S.R., Ingber, M.S., Mondy, L.A., Altobelli, S.A., Graham, A.L., 1998. Modelling of concentrated suspensions using a continuum
-constitutive equation. Journal of Fluid Mechanics 373, 193–219. doi:10.1017/S0022112098002651.
-[58] Swanson,P.D.,Ottino,J.M.,1990. Acomparativecomputationalandexperimentalstudyofchaoticmixingofviscousﬂuids. JournalofFluid
-Mechanics 213, 227–249. doi:10.1017/S0022112090002300.
-[59] Wang, J., 2020. Continuum theory for dense gas-solid ﬂow: A state-of-the-art review. Chemical Engineering Science 215, 115428. doi:10.
-1016/j.ces.2019.115428.
-[60] Wang, L., Koch, D.L., Yin, X., Cohen, C., 2009. Hydrodynamic diﬀusion and mass transfer across a sheared suspension of neutrally buoyant
-spheres. Physics of Fluids 21, 033303. doi:10.1063/1.3098446.
-[61] Wu,W.T.,Aubry,N.,Antaki,J.,McKoy,M.,Massoudi,M.,2017a. HeatTransferinaDrillingFluidwithGeothermalApplications. Energies
-10, 1349. doi:10.3390/en10091349.
-[62] Wu, W.T., Massoudi, M., 2016. Heat Transfer and Dissipation Eﬀects in the Flow of a Drilling Fluid. Fluids 1, 4. doi:10.3390/
-fluids1010004.
-[63] Wu, W.T., Zhou, Z.F., Aubry, N., Antaki, J.F., Massoudi, M., 2017b. Heat transfer and ﬂow of a dense suspension between two cylinders.
-International Journal of Heat and Mass Transfer 112, 597–606. doi:10.1016/j.ijheatmasstransfer.2017.05.017.
-[64] Zydney, A.L., Colton, C.K., 1988. Augmented solute transport in the shear ﬂow of a concentrated suspension. PCH. Physicochemical
-Hydrodynamics 10, 77–96.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 18 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0.25 0.5 1 2
-m
-0.1
-0.2
-0.3
-0.7
-1
--
--0.4
--0.3
--0.2
--0.1
-0
-log10RMSE
-Figure 10: Root mean squared error (RMSE) map between the transient temperature proﬁles of the heat-pulse experiment
-[32] and the TFM simulations, computed for a range of parameter values∈[0.1,1.0] andm∈[0.25,2] used in the closure
-forKℎ from Eq.(11).
-A. Calibration of the parameters inKℎ for non-zero shear rate
-Calibration of the closure relation in Eq. (11) is required to simulate coupled thermal-ﬂuid suspension ﬂows at
-non-zero shear rates. Speciﬁcally, the parameters andm introduced inKℎ must be chosen to ensure that the simu-
-lated transient temperature decay proﬁle at the inner cylinder wall matches that of the heat pulse experiment (recall
-Section 4.1). We considered ∈ [0.1,1.0] andm ∈ [0.25,2] and calculated the root-mean-squared error (RMSE)
-between the TFM simulations and the experimental data as
-RMSE=
-yxxw1
-n
-nÉ
-i=1
- TTFM,i−Texpt,i
-2, (20)
-wherenistotalnumberoftimepointssampled. Here, TTFM,iisthetemperaturedatageneratedfromtheTFMsimulation
-by interpolating the transient temperature proﬁle at the same time-pointsti as the experimental measurementTexpt,i
-(recall Fig. 3). As shown by the cross symbol in Fig. 10, the RMSE is least for ≈0.2 andm≈1 . Therefore, these
-are the parameter values used for the simulations in the main text.
-B. Calibration at zero shear rate: Lumped-parameter modeling of the cylinder
-Althoughnotrelevanttoourstudyfor shear-inducedmigration,forcompleteness,herewediscusshowthe noshear
-(̇= 0s−1) curve is calibrated in Fig. 3. The inner and outer cylinders are held stationary for the entire simulation
-(during both the heating and cooling periods). For thermal BCs, although the outer wall is maintained at293K in the
-experiments, thegapissuﬃcientlylargethatwemodeltheouterthermalBCaswellinsulated. Fortheinnercylinder,
-duringthe 5s ofheating,weassumeaconstantwalltemperatureof 298K,whichneglectsthetimeittakesfortheinner
-cylindertoheatup. Forcooling,employingtheideafrom[32,Section2.2.2]usedtoestimatethethermaldiﬀusivityof
-the suspension, we develop a modiﬁed time-decaying temperature gradient BC (for our simulations) at the inner wall.
-Speciﬁcally, consider the energy balance at the inner wall. Then, assuming a lumped capacitance model for the
-cylinder itself:
-McylCP
-dTwall
-dt =−2RinL
-4
-kp
-dTp
-dr +kf(1− )
-dTf
-dr
-5
-r=Rin
-, (21)
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 19 of 20
-
-Two-ﬂuid modeling of heat transfer in ﬂows of dense suspensions
-0 0.2 0.4 0.6 0.8 1
-0.73
-0.74
-0.75
-Figure 11: Mesh independent study for the concentric Couette cell. Here,Ncells is the number of mesh cells in the radial
-direction across the gap. The grid arrangement is shown in Fig. 2.
-whereTwall is the inner cylinder wall temperature,Mcyl,CP andL are the mass, speciﬁc heat and length of the inner
-cylinder, respectively. To ﬁnd the functional form ofdTwall∕dt to use in Eq. (21) to obtain the sought after BC for
-simulations, we ﬁt an exponential decayTwall(t)− Tinitial =(Tmax−Tinitial)exp(−At) to the measuredTwall(t) in [32]
-(for the case of no shear), recalling thatTinitial = 293K andTmax = 298K. We obtainedA ≈ 0.0129s −1. Finding
-the expression fordTwall∕dt from this equation and substituting it into Eq. (21), we solve for the radial temperature
-gradient at the inner wall, and obtain the following BC:
-4
-
-dTp
-dr +(1− )
-dTf
-dr
-5
-r=Rin
-«­­­­­­­­­­­­­­­­­­¯­­­­­­­­­­­­­­­­­­¬
-from simulation
-=BAexp(−At)
-«­­­­­¯­­­­­¬
-from experiment
-. (22)
-In this case,k = kp = kf, and hence it is included inB = McylCp(Tmax −Tinitial)∕(2RinLk), which lumps
-together all the unknown (unmeasured) inner cylinder physical quantities in this problem. Because there is no shear
-in this example, Eq. (11) reduces toKℎ = Kℎ,0, which is obtained from the particle-based Ranz–Marshall Nusselt
-correlation. Thus, the only unknown in our model isB in Eq. (22), which is a constant that lumps together all the
-unknown inner cylinder properties. To ﬁnd a suitable value forB, we performed TFM simulations, using Eq. (22) as
-theimposedBC,andmatchedthetemperaturedecayproﬁlepredictedbytheTFMtotheexperimentallymeasuredone
-in [32], to obtainB≈10 5Ksm −1 (this is the simulation shown in Fig. 3).
-C. Mesh Independence Study
-In this appendix, we justify the mesh used to produce the simulation results in the main text. To be able to trust
-our conclusions, we must verify the simulations are independent of the mesh resolution (in addition to the calibra-
-tion/validation against experiments performed in Sections 4.1 and 4.2). We consider the concentric Couette cell ge-
-ometry (Fig. 2) ﬁlled withdp = 675µm BN particles suspended atb = 50%in FC-43 ﬂuid (refer to Table 4 for
-the remaining properties). A temperature diﬀerence ofΔT = 30K is set across the Couette cell, in which the inner
-cylinderisrotatedatashearrateof ̇=3s −1. AsseenfromFig.11, Ncells=120 alongtheradialdirectionaccurately
-captures the particle volume fraction distribution, providing us with the computationally “optimal” mesh resolution.
-P. P. Nagraniet al.: Preprint submitted to Elsevier Page 20 of 20

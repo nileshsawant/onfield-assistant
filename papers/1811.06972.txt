@@ -1,0 +1,1230 @@
+A two-ﬂuid model for numerical simulation of shear-dominated suspension ﬂows
+Federico Municchia,1, Pranay P. Nagranib, Ivan C. Christova,∗
+aSchool of Mechanical Engineering, Purdue University, West Lafayette, Indiana 47907, USA
+bNational Institute of Technology Karnataka, Surathkal, Mangalore – 575 025, Karnataka, India
+Abstract
+Suspension ﬂows are ubiquitous in nature (hemodynamics, subsurface ﬂuid mechanics, etc.) and industrial appli-
+cations (hydraulic fracturing, CO 2 storage, etc.). However, such ﬂows are notoriously di ﬃcult to model due to the
+variety of ﬂuid-particle and particle-particle interactions that can occur. In this work, we focus on non-Brownian
+shear-dominated suspensions, where kinetic collisions are negligible and frictional e ﬀects play a dominant role. Un-
+der these circumstances, irreversible phenomena such as particle di ﬀusion and migration arise, requiring anisotropic
+stress models to describe the suspension rheology. On a continuum level, reduced-order models such as the suspension
+balance model (SBM) or the di ﬀusive ﬂux model are commonly used to predict particle migration phenomena. We
+propose a new method based on a two-ﬂuid model (TFM), where both the phases are considered as interpenetrating
+continua with their own conservation of mass and momentum equations. Without employing the nowadays customary
+simpliﬁcations in applying the SBM, we close the “full” TFM instead. Speciﬁcally, we show that when an anisotropic
+stress analogous to that used in the SBM is added to the equilibrium equations for the particle phase, the TFM is
+able to accurately predict particle migration. Thus, the TFM does not require the assumptions of a steady suspension
+velocity and a Stokesian (inertialess) ﬂuid, and the TFM can be easily extended to include buoyancy and even kinetic
+collisional models. We present several benchmark simulations of our TFM implementation in OpenFOAM R⃝, includ-
+ing in curvilinear coordinates and three-dimensional ﬂow. Good agreement between the TFM solutions and previous
+experimental and numerical results is found.
+Keywords: Suspensions, two-ﬂuid model, particle migration, multiphase ﬂow, OpenFOAM
+1. Introduction
+Non-Brownian suspensions are found in a wide range of applications, ranging from agriculture [11] to hydraulic
+fracturing [63] and many more. Despite their ubiquitous presence in nature and engineering, understanding and
+modeling the physics of dense suspensions is still a frontier topic of modern ﬂuid mechanics [60, 10]. In fact, while
+many problems related to dense granular ﬂows are close to being understood [30, 18], a full tensorial form for the
+suspension stress, which can be applied to any geometry, is not yet available [25, 42].
+1.1. Shear ﬂows of suspensions
+Shear-dominated suspensions play a signiﬁcant role in industrial processes, for example those involving particle
+separation [61]. This is because of the “peculiar” irreversible phenomena, such as shear-induced particle migration
+and particle diﬀusion [33], that arise in the ﬂow of suspensions in this regime. Shear-induced particle migration leads
+to a net particle ﬂux from regions of high shear rate to regions of low shear rate, and it was believed to originate from
+long-range hydrodynamic interactions between particles [33], even if recent studies suggest particle collisions also
+play a role [51]. Such drift has obvious signiﬁcant consequences in processes involving channel ﬂows, since it tends
+∗Author to whom correspondence should be addressed.
+Email addresses: Federico.Municchi@nottingham.ac.uk (Federico Municchi), christov@purdue.edu (Ivan C. Christov)
+URL: https://github.com/fmuni (Federico Municchi), http://tmnt-lab.org (Ivan C. Christov)
+1Present address: School of Mathematical Sciences, The University of Nottingham, University Park, Nottingham, NG7 2RD, UK.
+Preprint submitted to International Journal of Multiphase Flow June 25, 2019
+arXiv:1811.06972v4  [physics.flu-dyn]  21 Jun 2019
+
+to focus the particles near the channel’s centerline. The phenomenon of self-di ﬀusion in shear ﬂows of suspensions
+was observed experimentally by Leighton and Acrivos [33] and was considered to be caused by the inhomogeneous
+particle distribution resulting from the migration ﬂux. Their measurements suggested that these displacements alter
+the apparent suspension viscosity.
+For the present study, the typical conditions encountered in shear-dominated suspension ﬂows can be summarized
+as follows:
+(i) the particles are large;
+(ii) the ﬂuid ﬂow is inertialess.
+Condition (i) is generally quantitatively assessed by requiring that the particle diameter dp is larger that≈ 1µm.
+Physically, this condition means that ﬂuctuations of the ﬂow ﬁeld should not aﬀect the particle phase signiﬁcantly, and
+that eﬀects of Brownian motion can be neglected. More precisely, the particle motion is mostly driven by the shear
+ﬂow. Thus, condition (i) can also be quantiﬁed by introducing the particle P´eclet number
+Pep =
+˙γd2
+p
+2Dp
+≫ 1. (1)
+Here, ˙γ is a characteristic shear rate arising from the suspension ﬂow, andDp is the characteristic Brownian diﬀusivity
+of the particles.
+Condition (ii) requires that the particle Reynolds number Rep is small:
+Rep = ρ f U f dp
+µ f
+≪ 1, (2)
+whereρ f andµ f are, respectively, the density and viscosity of the suspending ﬂuid, and U f is a characteristic ﬂuid
+velocity. In fact, Han et al. [26] observed that when the particle Reynolds number is increased above a certain
+threshold (Rep ≈ 0.2 for tubes) particle migration is replaced by a di ﬀerent kind of irreversible mechanism: the
+Segr´e–Silberberg eﬀect [56]. Furthermore, Picano et al. [53] demonstrated that inertial shear thickening appears
+in shear-dominated dense particle suspensions. This e ﬀect is not accounted for in the rheological models that we
+consider, and thus we will always require that Rep is well below the threshold at which these e ﬀects must be taken
+into account.
+Energy applications such hydraulic fracturing (see, e.g., [27]) make use of shear-dominated dense suspensions.
+Speciﬁcally, suspensions of particles (termed ‘proppants’) are injected into newly created fractures to increase fracture
+conductivity and prevent closure of the fracture upon the cessation of ﬂow [64]. The proppant distribution is thus
+critical in such applications. It has been argued that proppant transport involves precisely a dense suspension ﬂows
+in the above-described regime of Rep≪ 1 and Pep≫ 1 [13]. Two Fluid Models (TFMs) are becoming popular for
+such applications [13, 14, 58], however, these are often further reduced to simpliﬁed sets of equations to allow for
+their numerical solution. Thus, a general numerical TFM framework that can be used to address proppant transport
+questions is lacking.
+Finally, suspension ﬂows do not have to be restricted to the regimes (and conditions) mentioned here. In general,
+a wide variety of transitional phenomena may occur. Therefore, methods for the numerical simulation of suspension
+ﬂows should be ﬂexible enough to account for ﬂow with inertial and non-inertial regions, or ﬂows in which kinetic
+collisions play an important role. We posit that TFMs could pave the way towards such general formulations.
+1.2. Numerical simulation of shear-dominated suspensions
+A wide range of numerical methods have been used to study the rheology of shear-dominated suspensions, and
+to predict the macroscopic behaviour of suspension ﬂows. Maxey [38] reviews several discrete methods in which
+particles are tracked or accounted for individually. Such methods are generally employed to investigate the suspension
+rheology, as done by Yeo and Maxey [68], who used the Force Coupling Method (FCM) to calculate normal stress
+diﬀerences of the suspension. However, these methods are too computationally expensive to be employed in the
+prediction of ﬂows occurring in nature or during industrial processes. Thus, it is necessary to develop continuum
+models for suspensions.
+2
+
+Typically, these multiphase continuum models can be classiﬁed into three categories: Di ﬀusive Flux Models
+(DFMs), Suspension Balance Models (SBMs) and Two Fluid Models (TFMs). DFMs are mixture models, in which
+the suspension is described as a single non-Newtonian ﬂuid (i.e., the suspension is seen a single continuum [25])
+whose rheology depends upon the particle volume fraction. Although SBMs were originally derived based on an
+argument stemming from phase-averaging [47, 34, 48], their most common application today is based on assuming
+a steady suspension velocity and reducing the problem to a single set of conservation equations with appropriate
+closures [24, 8, 42]. This approach allows one to derive expressions for the phenomenological closures in the DFMs.
+Thus, DFMs and “standard” SBMs require the solution of a vector parabolic equation for the mixture velocity and
+a scalar hyperbolic equation for the particle volume fraction, as well as the Poisson equation for the pressure. In
+these DFM and SBM models, an additional diﬀusive ﬂux Jdiﬀ arises in the advection equation for the particle volume
+fraction.
+To make this distinction more clear, consider the suspension’s volume-averaged velocity
+umix =φup + (1−φ)u f, (3)
+which is deﬁned as the convex combination of the ﬂuid velocity u f and the particle velocity up, with the particle
+volume fractionφ used as the weight. Then, the advection equation forφ becomes:
+∂φ
+∂t =−∇·
+(
+upφ
+)
+=−∇· (umixφ)−∇·
+[(
+up− umix
+)
+φ
+]
+=−∇· (umixφ)−∇· Jdiﬀ, (4)
+having introduced the diﬀusive ﬂux Jdiﬀ as a closure accounting for the a priori unknown ﬂux arising due to the term(
+up− umix
+)
+φ. In the DFM [33, 52, 65], this closure is fundamentally a phenomenological one, and the di ﬀusive ﬂux
+is modeled as:
+Jdiﬀ =−
+(
+Dφ∇φ + D˙γ∇˙γ
+)
+. (5)
+Here, Dφ and D˙γ are diﬀusion coeﬃcients determined empirically or through experiments. On the other hand, in
+the “standard” implementation of the SBM [47, 44, 40, 32, 48, 8] the di ﬀusive ﬂux is computed by upscaling the
+steady-state equations of a two ﬂuid model. As result, Jdiﬀ is given by the product of the particle mobility M with the
+divergence of the particle phase stress tensor Σp:
+Jdiﬀ =−M∇· Σp. (6)
+V ollebregt et al. [65] showed that the DFM and these SBM models are equivalent in the case of isotropic particle
+phase stress, in which case∇· Σp can be expressed as the gradient of a potentialµ⋆.
+1.3. The two ﬂuid model
+The latter idea of expressing ∇· Σp as the gradient of a potential was recently employed by Drijer et al. [16] to
+develop a TFM using the computational environment provided in STAR-CCM +. In a TFM, the ﬂuid and particles
+are modeled as two distinct interpenetrating continua, thus allowing for a more detailed description of the multiphase
+ﬂow dynamics with respect to mixture models. However, this approach comes at a signiﬁcant computational cost
+(compared to DFM and SBM), since two coupled vector equations have to be solved for the phases’ velocity ﬁelds.
+In the formulation of Drijer et al. [16], an additional forcing term FSID =−∇µ⋆ is added to the particle momentum
+equation and subtracted from the ﬂuid momentum equation. In their model, they deﬁned∇µ⋆ =
+(
+Dφ∇φ + D˙γ∇˙γ
+)
+/M,
+which makes their model a combination of a DFM and a TFM. However, this model cannot account for the anisotropy
+of the particle stress tensor, therefore it is not suitable for problems in curvilinear geometries.
+It is crucial to note that while the SBM (in its current form widely used in the literature) and the DFM are indeed
+essentially multiphase ﬂow models, they require the solution of only one momentum conservation equation for the
+whole suspension. Therefore, the suspension is modeled as a single ﬂuid whose rheology depends on the scalar
+ﬁeldφ (the particle volume concentration). Therefore, a total of ﬁve coupled equations (three for umix, one for the
+hydrodynamic pressure p, and one forφ) have to be solved. By contrast, a TFM requires the solution of the momentum
+conservation equations for both phases, leading to a total ofeight coupled equations (three for up, three for u f , one for
+3
+
+p and one forφ). This is the fundamental mathematical, computational and physical diﬀerence between the proposed
+TFM and previous models employed for the simulation of dense non-Brownian suspensions.
+The TFM formulation of multiphase ﬂows is very popular in the particulate ﬂow community, since it is able to
+accurately capture non-equilibrium phenomena, which is an essential feature for developing upscaled models like
+the ﬁltered TFM [39]. On the other hand, the SBM and DFM formulation are mostly employed in the suspensions
+community. A notable exception is that, recently, Ahnert et al. [2] used a TFM to solve for certain plane Poiseuille
+ﬂows of suspensions.
+1.4. Goals and outline of the paper
+In this work, we aim to establish a formulation of the TFM that is valid for shear-dominated suspension ﬂows in
+general curvilinear geometries and that can be straightforwardly extended to collisional or inertial ﬂows. To this end,
+we modify the twoPhaseEulerFoam solver from the ﬁnite volume library OpenFOAM R⃝ to include the anisotropic
+particle stress tensor models employed in the SBM. In our TFM formulation, particle migration is not modeled as an
+additional forcing term, rather it is incorporated in the particle phase stress. The objective is to provide an open-source
+implementation of a suﬃciently general and extensible TFM that can be used for testing future rheological models or
+for speciﬁc applications of suspension ﬂows in the limit of Pep≫ 1.
+To this end, this paper is structured as follows: in section 2, we describe the governing equations and the rheolog-
+ical models/closures that we employ. Section 3 brieﬂy outlines the numerical implementation of the method, with an
+emphasis on the anisotropic stress tensor. We demonstrate the accuracy of the proposed computational framework in
+section 4. In the conclusions (section 5), we discuss further improvements and potential future work. Meanwhile, a
+grid sensitivity analysis is presented in the appendix.
+2. Mathematical formulation
+2.1. Governing equations
+In the TFM, the continuity and equilibrium equations for the two phases are solved separately. Our formulation
+follows [50], which is standard for two-phase ﬂow solvers. However, we write the equations in a more compact form,
+which is useful for non-Brownian suspensions [44, 13]. A general discussion of how such models are derived via
+averaging can be found in Drew and Passman’s classic textbook [15]. Introducing the particle volume fraction ﬁeld
+φ(x, t), we write the governing equations for the two phases [29, 5, 21] as:
+∂
+∂t
+(
+ρpφ
+)
++∇·
+(
+ρpupφ
+)
+= 0, (7)
+∂
+∂t
+[
+ρ f (1−φ)
+]
++∇·
+[
+ρ f u f (1−φ)
+]
+= 0, (8)
+∂
+∂t
+(
+ρpφup
+)
++∇·
+(
+ρpφup⊗ up
+)
+=∇· Σp +φρp g + fd, (9)
+∂
+∂t
+[
+ρ f (1−φ) u f
+]
++∇·
+[
+ρ f (1−φ) u f⊗ u f
+]
+=−∇·
+(
+pI−τ f
+)
+− fd + (1−φ)ρ f g, (10)
+where the subscript ‘ p’ refers to a particle-phase quantity, and the subscript ‘ f ’ refers to a ﬂuid-phase quantity; ⊗
+denotes the (direct) dyadic product. Also, ρp andρ f are the particle and ﬂuid densities (assumed constant), up and
+u f are the particle and ﬂuid velocity ﬁelds, Σp is the particle-phase stress tensor, τ f is the deviatoric stress tensor of
+the ﬂuid phase, fd is the interphase force, and g is the gravitational acceleration vector. Here, p = p f + pp is the
+‘shared’ pressure, which satisﬁes the Poisson equation in the case of an incompressible suspension, and it is given by
+the sum of the ﬂuid pressure p f and the particle pressure pp. Notice that, in this approach, we do not need to attempt
+to calculate or introduce a phenomenological model for the quantity Jdiﬀ, since we are directly computing the particle
+phase’s velocity ﬁeldup.
+4
+
+2.2. Interphase momentum transfer
+We write the interphase force fd as the combination of a term due to the local distortion of the ﬂow ﬁeld and a
+generalized buoyancy. In this form, the interphase force is often referred to as the Clift drag [12]:
+fd = Kd
+(
+up− u f
+)
+                  
+local distortion
++φ∇·
+(
+τ f− pI
+)
+− (1−φ) ∇pp
+                                                              
+generalized buoyancy
+. (11)
+Notice that the last term in equation (11) is a consequence of the “shared pressure formulation,” where the ﬂuid phase
+pressure p f is eliminated using p f = p− pp. In this work, we express the drag coe ﬃcient Kd as a function of the
+sedimentation hindrance function f (φ), which corrects the Stokes sedimentation velocity to account for the presence
+of neighbouring particles:
+Kd = 9µ fφ f (φ)−1
+2d2p
+. (12)
+Example closure expression for f (φ) will be discussed below [see equations (27) and (28)].
+2.3. Rheology of the suspending ﬂuid
+We assume the suspending ﬂuid is Newtonian, with a deviatoric stress tensor τ f given by
+τ f = 2µ f ˙S f, (13)
+where as before µ f is the dynamic ﬂuid viscosity (assumed constant), and ˙S f is the shear-rate-of-strain tensor of the
+ﬂuid phase. For either phase, S is deﬁned based on a velocityu as
+˙S = 1
+2
+[
+∇u + (∇u)T ]
+− (∇· u) I. (14)
+2.4. Rheology of the suspended phase
+The suspended phase’s rheology is given by a generalization of the expression in equation (13):
+Σp = 2µp ˙Sp +λp
+(
+∇· up
+)
+I + Σs. (15)
+Here, µp and λp are the shear and bulk viscosities of the particle phase, respectively. In addition to the classic
+representation of the stress tensor for a compressible Newtonian ﬂuid, equation (15) contains the extra contribution
+Σs, which represents the anisotropic stress due to shearing of the solid phase.
+The shear viscosity of the particle phase can be further decomposed as
+µp =µp,kin +µp,fric, (16)
+where µp,kin is a kinetic shear viscosity due to random particle kinetic (binary and instantaneous) collisions, µp,fric
+is a frictional shear viscosity which represents the momentum transfer due to multiple particle contact and shearing.
+Similarly, we split the particle phase pressure into a kinetic particle pressure pp,kin, arising from the Brownian motion
+of particles and a frictional component pp,fric, which accounts for force chains emerging at large values of the particle
+volume fraction:
+pp = pp,kin + pp,fric. (17)
+In dense suspensions, µp,kin, λp and pp,kin are computed, following [21], as functions of the granular temperature Θ
+[22], which satisﬁes the transport equation:
+3
+2
+[∂
+∂t
+(
+ρpφΘ
+)
++∇·
+(
+ρpφupΘ
+)]
+=
+(
+Σp− ppI
+)
+:∇up +∇·
+(
+κp∇Θ
+)
+− ˙qc + ˙qµ + ˙qs, (18)
+5
+
+whereκp is the granular conductivity and ˙qc, ˙qµ and ˙qs are source terms due to collisions, viscous dissipation and slip
+velocity. The expressions for these terms employed in OpenFOAMR⃝ can be found in [35].
+Notice that in the parameter regimes in which particle migration is relevant, kinetic collisions are negligible and
+so the transport equation for Θ plays no role in this limit, therefore it can be neglected, as is generally done in works
+on non-Brownian suspensions. However, in our OpenFOAM R⃝ implementation of the TFM that follows, we retain
+equation (18) and all the related terms. Doing so allows us (in the future) to employ the proposed TFM to simulate
+transitional suspension dynamics, i.e., from dense (non-kinetic) to dispersed (kinetic) particulate phases. However,
+such complex ﬂow regimes will not be explored in this work; we focus only on non-kinetic ﬂows in which the granular
+temperature Θ can be considered constant.
+The anisotropic shear-induced stress tensor Σs is generally represented by means of an anisotropy tensor Q [44],
+speciﬁcally:
+Σs =−µ fηN(φ)˙γeﬀQ. (19)
+Here,ηN is the normal scaled viscosity, and ˙γeﬀ is the eﬀective shear rate deﬁned as
+˙γeﬀ =
+√
+2 ˙S : ˙S + ˙γNL. (20)
+Here, ˙γNL is the non-local shear rate, which is often employed to ensure ˙γeﬀ , 0, for example, at the centerline of a
+channel. The addition of ˙γNL in equation (20) is seen as a way to overcome the breakdown of continuum models when
+describing phenomena occurring at the particle scale [45, 47, 44, 41]. When such a breakdown occurs, the non-local
+contribution takes into account the eﬀect of the average stress on a scale on the order of the particle diameter.
+An exhaustive description of this phenomenon can be found in [40], where the following expression for ˙γNL, valid
+for channel ﬂows, is proposed:
+˙γNL = as
+umax
+p
+Lch
+. (21)
+Here, Lch is the characteristic length of the channel, as is a model constant, and umax
+p is the maximum value of the
+particle velocity in the channel. Another expression, which does not depend on the ﬂow conditions, was proposed by
+Gao et al. [20] by ﬁtting a large amount of experimental data:
+˙γNL = 0.0176 (φc)−2.91, (22)
+whereφc is the concentration at the center of the channel, which is unknown a priori.
+The anisotropy tensor Q is represented in the classic Cartesian tensor form Q = Qi jei⊗ e j (Einstein summation
+notation implied) and diagonalized by employing a velocity-ﬁeld-based coordinate system with orthonormal axes:
+Q =
+3∑
+i=1
+λi (φ) ei⊗ ei. (23)
+Here, λi (φ) are the anisotropy weight functions, and ei are the unit vectors in the direction of the ﬂow ( i = 1),
+gradient (i = 2) and vorticity ( i = 3) of the particle phase velocity. However, while the above deﬁnition of the
+unit vectors is straightforward in unidirectional ﬂows, e2 cannot be straightforwardly calculated in general curvilinear
+three-dimensional ﬂows. Therefore, in this work, we deﬁne the unit vectors{ei}i=1,2,3 as follows:
+e1 = up
+|up|, e3 = ∇× up
+|∇× up|, e2 = e1× e3, (24)
+where× denotes the vector (cross) product. Notice that, by employing equation (24), we calculate an “implicit”
+gradient direction using the properties of the vector product. Speciﬁcally,e2 is simply deﬁned as being normal to both
+the particle velocity ﬁeld and its curl.
+6
+
+2.5. Closure models for non-Brownian suspensions
+In the present work, we incorporate closure models that have been developed for mixture theories (like the DFM
+or the “standard” form of the SBM currently employed in applications) into a TFM framework. As discussed in
+[25], such models describe the overall suspension viscosity and pressure, therefore they do not di ﬀerentiate between
+particle-particle lubrication mediated interaction and frictional contacts. Consequently, such models directly provide
+a closure for µp,fric from equation (16), without addressing the ﬁne details of the suspension’s microstructure during
+shear-thickening, especially as it approaches jamming [43]. On the other hand, the e ﬀect of the frictional pressure
+pp,fric from equation (17) will be absorbed in the anisotropic stress Σs. A similar approach was employed in [16],
+where the frictional pressure and viscosity where not included in the governing equations.
+Thus, we employ a general expression similar to that proposed in [44] to close the particle phase viscosity:
+µp,fric
+µ f
+= aµ + bµφ
+(
+1− φ
+φm
+)−1
++ cµ
+(
+1− φ
+φm
+)−2
+, (25)
+which returns the closure from [44] for aµ = 0, bµ = 2.5 and cµ = 0.1, and the closure from [37] for aµ =−1, bµ = 0
+and cµ = 1. These models have been shown to give the best agreement with experiments when employed within the
+framework of the SBM [8]. In equation (25),φm is the maximum allowed particle volume fraction.
+For the normal scaled viscosityηN, we employ the expression proposed in [44]:
+ηN(φ) = KN
+(φ
+φm
+)2 (
+1− φ
+φm
+)−2
+, (26)
+where KN is usually set to 0.75. Equation (26) also returns the model proposed in [9] for KN = 1.08, and the one
+proposed in [4] for KN = 1.
+The sedimentation hindrance function f (φ) is modeled using the expression provided in [40]:
+f (φ) =
+(
+1− φ
+φm
+)
+(1−φ)α−1, α ∈ [2, 5]. (27)
+This expression was chosen to ensure that particle migration becomes weaker as φ→ φm. Another expression often
+employed can be found in [44]:
+f (φ) = (1−φ)α, α ∈ [2, 5]. (28)
+Finally, several expressions for λi have been proposed in the literature [9, 4, 40]. Taking each to be a particular
+constant is a common choice, but [9] also proposed volume-fraction-dependent expressions:
+λ1(φ) = 1, λ 2(φ) = 0.81 φ
+φm
++ 0.66, λ 3(φ) =−0.0088 φ
+φm
++ 0.54. (29)
+3. Numerical formulation
+The governing equations (7)–(10) are solved in a coupled manner using a modiﬁed version of thetwoPhaseEuler-
+Foam solver [50] in OpenFOAM R⃝ [66], an open-source library designed for implementing ﬁnite volume methods
+[46]. Momentum predictors are obtained employing the partial elimination algorithm [50], which allow us to decou-
+ple the phase momentum equations. In this work, we extendtwoPhaseEulerFoamto include models for shear-induced
+migration and to employ the anisotropic stress tensor in place of the frictional pressure. In fact, the main idea behind
+the approach used in OpenFOAMR⃝ is to include the eﬀect of the particle pressure in the suspended (dispersed) phase’s
+continuity equation in an implicit manner.
+7
+
+3.1. Discretized momentum equations
+In order to clearly illustrate our modiﬁcations to the original algorithm described in [50], below we consider an
+incompressible suspension in which the phases have constant and equal density (therefore, we drop the gravitational
+force). Under these assumptions, we can write the semi-discrete momentum equations as
+Apup = Hp−µ f∇· (ηN ˙γeﬀQ)−φ∇p + Kd
+(
+up− u f
+)
+, (30)
+A f u f = H f− (1−φ)∇p + Kd
+(
+up + u f
+)
+, (31)
+where the matrices Ap and A f are the diagonals of the matrices M f and Mp arising from the discretization of the
+respective momentum equations, with the exception of the undiscretized terms retained in equations (30) and (31).
+Meanwhile, the vectors Hp and H f are given by:
+Hp =
+(
+Ap− Mp
+)
+up + Qp, H f =
+(
+A f− M f
+)
+u f + Q f, (32)
+where Qp and Q f are the source terms arising from the discretization of the momentum equations (volumetric sources,
+face-tangential corrections, etc.).
+The key idea of the algorithm is to split the anisotropic stress tensor ﬂux in two contributions: one due to the ﬂux
+arising from a gradient in the particle volume fraction and one due to the ﬂux arising from a gradient in the shear rate
+or the anisotropy tensor. Speciﬁcally,
+∇· (ηN ˙γeﬀQ) = ˙γeﬀ
+(dηN
+dφ
+)
+∇φ· Q +ηN∇· (˙γeﬀQ). (33)
+This idea is similar to the diﬀusive ﬂux model [65, 52], wherein the forcing terms due to the shear-induced migration
+are written as the gradient of a chemical potential. However, in the present model, we employ a tensor potential
+instead of a scalar potential. The rightmost term in the decomposition in equation (33) is then subtracted from the
+vector H, so that equation (30) becomes:
+Apup = H∗
+p− ˙γeﬀ
+(dηN
+dφ
+)
+∇φ· Q, H∗
+p = Hp−ηN∇· (˙γeﬀQ). (34)
+3.2. Pressure equation
+The incompressibility condition on the suspension requires surface integrals of the volumetric ﬂux to be zero in
+every cell. In other words, the total volumetric ﬂux ϕ must be such that the mixture velocity ﬁeld umix deﬁned in
+equation (3) is divergence free:
+∇· umix =∇·
+(
+φup
+)
++∇·
+(
+(1−φ)u f
+)
+= 0, (35)
+In the ﬁnite volume method, equation (35) is satisﬁed if the sum of the phase volumetric ﬂuxes vanishes in each cell
+c, i.e.,
+∫
+Vc
+∇·
+[
+φup + (1−φ)u f
+]
+dVc =
+∑
+Ncf
+∮
+S cf
+[
+φup + (1−φ)u f
+]
+· d Acf =
+∑
+Ncf
+[
+φcfϕp + (1−φ)cfϕ f
+]
+, (36)
+whereVc is the volume of cell c, Acf is the area normal to face cf, Ncf is the number of faces of cell c, andφcf is the
+particle volume fraction interpolated at face cf. Additionally, in equation (36), we introduced the volumetric ﬂuxes of
+the particle phaseϕp and the ﬂuid phase ϕ f :
+ϕp =
+∮
+S cf
+up· d Acf, ϕ f =
+∮
+S cf
+u f· d Acf. (37)
+Notice that the phase ﬂuxes are ‘scalar ﬁelds’ deﬁned at cell faces rather than at cell centers.
+8
+
+Next, decoupled equations for up are obtained by substituting equation (31) into equation (9). The same approach
+is employed to obtain decoupled equations for u f . Therefore, the volumetric phase ﬂuxes can be expressed as [50]:
+ϕp = Acf
+ζp
+·
+[(
+H∗
+p + Kdβ f H f
+)
+cf−
+(
+φ + Kdβ f (1−φ)
+)
+cf (∇p)cf−
+(
+˙γeﬀ
+dηN
+dφ∇φ· Q
+)
+cf
+]
+, (38)
+ϕ f = Acf
+ζ f
+·
+[(
+H∗
+f + KdβpHp
+)
+cf−
+(
+(1−φ) + Kdβpφ
+)
+cf (∇p)cf +
+(
+Kdβp ˙γeﬀ
+dηN
+dφ∇φ· Q
+)
+cf
+]
+, (39)
+where the subscript ‘cf’ indicates interpolation at cell faces, and
+βp = 1
+Ap + Kd
+, β f = 1
+A f + Kd
+, ζ p = Ap−βpK2
+d + Kd, ζ f = A f−β f K2
+d + Kd. (40)
+Notice that unlike [50], our ﬂux equations (38) and (39) do not have a term of the kind Acf· (∇φ)cf because we are
+employing an anisotropic stress tensor rather than an isotropic particle pressure. At this stage, this distinction does
+not constitute a signiﬁcant computational diﬀerence since the term is not updated within the pressure corrector.
+The pressure equation is obtained by substituting equations (38) and (39) into equation (35). After solving for p,
+the new pressure ﬁeld is used in equations (38) and (39) to update the phase ﬂuxes.
+3.3. Continuity equation for the suspended phase
+The numerical approach employed has a major impact on the overall algorithm’s stability, especially when the
+particle volume fraction approaches the close-packing limit. To this end, consider the semi-discretized continuity
+equation for the suspended (dispersed) phase:
+∂φ
+∂t +∇· (φcfϕ∗
+s
+)−∇·
+[φcf Acf
+ζp
+·
+(
+˙γeﬀ
+dηN
+dφ∇φ· Q
+)
+cf
+]
+= 0, (41)
+whereϕ∗
+s is the volumetric ﬂux of the particle phase ϕp from equation (38) with the contribution from the anisotropic
+tensor split from it. Notice that the divergence in equation (41) is a semi-discretized operator that acts on face-
+interpolated scalar ﬁelds, and it should be interpreted as a sum over cell faces following a domain discretization. Since
+dηN/dφ increases dramatically close to the maximum packing fraction [25], in the standard twoPhaseEulerFoam the
+equivalent rightmost term on the left-hand side of equation (41) is discretized implicitly to avoid instabilities in this
+regime. However, in the present context, the term cannot be immediately discretized as is because it does not involve
+just Acf· (∇φ)cf, which can be discretized using standard divergence schemes like upwind, but it involves the double
+scalar product Acf· (∇φ· Q)cf instead. Thus, this term requires more than just discretizing the face normal gradient.
+To overcome this diﬃculty, and extract new terms from equation (41) that can be discretized implicitly in time,
+we decompose the anisotropy tensor into its hydrostatic and deviatoric components:
+Q = (tr Q) I + Qdev, Qdev≡ Q− (tr Q) I, (42)
+where tr Q = ∑3
+i=1 Qii is the trace ofQ. Therefore, equation (41) can be rewritten (still considering our semi-discretized
+deﬁnition of the divergence operator) as:
+∂φ
+∂t +∇· (φcfϕ∗
+s
+)−∇·
+[(
+˙γeﬀ
+dηN
+dφ tr Q
+)
+cf
+Acf
+ζp
+· (∇φ)cf
+]
+=∇·
+[φcf Acf
+ζp
+·
+(
+˙γeﬀ
+dηN
+dφ∇φ· Qdev
+)
+cf
+]
+. (43)
+Notice that now only the term on the right-hand side of equation (43) cannot be discretized implicitly. The approach
+used in OpenFOAM R⃝ for solving equation (43) consists of solving the advection equation ∂φ/∂t +∇· (φcfϕ∗
+s
+) = 0
+explicitly using the MULES (Multidmensional Universal Limiter for Explicit Solutions) scheme, which is based on
+the Flux-Corrected Transport (FCT) framework [69, 3]. The remaining terms are solved implicitly in time. External
+iterations with relaxation are still required to update the last term in equation (43) and obtain an accurate and stable
+solution. However, their number and the value of the relaxation coe ﬃcient are now controlled only by the deviatoric
+part of Q.
+As a remark, it should be pointed out that equation (43) is parabolic, while the original continuity equation was
+hyperbolic. This change of type may be an issue, especially regarding the choice of appropriate boundary conditions
+for φ. Therefore, in order to preserve the hyperbolicity of the continuity equation, an implicit formulation of the
+anisotropic stress should be employed only when facing severe stability issues.
+9
+
+End time loop
+Correct Δ"according to #$
+Solve advection for %
+Momentum predictor Correct pressure
+Update velocities and fluxesUpdate rheology models
+Start time loop
+"=0"="+Δt
+)*+),-."/0=0
+PIMPLEconverged?
+)*+),-."/0+=1
+1$
+"+Δ"≥3
+4/5
+4/5
+)*67."/0=0
+pressureconverged?
+1$)*67."/0+=14/5
+1$
+"="+Δt
+)*+),-9$$:
+)*679$$:
+Figure 1: Flowchart illustrating the solution algorithm composed by external iterations ( PIMPLE loop) and pressure correction iterations ( PISO
+loop). Here T is the ﬁxed end time of the simulation. Notice that this is the same algorithm employed intwoPhaseEulerFoam .
+3.4. Numerical solution strategy: Description of the scheme
+The solver employs a PIMPLE algorithm, which consists of a PISO [17] pressure corrector together with external
+ﬁxed point iterations to couple the phase momentum equations and the continuity equation for the particle phase, as
+depicted schematically in ﬁgure 1. The solver employs a dynamic time stepping based on the Courant number:
+Co = ϕCo∆t
+V , ϕ Co = max
+
+∑
+cf
+ϕ f,
+∑
+cf
+(
+ϕ f−ϕp
+), (44)
+where ∆t is the time step and V is the cell volume ﬁeld. Notice that the velocity ﬁeld employed in the deﬁnition ofCo
+is the maximum between the total suspension ﬂux and the total relative ﬂux in each cell.
+The convergence criteria for both the external PIMPLE iterations and the PISO correctors can be based on the
+residuals or the number of iterations. In this work, we always limited the number of iterations and set the minimum
+number of linear solver iterations to one. This choice was made to control residual oscillations and prevent the solver
+from leaving the loops too early.
+10
+
+!"!#=0!&!#=0'(⋅̂+,"=0
+'(⋅̂+,"=0
+"=-.̂/&=&0 1
+2#3
+Figure 2: Schematic representation of the two-dimensional (2D) channel geometry, indicating the boundary conditions for the velocity ﬁeld (both
+the particle and ﬂuid velocity are represented by a single symbol u) and the particle phase’s volumetric concentration ﬁeldφ. Here, ˆı and ˆ are the
+unit normal vector in the x-direction and y-direction respectively, andU f is the ﬂuid velocity in the particle-based Reynolds number in equation (2).
+3.5. Boundary conditions
+Generally, no-slip and no penetration boundary conditions are employed to model walls bounding the ﬂows of
+non-Brownian suspensions (see, e.g., [9]). The no penetration boundary condition is implemented in OpenFOAM R⃝
+as a slip boundary condition, which is fundamentally a symmetric boundary condition that implies no ﬂux normal to
+the boundary. Such a boundary condition imposes:
+Jφ· n = 0, with Jφ = usφ, (45)
+where n is the unit normal vector to the boundary.
+4. Testing and validation
+4.1. Planar Poiseuille ﬂow of a suspension
+We apply the proposed TFM numerical formulation to the problem of suspension ﬂow between two inﬁnite parallel
+plates. This problem has been extensively studied in many experimental works [31, 36, 57, 28, 20], which consistently
+observed a particle ﬂux towards the center of the channel and, thus, an inhomogeneous particle distribution. However,
+it was argued that the laser-Doppler velocimetry methodology employed by Lyon and Leal [36] signiﬁcantly under-
+estimates the particle volume concentration near the walls [44]. Recently, Drijer et al. [16] performed an experiment
+employing a fast confocal microscope (as in [57]) and were able to match the concentration proﬁle with results from
+their ‘hybrid’ SBM-TFM simulations in STAR-CCM+. We employ a conduit identical to that used by Dbouk et al. [8],
+with a ratio between channel height and particle diameter of H/dp = 18. A schematic of the channel geometry and
+notation is shown in ﬁgure 2.
+The channel length L is chosen to satisfy the condition for a fully developed concentration proﬁle [47]:
+L
+H≥ 1
+6g(φb)
+(H
+dp
+)2
+. (46)
+The function g(φb) represents the dependence of the shear-induced diﬀusion on the bulk (average) particle concentra-
+tion. This function is generally taken to be (see [33]):
+g(φb) = 1
+3φ2
+b
+(
+1 + 1
+2e8.8φb
+)
+. (47)
+Notice that, in fully periodic domains, the condition in equation (46) gives the minimum time required to achieve
+a fully developed concentration proﬁle. In order to drive the ﬂow through the fully periodic channel, a body force
+11
+
+closure expression coeﬃcients
+f (φ) equation (27) α = 4
+ηN(φ) equation (26) KN = 0.75
+µp/µ f equation (25) aµ =−1, bµ = 0, cµ = 1
+λi(φ) constant values {1.0, 0.8, 0.5}
+φm constant value 0.68
+˙γNL equation (21) as = dp/H
+Table 1: Closure models and parameters used for the parallel plates (planar Poiseuille) conﬁguration.
+is applied that ensures an average value U f of the ﬂuid (or particle) velocity ﬁeld. This value is chosen such that
+the resulting particle Reynolds number [deﬁned in equation (2)] is small, speciﬁcally Rep≈ 10−3≪ 1. Then, the
+condition in equation (46) can be re-expressed as:
+t≥ H
+U f
+1
+6g(φb)
+(H
+dp
+)2
+. (48)
+We study particles with a diameter dp = 50 µm suspended in a ﬂuid with µ f = 0.48 Pa s and ρ f = ρp =
+1.19 g cm−3. We employ the rheological closures suggested by Miller and Morris [40], since those were shown to
+produce the most accurate results [8]. The mesh consists of 20 cells in the direction of the gap. For the case of the full
+channel, the mesh in the ﬂow direction is made of 100 cells with a growth factor of 50 as in [8]. Closures adopted are
+detailed in table 1. As shown in ﬁgure 3, our two-ﬂuid model (TFM) is able to accurately reproduce results from the
+suspension balance model (SBM) under its customary simpliﬁcations.
+Unlike previous computational studies [67, 9, 57], we compare the results obtained with a periodic 2D domain to
+those obtained with an entire channel domain. Figure 3 shows that a diﬀerence exists between the two conﬁgurations,
+which can be attributed to the inlet boundary condition. In each situation, the domain is initialized with a ﬁxed
+average particle volume concentration φb, which is conserved in the case of a periodic channel. In the full channel,
+φb likewise correspond to the ﬁxed particle concentration at the inlet. The latter value is not conserved along the
+channel. Instead, for each axial cross-section A, the average volumetric ﬂux ⟨upφ⟩A is conserved. This leads to an
+overall over-prediction of the particle concentration in a fully periodic conﬁguration.
+The disturbance induced by the inlet boundary condition is propagated at a ﬁnite speed throughout the domain, as
+shown in ﬁgure 4. The time required for the inlet eﬀects to propagate through the channel is signiﬁcantly larger than
+the characteristic time of the particle migration process, and this should be considered when taking measurements in
+actual microchannels. In fact, far away from the inlet the concentration proﬁle reaches an apparent steady state, which
+is analogous to our results from the fully periodic channel simulations in ﬁgure 3. Sections of the channel reached
+by the inlet disturbance switch from mass conservative (the area-averaged particle concentration is the same for each
+section) to ﬂux conservative (the area-averaged particle concentration ﬂux is the same for each section).
+4.2. Suspension ﬂow in a cylindrical Couette cell
+Next, we test our TFM solver on the Couette cell geometry depicted in ﬁgure 5, where the domain consists of the
+region between two concentric cylinders. The inner cylinder rotates about its central axis with angular velocity ω,
+while the outer cylinder is ﬁxed. The system is initialized with a uniform particle volume concentrationφb = 0.5. The
+mesh consists of 20 cells in the radial direction and the closure models are detailed in table 2. This ﬂow conﬁguration
+has been studied experimentally in [52] and numerically using the SBM in [8, 44]. Additionally, a semi-analytic
+model was proposed by Dbouk et al. [8]. All these studies are in agreement and predict similar concentration proﬁles.
+In the Couette cell, a homogeneous suspension ﬁlls the gap between two concentric cylinders of radii Rin =
+0.64 cm and Rout = 2.34 cm. At the initial time t = 0 s, the inner cylinder starts spinning with angular velocity
+ω, thus giving rise to a shear in the radial direction, which induces particle migration. Experiments employed a
+suspension composed of Poly(methyl methacrylate) (PMMA) spheres with mean diameter dp = 675µm suspended
+in a Newtonian ﬂuid having dynamic viscosity µ f = 9.45 Pa s. The particle and ﬂuid densities are ρ f = ρp =
+1.183 g cm−3. We again employed the set of parameters suggested by Morris and Boulay [44] in our rheology models.
+Figure 6 show that the TFM is in good agreement with results from previous studies.
+12
+
+0 0.2 0.4 0.6 0.8 1
+0
+0.2
+0.4
+0.6
+0.8
+1
+TFM - periodic
+TFM - channel
+Lyon & Leal (1998) - experiment
+Miller & Morris (2005) - SBM
+(a) Cross-sectional concentration proﬁle,φb = 0.3
+0 0.2 0.4 0.6 0.8 1
+0
+0.2
+0.4
+0.6
+0.8
+1 TFM - periodic
+TFM - channel
+Lyon & Leal (1998) - experiment
+Miller & Morris (2005) - SBM (b) Cross-sectional concentration proﬁle,φb = 0.4
+0 0.2 0.4 0.6 0.8 1
+0
+0.2
+0.4
+0.6
+0.8
+1
+1.2
+TFM - periodic
+TFM - channel
+Lyon & Leal (1998) - experiment
+Miller & Morris (2005) - SBM
+(c) Cross-sectional concentration proﬁle,φb = 0.5
+0 0.2 0.4 0.6 0.8 1
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+TFM channel - b = 0.3
+TFM channel - b = 0.4
+TFM  channel- b = 0.5
+Miller & Morris (2005) - b= 0.3
+Miller & Morris (2005) - b= 0.4
+Miller & Morris (2005) - b= 0.5 (d) Axial concentration proﬁles for allφb
+Figure 3: Results for the 2D pressure-driven channel ﬂow from our TFM implementation compared against experimental results from Lyon and
+Leal [36] and the SBM results of Miller and Morris [40].
+4.2.1. Solver performance as φ→φm
+Whenever the particle concentration approaches the maximum limitφm, we are approaching the jamming limiting
+in which the ﬂow arrests. The computational problem becomes very sti ﬀ due to the divergence of various quantities
+in the rheological closures above. It is certainly problematic to try to push a rheological model of ﬂow into a jamming
+regime, the physics of which are dominated by particle re-arrangements and contact [43]. Nevertheless, it might be
+illustrative to consider an example of pushing the proposed numerical method to its limit. In particular, it is important
+to know whether, in this situation, the algorithm may fail because the iteration loop diverges (no solution can be
+achieved).
+Divergence and failure of the numerical algorithm can be avoided by approaching the jamming threshold φm
+smoothly and without sudden jumps. Therefore, one should:
+(i) Employ the implicit formulation for the stress in the advection equation for the particle phase as detailed in
+section 3. This is particularly critical since the we observed that the algorithm diverges when using the standard
+explicit formulation approaching the jamming regime.
+(ii) Increase the number of pressure correctors to couple the momentum equations more tightly.
+(iii) Reduce the Courant number, which can also prevent sudden pressure spikes or instabilities.
+13
+
+y
+x L
+H
+Figure 4: Time-evolution of the particle volume concentration in the “full” (non-periodic) 2D channel forφb = 0.3. The channel has been scaled in
+the axial x-direction by a factor of 10−2 for display purposes.
+closure expression coeﬃcients
+f (φ) equation (28) α = 4
+ηN(φ) equation (26) KN = 0.75
+µp/µ f equation (25) aµ = 0, bµ = 2.5, cµ = 0.1
+λi(φ) constant values {1.0, 0.8, 0.5}
+φm constant value 0.68
+˙γNL constant value 0
+Table 2: Closure models and parameters used for the Couette (cylindrical) conﬁguration.
+14
+
+!"#
+$%⋅'(=0
+!+,-
+.=0$%⋅'(=0.=/!"#01
+Figure 5: Schematic representation of the Couette cell geometry. The “one-dimensional” mesh corresponds to the shaded region in the radial
+direction between r = Rin and r = Rout. Here, ω is the angular velocity of the inner cylinder, ˆθ is the unit normal vector in the azimuthal direction,
+and ˆr is the unit normal vector in the radial direction. Boundary conditions are shown for the surfaces r = Rin and r = Rout, while an empty
+boundary condition is applied in the axial direction. A ‘wedge’ boundary condition is applied in the angular direction.
+0 0.2 0.4 0.6 0.8 1
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+Present simulation - TFM
+Philips et al. (1992) - experiment
+Dbouk et al. (2013) - SBM
+Morris & Boulay (1999) - SBM
+(a) after 200 turns
+0 0.2 0.4 0.6 0.8 1
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+Present simulation - TFM
+Philips et al. (1992) - experiment
+Dbouk et al. (2013) - SBM
+Morris & Boulay (1999) - SBM (b) after 12, 000 turns
+Figure 6: Comparison between the two-ﬂuid model (TFM), the suspension balance model (SBM) and experimental data for the Couette cell
+geometry. No signiﬁcant deviation from the expected outcomes is observed for the TFM model, thus showing good agreement.
+15
+
+0 0.2 0.4 0.6 0.8 1
+0.7
+0.75
+0.8
+0.85
+0.9
+0.95
+1
+420 rounds
+430 rounds
+440 rounds
+450 rounds
+Figure 7: Particle concentration proﬁles in the jamming regime for a Couette cell. Diﬀerent lines correspond to diﬀerent simulation times, expressed
+in number of revolutions. Slight oscillations are noticeable in the region between dimensionless radii of 0.5 and 0.7.
+Figure 7 shows that we observe some small oscillations int the Couette cell when approaching the jamming regime,
+if we employ (i)the implicit stress formulation, (ii) 20 pressure correctors, and (iii) a maximum Courant number equal
+to 0.3. The system was initialized with φ/φm = 0.956. Notice that the cells close to the origin have a smaller volume
+due to the cylindrical coordinate system employed and that mass was conserved during the whole simulation.
+4.3. Resuspension
+Our next validation test for the TFM is in a curvilinear mixing ﬂow with buoyancy eﬀects, as shown schematically
+in ﬁgure 8. This benchmark is also an important test of the frame-invariant form of the anisotropic tensor Q that
+we introduced in equations (23) and (24) above. This ﬂow conﬁguration was ﬁrst employed by Abbot et al. [1] to
+investigate particle migration, and it has been a staple in subsequent experimental and numerical works [55, 8].
+A suspension of particles with diameter dp = 494µm and densityρp = 1.18 g cm−3 is suspended in a Newtonian
+ﬂuid with density ρ f = 1.253 g cm−3 and viscosity µ f = 0.588 Pa s. The suspension ﬁlls the gap between two
+concentric cylinders of inner radius Rin = 0.64 cm and outer radius Rout = 2.54 cm. The inner cylinder is set into
+motion by rotating it anti-clockwise, which shears the ﬂuid, introducing a velocity gradient in the radial direction.
+The fully structured mesh consists on four blocks of 50× 50 cells, resulting in 50 cells in the radial direction and
+200 cells in the angular direction. For time stepping, a maximum Courant number of 0 .4 was imposed. This value
+was chosen to allow the solver to ﬁnish the PIMPLE loop in a ﬂow conﬁguration having a Courant number higher
+than the maximum, while still fulﬁlling the Courant–Friedrich–Lewy (CFL) condition [6]. In fact, the CFL condition
+tends to be violated near the inner cylinder when imposing a maximum Courant number close to one, as can be seen
+in the results of Dbouk et al. [8]. The closure models employed for this benchmark are detailed in table 3.
+As shown in ﬁgure 9, our TFM implementation is able to capture a range of features in this ﬂow, such as the
+formation of a thin particle layer in the mixing direction as well as the existence of a low particle density region at the
+bottom of the cylinder. However, we point out that the particle volume fraction distribution is strongly dependent on
+closure expression coeﬃcients
+f (φ) equation (27) α = 4
+ηN(φ) equation (26) KN = 0.75
+µp/µ f equation (25) aµ =−1, bµ = 0, cµ = 1
+λi(φ) equation (29) –
+φm constant value 0.64
+˙γNL constant value 0
+Table 3: Closure models and parameters used in the resuspension conﬁguration.
+16
+
+!_#$
+%|'(=0
+%|'(=0.565
+./⋅12=0./⋅12=03=!456783=0 !9:
+!;<=
+>
+Figure 8: Schematic representation of a cylindrical mixer with rotating inner cylinder. The domain is initialized with two regions of uniform but
+diﬀerent particle volume concentrationφ|t0 , with clear ﬂuid in the lower part of the mixer. The size of these regions is adjusted to obtain an average
+initial particle volume concentrationφb = 0.2. Here,ω is the angular velocity of the inner cylinder, and ˆθ is the unit normal vector in the azimuthal
+direction. Boundary conditions are shown for the surfacesr = Rin and r = Rout, while an empty boundary condition is applied in the axial direction.
+the choice of the closure models and the corresponding closure coe ﬃcients [8], in particular the choice of φm. This
+sensitivity means that model calibration is needed when simulating such complex ﬂows. Therefore, future research
+should address the issue of ‘universal’ rheological closures for dense suspensions.
+Figure 9: Comparison between our numerical TFM results (bottom) and the resuspension experiment from Rao et al. [55] (top) [Reprinted with
+permission from [55] c⃝2002 John Wiley & Sons, Ltd]. Numbers on the bottom left correspond to the number of turns of the inner cylinder.
+17
+
+4.4. Secondary ﬂows: Symmetric herringbone channel
+Suspension ﬂows in channels with 2D and 3D ﬂows features have been studied experimentally [19, 20] due to
+their importance for enhancing mixing and transport rates at low Reynolds numbers [49]. Speciﬁcally, symmetric
+herringbone channels (inspired by the so-called “staggered herringbone mixer” [62]) lead to the emergence of a
+vertical band of low concentration in the center of the channel, thus a particle migration ﬂux is established towards
+the lateral walls. In this subsection, we simulate this phenomenon using the proposed TFM. The geometry employed
+is depicted in ﬁgure 10 together with the numerical grid. The geometry and material properties are chosen according
+to the experiment of Gao and Gilchrist [19].
+(a) Top view
+ (b) Front view
+Figure 10: Computational grid employed for the simulation of secondary ﬂows in a symmetric herringbone channel. A square channel with
+dimensions 135µm× 90µm× 30µm is employed and the herringbone structure is 20µm high and 50µm long.
+We employed a fully periodic domain, and we enforced the ﬂow rate via a forcing term in the governing equations.
+Additionally, we initialized the system with a uniform suspension with particle volume concentration φb = 0.1.
+The choice of a fully periodic domain induces a signiﬁcant di ﬀerence with respect to experimental works, were a
+suspension was pumped in a long channel initialized with a clear ﬂuid. In fact, not only do we expect a similar
+discrepancy as that discussed in section 4.1, but we also do not expect that the Kelvin–Helmoltz (KH) instability
+discussed in [19] would arise, as this instability is due to the shearing of the clear ﬂuid initially ﬁlling the cavities
+(while we have initialized our simulations with a homogeneous suspension therein). The KH instability latter eﬀect is
+responsible for the asymmetric concentration proﬁle observed in the experiments [19].
+For these simulations, we employed particles with diameter dp = 1.01µm and density ρp = 2 g/cm3, while the
+ﬂuid has density ρ f = 1.2 g cm−3 and viscosity µ f = 0.04 Pa s. Thus, particles will tend to sink due to the density
+diﬀerence. The closures employed in this simulation are the same as in table 1. Due to the non-orthogonality of the
+mesh, multiple corrector steps are employed to obtain a stable solution.
+Figure 11 shows the velocity and particle volume concentration after a steady state is reached. We observe that
+the particle volume concentration reaches its maximum and minimum values inside the cavity, corresponding to the
+most and least quiescent regions. In fact, we observed that, during the ﬁrst few time steps, the particle concentration
+increases in the vertical direction in the channel and subsequently decreases while particles are accumulating in the
+rear of the herringbone structure. This phenomenon would be less evident in experiments due to the presence of clear
+ﬂuid in the cavities.
+A comparison between our results and those from Gao and Gilchrist [19] is shown in ﬁgure 12. Clearly, our
+TFM solver is able to predict the existence of two symmetric regions separated by a vertical line of low particle
+concentration. Obtaining quantitative agreement through extensive model calibration is beyond the scope of this
+simulation, since that would also require much more faithful numerical modeling of the experimental conditions.
+However, this test case demonstrates that our TFM solver is able to reproduce the physics of particle migration
+induced by complex features in the ﬂow geometry.
+18
+
+(a)
+ (b)
+Figure 11: (a) Particle velocity streamlines and (b) particle volume concentration in the symmetric herringbone channel computed using the TFM.
+(a)
+ (b)
+Figure 12: Comparison between (a) the TFM solver and (b) the experiment from Gao and Gilchrist [19] [Reprinted with permission from [19]
+c⃝2008 American Physical Society]. Color maps represent the particle volume concentration.
+5. Conclusions
+In this work, we presented a two-ﬂuid formulation of the shear-dominated ﬂow of a dense suspension. The
+proposed two-ﬂuid model (TFM) allows us to simulate general unsteady curvilinear ﬂows accounting for anisotropic
+constitutive models. The TFM was implemented as an extension of the OpenFOAM R⃝ twoPhaseEulerFoam solver,
+and it is thus freely available for usage and improvement by anyone. We demonstrated that the solver is capable
+of accurately reproducing results from experiments and previous simulations based on the (less general) suspension
+balance model. Furthermore, the solver can be employed to study complex curvilinear suspension ﬂows, and it can
+handle various non-orthogonal geometries. Therefore, in future work, the proposed TFM could be adapted to study,
+for example, highly unsteady particle migration in oscillatory ﬂows in cylindrical geometries, a topic of signiﬁcant
+current interest [59, 7], and provide further insight into Taylor dispersion of dense suspensions [23, 54].
+However, further research needs to be performed in order to develop rheological models tailored for the TFM.
+Speciﬁcally, models that distinguish between long-range hydrodynamic interactions [43] and contact frictional forces
+should be researched in order to develop a simulation tool that is capable of predicting transitions between ﬂow
+regimes (for example, from non-Brownian to Brownian). Therefore, future research should perhaps be devoted to
+isolating the rheology of the particle phase from that of the mixture.
+The OpenFOAM R⃝ code associated with this work can be freely downloaded from the ﬁrst author’s GitHub reposi-
+tory (https://github.com/fmuni/twoFluidsNBSuspensionFoam), together with the cases corresponding to the
+simulations performed in this work.
+19
+
+0 0.2 0.4 0.6 0.8 1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+h = 10
+h = 20
+h = 30
+(a)
+0 0.2 0.4 0.6 0.8 1
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+h = 10
+h = 20
+h = 30 (b)
+Figure A.13: Particle volume concentration proﬁles obtained using diﬀerent grid resolutions for (a) the Pouiseille channel ﬂow ( φb = 0.3) and (b)
+the Couette cell ﬂow (200 turns of the inner cylinder).
+Acknowledgements
+Acknowledgment is made to the donors of the American Chemical Society Petroleum Research Fund for support
+of this research under ACS PRF award # 57371-DNI9. P.P.N. additionally acknowledges the S.N. Bose Scholars
+program of SERB-IUSSTF for funding his internship at Purdue during Summer 2018. We thank the two anonymous
+reviewers for comments and questions that have improved the manuscript.
+Appendix A. Grid convergence analysis
+In this appendix, we show that the numerical grids we employed are suﬃcient to capture the requisite details of the
+suspension ﬂows considered. We express the degree of reﬁnement using the number of cells h in the shear direction,
+which is deﬁned ash = H/∆y for the parallel channel and as h = (Rout− Rin)/∆r for the Couette cell.
+Concerning the Poiseuille channel ﬂow, ﬁgure A.13a shows the case of φb = 0.3, which is the most sensitive
+to the grid size (since the particle volume concentration is far from the packing fraction φm). We remark that using
+diﬀerent expressions for the non-local shear rate ˙γNL leads to diﬀerent grid dependencies, since the non-local shear
+rate is meant to limit the particle volume concentration at the centerline of the channel.
+Similarly, ﬁgure A.13b shows that, in the case of the Couette cell ﬂow, no signiﬁcant dependence on the grid size
+is observed for grids ﬁner thanh = 20. A non-local shear rate was not employed in this case.
+References
+[1] J. R. Abbott, N. Tetlow, A. L. Graham, S. A. Altobelli, E. Fukushima, L. A. Mondy, T. S. Stephens, Experimental observations of particle
+migration in concentrated suspensions: Couette ﬂow, J. Rheol. 35 (1991) 773–795. doi:10.1122/1.550157.
+[2] T. Ahnert, A. M ¨unch, B. Wagner, Models for the two-phase ﬂow of concentrated suspensions, Eur. J. Appl. Math. 30 (2019) 585–617.
+doi:10.1017/S095679251800030X.
+[3] J. P. Boris, D. L. Book, Flux-corrected transport, J. Comput. Phys. 135 (1997) 172–186. doi:10.1006/jcph.1997.5700.
+[4] F. Boyer, E. Guazzelli, O. Pouliquen, Unifying suspension and granular rheology, Phys. Rev. Lett. 107 (2011) 188301. doi:10.1103/
+PhysRevLett.107.188301.
+[5] C. E. Brennen, Fundamentals of Multiphase Flow, Cambridge University Press, Cambridge, UK, 2005. doi:10.1017/CBO9780511807169.
+[6] R. Courant, H. Lewy, K. Friedrichs, ¨Uber die partiellen Diﬀerenzengleichungen der mathematischen Physik, Math. Ann. 100 (1928) 32–74.
+doi:10.1007/BF01448839.
+[7] F. R. Cui, A. A. Howard, M. R. Maxey, A. Tripathi, Dispersion of a suspension plug in oscillatory pressure-driven ﬂow, Phys. Rev. Fluids 2
+(2017) 094303. doi:10.1103/PhysRevFluids.2.094303.
+[8] T. Dbouk, E. Lemaire, L. Lobry, F. Moukalled, Shear-induced particle migration: Predictions from experimental evaluation of the particle
+stress tensor, J. Non-Newtonian Fluid Mech. 198 (2013) 78–95. doi:10.1016/j.jnnfm.2013.03.006.
+20
+
+[9] T. Dbouk, L. Lobry, E. Lemaire, Normal stresses in concentrated non-Brownian suspensions, J. Fluid Mech. 715 (2013) 239–272. doi:
+10.1017/jfm.2012.516.
+[10] M. M. Denn, J. F. Morris, Rheology of non-Brownian suspensions, Ann. Rev. Chem. Biomolec. Eng. 5 (2014) 203–228. doi:10.1146/
+annurev-chembioeng-060713-040221 .
+[11] H. J. Di, K. C. Cameron, Reducing environmental impacts of agriculture by using a ﬁne particle suspension nitriﬁcation inhibitor to decrease
+nitrate leaching from grazed pastures, Agric. Ecosyst. Environ. 109 (2005) 202–212. doi:10.1016/J.AGEE.2005.03.006.
+[12] R. Di Felice, Hydrodynamics of liquid ﬂuidisation, Chem. Eng. Sci. 50 (1995) 1213–1245. doi:10.1016/0009-2509(95)98838-6 .
+[13] E. V . Dontsov, A. P. Peirce, Slurry ﬂow, gravitational settling and a proppant transport model for hydraulic fractures, J. Fluid Mech. 760
+(2014) 567–590. doi:10.1017/jfm.2014.606.
+[14] E. V . Dontsov, A. P. Peirce, Proppant transport in hydraulic fracturing: Crack tip screen-out in KGD and P3D models, Int. J. Solids Structs
+63 (2015) 206–218. doi:10.1016/j.ijsolstr.2015.02.051.
+[15] D. A. Drew, P. L. Passman, Theory of Multicomponent Fluids, V ol. 135 of Applied Mathematical Sciences, Springer-Verlag, New York, NY ,
+1999. doi:10.1007/b97678.
+[16] I. Drijer, T. van de Laar, H. M. V ollebregt, C. Schro ¨en, From highly specialised to generally available modelling of shear induced particle
+migration for ﬂow segregation based separation technology, Sep. Purif. Technol. 192 (2018) 99–109. doi:10.1016/j.seppur.2017.10.
+001.
+[17] J. H. Ferziger, M. Peri ´c, Solution of the Navier-Stokes Equations, in: Computational Methods for Fluid Dynamics, Springer,
+Berlin/Heidelberg, 2002, pp. 157–216. doi:10.1007/978-3-642-56026-2{\_}7 .
+[18] Y . Forterre, O. Pouliquen, Flows of dense granular media, Annu. Rev. Fluid Mech. 40 (2008) 1–24. doi:10.1146/annurev.fluid.40.
+111406.102142.
+[19] C. Gao, J. F. Gilchrist, Shear-induced particle migration in one-, two-, and three-dimensional ﬂows, Phys. Rev. E 77 (2008) 025301. doi:
+10.1103/PhysRevE.77.025301.
+[20] C. Gao, B. Xu, J. F. Gilchrist, Mixing and segregation of microspheres in microchannel ﬂows of mono- and bidispersed suspensions, Phys.
+Rev. E 79 (2009) 36311. doi:10.1103/PhysRevE.79.036311.
+[21] D. Gidaspow, Multiphase Flow and Fluidization: Continuum and Kinetic Theory Descriptions, Academic Press, San Diego, CA, 1994.
+[22] I. Goldhirsch, Introduction to granular temperature, Powder Technol. 182 (2008) 130–136. doi:10.1016/J.POWTEC.2007.12.002.
+[23] I. M. Gri ﬃths, H. A. Stone, Axial dispersion via shear-enhanced di ﬀusion in colloidal suspensions, EPL 97 (2012) 58005. doi:10.1209/
+0295-5075/97/58005.
+[24] E. Guazzelli, J. F. Morris, A Physical Introduction to Suspension Dynamics, V ol. 45 of Cambridge Texts in Applied Mathematics, Cambridge
+University Press, New York, 2011. doi:10.1017/CBO9780511894671.
+[25] E. Guazzelli, O. Pouliquen, Rheology of dense granular suspensions, J. Fluid Mech. 852 (2018) P1. doi:10.1017/jfm.2018.548.
+[26] M. Han, C. Kim, M. Kim, S. Lee, Particle migration in tube ﬂow of suspensions, J. Rheol. 43 (1999) 1157–1174. doi:10.1122/1.551019.
+[27] J. D. Hyman, J. Jim ´enez-Mart´ınez, H. S. Viswanathan, J. W. Carey, M. L. Porter, E. Rougier, S. Karra, Q. Kang, L. Frash, L. Chen, Z. Lei,
+D. O’Malley, N. Makedonska, Understanding hydraulic fracturing: a multi-scale problem, Phil. Trans. R. Soc. A 374 (2016) 20150426.
+doi:10.1098/rsta.2015.0426.
+[28] L. Isa, R. Besseling, W. C. K. Poon, Shear zones and wall slip in the capillary ﬂow of concentrated colloidal suspensions, Phys. Rev. Lett. 98
+(2007) 198305. doi:10.1103/PhysRevLett.98.198305.
+[29] R. Jackson, Locally averaged equations of motion for a mixture of identical spherical particles and a Newtonian ﬂuid, Chem. Eng. Sci. 52
+(1997) 2457–2469. doi:10.1016/S0009-2509(97)00065-1 .
+[30] P. Jop, Y . Forterre, O. Pouliquen, A constitutive law for dense granular ﬂows, Nature 441 (2006) 727–730. doi:10.1038/nature04801.
+[31] C. J. Koh, P. Hookham, L. G. Leal, An experimental investigation of concentrated suspension ﬂows in a rectangular channel, J. Fluid Mech.
+266 (1994) 1–32. doi:10.1017/S0022112094000911.
+[32] L. G. Leal, Advanced Transport Phenomena: Fluid Mechanics and Convective Transport Processes, Cambridge University Press, New York,
+2007. doi:10.2277/0521849101.
+[33] D. Leighton, A. Acrivos, The shear-induced migration of particles in concentrated suspensions, J. Fluid Mech. 181 (1987) 415–439. doi:
+10.1017/S0022112087002155.
+[34] D. Lhuillier, Migration of rigid particles in non-Brownian viscous suspensions, Phys. Fluids 21 (2009) 023302. doi:10.1063/1.3079672.
+[35] C. K. K. Lun, S. B. Savage, The e ﬀects of an impact velocity dependent coe ﬃcient of restitution on stresses developed by sheared granular
+materials, Acta Mech. 63 (1986) 15–44. doi:10.1007/BF01182538.
+[36] M. K. Lyon, L. G. Leal, An experimental study of the motion of concentrated suspensions in two-dimensional channel ﬂow. Part 1. Monodis-
+perse systems, J. Fluid Mech. 363 (1998) 25–56. doi:10.1017/S0022112098008817.
+[37] S. H. Maron, A. W. Sisko, Application of Ree-Eyring generalized ﬂow theory to suspensions of spherical particles, J. Colloid Sci. 12 (1957)
+99–107. doi:10.1016/0095-8522(57)90031-4 .
+[38] M. Maxey, Simulation methods for particulate ﬂows and concentrated suspensions, Annu. Rev. Fluid Mech. 49 (2017) 171–193. doi:
+10.1146/annurev-fluid-122414-034408 .
+[39] C. C. Milioli, F. E. Milioli, W. Holloway, K. Agrawal, S. Sundaresan, Filtered Two-Fluid Models of Fluidized Gas-Particle Flows: New
+Constitutive Relations, AIChE J. 59 (2013) 3265–3275. doi:10.1002/aic.
+[40] R. M. Miller, J. F. Morris, Normal stress-driven migration and axial development in pressure-driven ﬂow of concentrated suspensions, J.
+Non-Newtonian Fluid Mech. 135 (2006) 149–165. doi:10.1016/J.JNNFM.2005.11.009.
+[41] P. Mills, P. Snabre, Rheology and structure of concentrated suspensions of hard spheres. Shear induced particle migration, J. Physique II 5
+(1995) 1597–1608. doi:10.1051/jp2:1995201.
+[42] P. Mirbod, Two-dimensional computational ﬂuid dynamical investigation of particle migration in rotating eccentric cylinders using suspension
+balance model, Int. J. Multiphase Flow 80 (2016) 79–88. doi:10.1016/j.ijmultiphaseflow.2015.11.002.
+[43] J. F. Morris, Lubricated-to-frictional shear thickening scenario in dense suspensions, Phys. Rev. Fluids 3 (2018) 110508. doi:10.1103/
+PhysRevFluids.3.110508.
+21
+
+[44] J. F. Morris, F. Boulay, Curvilinear ﬂows of noncolloidal suspensions: The role of normal stresses, J. Rheol. 43 (1999) 1213–1237. doi:
+10.1122/1.551021.
+[45] J. F. Morris, J. F. Brady, Pressure-driven ﬂow of a suspension: Buoyancy eﬀects, Int. J. Multiphase Flow 24 (1998) 105–130.doi:10.1016/
+S0301-9322(97)00035-9 .
+[46] F. Moukalled, L. Mangani, M. Darwish, The Finite V olume Method in Computational Fluid Dynamics: An Advanced Introduction with
+OpenFOAM R⃝ and Matlab, Fluid Mechanics and its Applications, Springer International Publishing, Cham, Switzerland, 2016. doi:10.
+1007/978-3-319-16874-6 .
+[47] P. R. Nott, J. F. Brady, Pressure-driven ﬂow of suspensions: simulation and theory, J. Fluid Mech. 275 (1994) 157–199. doi:10.1017/
+S0022112094002326.
+[48] P. R. Nott, E. Guazzelli, O. Pouliquen, The suspension balance model revisited, Phys. Fluids 23 (2011) 043304. doi:10.1063/1.3570921.
+[49] J. M. Ottino, S. Wiggins, Introduction: mixing in microﬂuidics, Phil. Trans. R. Soc. Lond. A 362 (2004) 923–935. doi:10.1098/rsta.
+2003.1355.
+[50] A. Passalacqua, R. O. Fox, Implementation of an iterative solution procedure for multi-ﬂuid gas–particle ﬂow models on unstructured grids,
+Powder Technol. 213 (2011) 174–187. doi:10.1016/j.powtec.2011.07.030.
+[51] P. Pham, B. Metzger, J. E. Butler, Particle dispersion in sheared suspensions: Crucial role of solid-solid contacts, Phys. Fluids 27 (2015)
+051701. doi:10.1063/1.4919728.
+[52] R. J. Phillips, R. C. Armstrong, R. A. Brown, A. L. Graham, J. R. Abbott, A constitutive equation for concentrated suspensions that accounts
+for shear-induced particle migration, Phys. Fluids A 4 (1992) 30–40. doi:10.1063/1.858498.
+[53] F. Picano, W.-P. Breugem, D. Mitra, L. Brandt, Shear thickening in non-Brownian suspensions: An excluded volume e ﬀect, Phys. Rev. Lett.
+111 (2013) 098302. doi:10.1103/PhysRevLett.111.098302.
+[54] A. Ramachandran, A macrotransport equation for the particle distribution in the ﬂow of a concentrated, non-colloidal suspension through a
+circular tube, J. Fluid Mech. 734 (2013) 219–252. doi:10.1017/jfm.2013.455.
+[55] R. Rao, L. Mondy, A. Sun, S. Altobelli, A numerical and experimental study of batch sedimentation and viscous resuspension, Int. J. Numer.
+Meth. Fluids 39 (2002) 465–483. doi:10.1002/fld.246.
+[56] G. Segr ´e, A. Silberberg, Radial particle displacements in Poiseuille ﬂow of suspensions, Nature 189 (1961) 209–210. doi:10.1038/
+189209a0.
+[57] D. Semwogerere, J. F. Morris, E. R. Weeks, Development of particle migration in pressure-driven ﬂow of a Brownian suspension, J. Fluid
+Mech. 581 (2007) 437–451. doi:10.1017/S0022112007006088.
+[58] S. Shiozawa, M. McClure, Simulation of proppant transport with gravitational settling and fracture closure in a three-dimensional hydraulic
+fracturing simulator, J. Petrol. Sci. Eng. 138 (2016) 298–314. doi:10.1016/j.petrol.2016.01.002.
+[59] B. Snook, J. E. Butler, E. Guazzelli, Dynamics of shear-induced migration of spherical particles in oscillatory pipe ﬂow, J. Fluid Mech. 786
+(2016) 128–153. doi:10.1017/jfm.2015.645.
+[60] J. J. Stickel, R. L. Powell, Fluid mechanics and rheology of dense suspensions, Ann. Rev. Fluid Mech. 37 (2005) 129–149. doi:10.1146/
+annurev.fluid.36.050802.122132.
+[61] H. Strathmann, Membrane separation processes: Current relevance and future opportunities, AIChE J. 47 (2001) 1077–1087. doi:10.1002/
+aic.690470514.
+[62] A. D. Stroock, Chaotic mixer for microchannels, Science 295 (2002) 647–651. doi:10.1126/science.1066238.
+[63] L. Thomas, H. Tang, D. M. Kalyon, S. Aktas, J. D. Arthur, J. Blotevogel, J. W. Carey, A. Filshill, P. Fu, G. Hsuan, T. Hu, D. Soeder,
+S. Shah, R. Vidic, M. H. Young, Toward better hydraulic fracturing ﬂuids and their application in energy production: A review of sustainable
+technologies and reduction of potential environmental impacts, J. Petrol. Sci. Eng. 173 (2019) 793–803. doi:10.1016/j.petrol.2018.
+09.056.
+[64] P. Valk ´o, M. J. Economides, Hydraulic Fracture Mechanics, John Wiley & Sons, New York, NY , 1995.
+[65] H. M. V ollebregt, R. G. M. van der Sman, R. M. Boom, Suspension ﬂow modelling in particle migration and microﬁltration, Soft Matter 6
+(2010) 6052–6064. doi:10.1039/c0sm00217h.
+[66] H. G. Weller, G. Tabor, C. Fureby, H. Jasak, A tensorial approach to computational continuum mechanics using object-oriented techniques,
+Comput. Phys. 12 (1998) 620–631. doi:10.1063/1.168744.
+[67] K. Yeo, M. R. Maxey, Dynamics and rheology of concentrated, ﬁnite-Reynolds-number suspensions in a homogeneous shear ﬂow, Phys.
+Fluids 25 (2013) 053303. doi:10.1063/1.4802844.
+[68] K. Yeo, M. Maxey, Numerical simulations of concentrated suspensions of monodisperse particles in a Poiseuille ﬂow, J. Fluid Mech. 682
+(2011) 491–518. doi:10.1017/jfm.2011.241.
+[69] S. T. Zalesak, Fully multidimensional ﬂux-corrected transport algorithms for ﬂuids, J. Comput. Phys. 31 (1979) 335–362. doi:10.1016/
+0021-9991(79)90051-2 .
+22

@@ -1,0 +1,5374 @@
+Bayesian calibration of bubble size dynamics applied to \ceCO2 gas fermenters
+
+1  Introduction
+
+1.1  Motivation
+
+1.2  Bubble size dynamics model calibration
+
+2  Numerical method
+
+2.1  Multiphase model
+
+2.2  Bubble size models
+
+3  Validation of the base model
+
+3.1  Experimental data
+
+3.2  Numerical details
+
+3.3  Comparison to experiments
+
+3.4  Source of discrepancy between numerical simulation and the experiments
+
+4  Model calibration
+
+4.1  Calibration problem
+
+4.2  Bayesian inference approach
+
+4.3  Surrogate modeling approach
+
+4.4  Combining multiple observations
+
+4.5  Results
+
+4.5.1  Parameters’ posteriors
+
+4.5.2
+
+Test for general applicability
+
+5  Conclusions
+
+A  Convergence of the neural networks
+
+B  Turbulence boundary conditions
+
+C
+
+Validation of Algo.  1  and Algo.  2
+
+C.1
+
+Simplified bubble size distribution (BSD) dynamics model
+
+C.2
+
+Calibration
+
+D
+
+Effect of calibration on the BSD
+
+E
+
+Calibrated parameter sensitivity
+
+Bayesian calibration of bubble size dynamics applied to  \ce CO2 gas fermenters
+
+Malik Hassanaly
+
+Computational Science Center, National Renewable Energy Laboratory, Golden, CO 80401
+
+John M. Parra-Alvarez
+
+Mohammad J. Rahimi
+
+Federico Municchi
+
+Hariswaran Sitaraman
+
+Abstract
+
+To accelerate the scale-up of gaseous  \ce CO2 fermentation reactors, computational models need to predict gas-to-liquid mass transfer which requires capturing the bubble size dynamics, i.e. bubble breakup and coalescence. However, the applicability of existing models beyond air-water mixtures remains to be established.
+Here, an inverse modeling approach, accelerated with a neural network surrogate, calibrates the breakup and coalescence closure models, that are used in  class methods for  population balance modeling (PBM). The calibration is performed based on experimental results obtained in a  \ce CO2-air-water-coflowing bubble column reactor. Bayesian inference is used to account for noise in the experimental dataset and bias in the simulation results. To accurately capture gas holdup and interphase mass transfer, the results show that the breakage rate needs to be increased by one order of magnitude. The inferred model parameters are then used on a separate configuration and shown to also improve bubble size distribution predictions.
+
+keywords:
+
+Inverse modeling, Bubble size dynamics, Bubbly flows,  \ce CO2 utilization, Bioreactor
+
+†
+
+†  journal:  TBD
+
+1  Introduction
+
+1.1  Motivation
+
+In order to control global warming to levels lower than 2  ∘  C,  \ce CO2 emissions need to be rapidly reduced (by 37% in 2035 compared to 2019 emissions)  [ 1 ] . To this end, demand reduction or decarbonization of carbon-heavy industrial sectors such as chemical manufacturing and aviation  [ 2 ]  is urgently needed. For specific industrial sectors such as aviation, there remain significant challenges to electrification  [ 3 ] , and recent policies have instead incentivized the production of sustainable aviation fuels (SAF)  [ 4 ] .
+
+Given the widespread availability of gaseous  \ce CO2 through point sources and direct air capture, a promising pathway towards SAF production is to use  \ce CO2 as a carbon feedstock, instead of oil-based products, and several  \ce CO2-based SAF production methods have been developed so far  [ 5 ] . In particular, microbial action to produce valuable SAF intermediates from  \ce CO2/syngas or  \ce CO2/green- \ce H2 mixtures is increasingly pursued  [ 6 ] , building upon successful microbial genetic engineering strategies developments  [ 7 ] . Once the appropriate microbial strain is optimized in the laboratory, fuel production heavily relies on efficiently delivering and dissolving  \ce CO2 into the liquid medium in a gas fermentation reactor. The rate at which gaseous species transfer into the liquid phase, i.e. the interphase mass transfer rate, is a significant contributor towards the overall yield of the system.
+
+The interphase mass transfer itself mainly depends on the Henry saturation concentration that varies directly with pressure  [ 8 ] , the interphase slip velocity, and the size of the gas bubbles that determine an overall interfacial area  [ 9 ] . Multiphase computational fluid dynamics (CFD) simulations can facilitate the optimization and scale-up of such gas fermenters that utilize  \ce CO2, but require careful representation of bubble sizes to be predictive and accurate. Several methods have been proposed to account for variable bubble size.  In particular, methods that use a population balance modeling (PBM) approach have been often used for multiphase flows  [ 10 ,  11 ,  12 ,  13 ]  . In the context of bubbly flows, PBM requires closure modeling to represent how bubbles  coalesce and break up . The focus of this work is to improve coalescence and breakup modeling with a specific focus on interphase mass transfer of  \ce CO2, and thereby help accelerate and derisk scale-up of  \ce CO2 bioconversion.
+
+1.2  Bubble size dynamics model calibration
+
+Throughout the past decades, the choice of the coalescence and breakup models has been observed to significantly affect the numerical predictions for liquid-liquid dispersion  [ 14 ]  and gas-liquid dispersion  [ 15 ,  16 ,  17 ] . The effect of the coalescence and breakup models was observed on bubble size distribution  [ 15 ,  16 ]  and the Sauter mean bubble diameter  [ 15 ]  or droplet diameter  [ 14 ] . Those observations  have led to the conclusion that models  need to be calibrated before being used  [ 15 ,  18 ,  19 ,  20 ,  17 ] .  Here, model calibration refers to optimizing empirical parameters to match experimental measurements available for a specific reactor. In particular, it differs from a validation procedure which does not involve parameter adjustment  [ 21 ] . In the present context, experimental measurements may be describing the bubble size distribution  [ 19 ]  or variables that depend on the bubble size  [ 22 ] .
+
+Several breakup and coalescence model calibration approaches have been undertaken in the past, mostly for liquid-liquid systems  [ 23 ,  24 ,  25 ,  26 ,  27 ,  28 ] , but were also extended to gas-liquid systems  [ 18 ,  19 ]  which are of interest here. Those various efforts have focused on calibrating models in different regimes or against different datasets, and have found different sets of optimal model parameters which can vary by orders of magnitude  [ 25 ] . This observation highlights the importance of calibrating bubble size model dynamics against targeted experiments  [ 20 ,  18 ,  19 ] , and also suggests that parameter calibration is a challenging task.
+
+The first difficulty highlighted by  Maluta et al. [ 29 ]  during a deterministic calibration process is that the calibrated parameters  can  compensate for numerical errors rather than address modeling deficiencies. The second difficulty identified is that there could exist multiple optimal parameter sets that can explain the same experimental observations  [ 30 ] . Therefore, the solution of the calibration procedure should be probabilistic (rather than deterministic) to capture the ensemble of model parameters that explain experimental observations  [ 31 ] . The last difficulty relates to the appropriate choice of experimental datasets: depending on the experimental dataset used for calibration, different parameter values can be identified  [ 31 ] . As a side note, the issues in bubble size dynamics calibration tasks have led to the development of models that do not contain adjustable parameters  [ 32 ]  or that  aim to be generally  applicable  [ 33 ,  34 ] .
+
+To address the first difficulty, appropriate mesh convergence studies are needed  [ 29 ] . To address the second difficulty, a probabilistic calibration is needed. Currently, most breakup and coalescence model calibration tasks reported, provide deterministic optimized model parameters  [ 24 ,  23 ,  25 ,  26 ,  18 ,  20 ] . Only a handful of studies analyze the uncertainty in the calibrated model parameters, by using a local sensitivity analysis on the optimal parameter set  [ 27 ,  28 ] . The advantage of such methods is that they are efficient in terms of the number of forward simulations - i.e. numerical simulations that predict experimental observations for a given parameter set -, but do not necessarily describe the entire distribution of parameter values. Bayesian inference methods have been devised to accurately characterize the parameters’ distributions, but tend to require a large number of forward simulations  [ 35 ,  36 ,  37 ] . Bayesian inference can be efficiently used when the experimental observations can be simulated with fast physics models  [ 38 ,  39 ,  40 ] , or  fast surrogate models  [ 41 ,  42 ,  21 ] . As a side note, sensitivity analysis and calibration can be complementary when one wants to reduce the set of parameters to calibrate  [ 43 ,  44 ] .  To address the third difficulty, combining multiple experimental datasets in the calibration procedure is necessary. When calibrating coalescence and breakup models, experimental datasets are usually combined by minimizing an error fit metric averaged across all the experimental data  [ 26 ,  31 ] . However, experimental data may be subject to different levels of noise, and experimental datasets should not be equally weighted in the parameter fitting procedure. Including experimental noise in the calibration procedure is however straightforward using a Bayesian calibration approach  [ 38 ] .
+
+In the context of sustainable fuel development, there is evidence that interphase mass transfer can be strongly affected by the nature of the broth used for fermentation  [ 45 ]  and surfactants  [ 46 ,  47 ] . Those effects are only partially understood and not specifically modeled in general. Throughout this work, we approach this problem through the lens of model correction. Given the sensitivity of computational models to bubble dynamics model parameters, we propose to use bubble dynamics models as a knob that allows to improve the prediction of specific quantities of interest like gas holdup and interphase mass transfer.
+
+The novel contributions of this work are
+
+1.
+
+Coalescence and breakup models are calibrated against experimental data of a coflowing bubble column reactor using  \ce CO2 in the gas phase. Compared to previous work, the models are calibrated against gas holdup and interphase mass transfer, which are critical parameters for gas fermentation applications.
+
+2.
+
+A Bayesian inference approach is used to calibrate efficiency factors for coalescence and breakup rates, thereby appropriately estimating confidence intervals on the efficiency factors. The Bayesian inference procedure is made tractable by constructing a data-based surrogate model.
+
+3.
+
+Four experimental  gas-liquid  datasets are combined by taking into account  the uncertainties due to missing physics in the numerical models . This  approach is used to determine the best bubble dynamics models  irrespective of the  choice of the parameter value .
+
+4.
+
+We show that the model parameters calibrated are also beneficial for predicting the bubble size distribution of a different reactor type  (stirred-tank reactor) .
+
+In Sec.
+
+2
+
+the numerical modeling approach is described. In Sec.
+
+3  , the performances of the non-calibrated models are compared to the experimental dataset of interest  [ 22 ] . The model calibration problem and the calibration results are shown in Sec.
+
+4  . Conclusions are provided in Sec.
+
+5  .
+
+2  Numerical method
+
+2.1  Multiphase model
+
+The numerical simulations are conducted with a multiphase solver implemented in OpenFOAM  [ 48 ]  that has been extensively used and validated in the past  [ 49 ,  50 ,  51 ] . The multiphase model is implemented via the Euler-Euler method where gas and liquid are treated as continuous interpenetrating phases. Gas and liquid volume fractions are transported according to
+
+∂
+
+(
+
+α  j
+
+⁢
+
+ρ  j
+
+)
+
+∂  t
+
++
+
+∇  ⋅
+
+(
+
+α  j
+
+⁢
+
+ρ  j
+
+⁢
+
+u  j
+
+)
+
+=
+
+∑
+
+k  ≠  j
+
+m  ˙
+
+k  ⁢  j
+
+,
+
+subscript  𝛼  𝑗
+
+subscript  𝜌  𝑗
+
+𝑡
+
+⋅  ∇
+
+subscript  𝛼  𝑗
+
+subscript  𝜌  𝑗
+
+subscript  𝑢  𝑗
+
+subscript
+
+𝑘  𝑗
+
+subscript
+
+˙  𝑚
+
+𝑘  𝑗
+
+\frac{\partial(\alpha_{j}\rho_{j})}{\partial t}+\nabla\cdot(\alpha_{j}\rho_{j}%
+u_{j})=\sum_{k\neq j}\dot{m}_{kj},  divide start_ARG ∂ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) end_ARG start_ARG ∂ italic_t end_ARG + ∇ ⋅ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) = ∑ start_POSTSUBSCRIPT italic_k ≠ italic_j end_POSTSUBSCRIPT over˙ start_ARG italic_m end_ARG start_POSTSUBSCRIPT italic_k italic_j end_POSTSUBSCRIPT ,
+
+(1)
+
+where
+
+j
+
+𝑗
+
+j  italic_j
+
+is the phase index (gas or liquid),
+
+α  j
+
+subscript  𝛼  𝑗
+
+\alpha_{j}  italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the volume fraction of the phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+ρ  j
+
+subscript  𝜌  𝑗
+
+\rho_{j}  italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the density of phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+u  j
+
+subscript  𝑢  𝑗
+
+u_{j}  italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the velocity vector of phase
+
+j
+
+𝑗
+
+j  italic_j
+
+. The right-hand side of this equation includes the sum of interphase mass transfer terms where
+
+m  ˙
+
+k  ⁢  j
+
+subscript
+
+˙  𝑚
+
+𝑘  𝑗
+
+\dot{m}_{kj}  over˙ start_ARG italic_m end_ARG start_POSTSUBSCRIPT italic_k italic_j end_POSTSUBSCRIPT
+
+is the mass transfer rate from phase
+
+k
+
+𝑘
+
+k  italic_k
+
+to phase
+
+j
+
+𝑗
+
+j  italic_j
+
+. To model the relative motion of each phase, a phase-momentum transport equation is solved, which takes the form
+
+∂
+
+(
+
+α  j
+
+⁢
+
+ρ  j
+
+⁢
+
+u  j
+
+)
+
+∂  t
+
++
+
+∇  ⋅
+
+(
+
+α  j
+
+⁢
+
+ρ  j
+
+⁢
+
+u  j
+
+⁢
+
+u  j
+
+)
+
+=
+
+∇  ⋅
+
+(
+
+α  j
+
+⁢
+
+τ  ¯
+
+)
+
+−
+
+α  j
+
+⁢
+
+∇  p
+
++
+
+α  j
+
+⁢
+
+ρ  j
+
+⁢  g
+
++
+
+∑
+
+k  ≠  j
+
+D
+
+k  ⁢  j
+
++
+
+M  j  m
+
++
+
+F  j
+
+,
+
+subscript  𝛼  𝑗
+
+subscript  𝜌  𝑗
+
+subscript  𝑢  𝑗
+
+𝑡
+
+⋅  ∇
+
+subscript  𝛼  𝑗
+
+subscript  𝜌  𝑗
+
+subscript  𝑢  𝑗
+
+subscript  𝑢  𝑗
+
+⋅  ∇
+
+subscript  𝛼  𝑗
+
+¯  𝜏
+
+subscript  𝛼  𝑗
+
+∇  𝑝
+
+subscript  𝛼  𝑗
+
+subscript  𝜌  𝑗
+
+𝑔
+
+subscript
+
+𝑘  𝑗
+
+subscript  𝐷
+
+𝑘  𝑗
+
+subscript
+
+superscript  𝑀  𝑚
+
+𝑗
+
+subscript  𝐹  𝑗
+
+\frac{\partial(\alpha_{j}\rho_{j}u_{j})}{\partial t}+\nabla\cdot(\alpha_{j}%
+\rho_{j}u_{j}u_{j})=\nabla\cdot(\alpha_{j}\overline{\tau})-\alpha_{j}\nabla p+%
+\alpha_{j}\rho_{j}g+\sum_{k\neq j}D_{kj}+M^{m}_{j}+F_{j},  divide start_ARG ∂ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) end_ARG start_ARG ∂ italic_t end_ARG + ∇ ⋅ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) = ∇ ⋅ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT over¯ start_ARG italic_τ end_ARG ) - italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ∇ italic_p + italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_g + ∑ start_POSTSUBSCRIPT italic_k ≠ italic_j end_POSTSUBSCRIPT italic_D start_POSTSUBSCRIPT italic_k italic_j end_POSTSUBSCRIPT + italic_M start_POSTSUPERSCRIPT italic_m end_POSTSUPERSCRIPT start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT + italic_F start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ,
+
+(2)
+
+In equation (  2  ), coupling between phase volume fraction and momentum needs to be enforced, including across phases, where drag forces depend on the relative velocities of each phase. Here,
+
+τ  ¯
+
+¯  𝜏
+
+\overline{\tau}  over¯ start_ARG italic_τ end_ARG
+
+is the stress tensor which includes Reynolds stress and viscous (molecular and turbulent) stress (including turbulent viscosity) for the phase
+
+j
+
+𝑗
+
+j  italic_j
+
+;
+
+D
+
+k  ⁢  j
+
+subscript  𝐷
+
+𝑘  𝑗
+
+D_{kj}  italic_D start_POSTSUBSCRIPT italic_k italic_j end_POSTSUBSCRIPT
+
+is the drag force exerted by phase
+
+k
+
+𝑘
+
+k  italic_k
+
+on phase
+
+j
+
+𝑗
+
+j  italic_j
+
+that depends on the drag coefficient associated with the dispersed phase and associated volume fraction, and
+
+F  j
+
+subscript  𝐹  𝑗
+
+F_{j}  italic_F start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+contains interfacial forces acting on phase
+
+j
+
+𝑗
+
+j  italic_j
+
+which includes  lift , wall-lubrication, virtual-mass and turbulent-dispersion forces, as described in our previous work  [ 49 ] . In addition, momentum can be added to the system due to mass transfer; mass entering/leaving a specific phase. The term
+
+M  j  m
+
+subscript
+
+superscript  𝑀  𝑚
+
+𝑗
+
+M^{m}_{j}  italic_M start_POSTSUPERSCRIPT italic_m end_POSTSUPERSCRIPT start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+accounts for the added momentum:
+
+M  j  m
+
+=
+
+m  ˙
+
+j  ,
+
+i  ⁢  n
+
+⁢
+
+u  k
+
+−
+
+m  ˙
+
+j  ,
+
+o  ⁢  u  ⁢  t
+
+⁢
+
+u  j
+
+subscript
+
+superscript  𝑀  𝑚
+
+𝑗
+
+subscript
+
+˙  𝑚
+
+𝑗
+
+𝑖  𝑛
+
+subscript  𝑢  𝑘
+
+subscript
+
+˙  𝑚
+
+𝑗
+
+𝑜  𝑢  𝑡
+
+subscript  𝑢  𝑗
+
+M^{m}_{j}=\dot{m}_{j,in}u_{k}-\dot{m}_{j,out}u_{j}  italic_M start_POSTSUPERSCRIPT italic_m end_POSTSUPERSCRIPT start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT = over˙ start_ARG italic_m end_ARG start_POSTSUBSCRIPT italic_j , italic_i italic_n end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_k end_POSTSUBSCRIPT - over˙ start_ARG italic_m end_ARG start_POSTSUBSCRIPT italic_j , italic_o italic_u italic_t end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+(3)
+
+where
+
+m  ˙
+
+˙  𝑚
+
+\dot{m}  over˙ start_ARG italic_m end_ARG
+
+is the mass transfer rate from/to phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+u  j
+
+subscript  𝑢  𝑗
+
+u_{j}  italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the velocity of phase
+
+j
+
+𝑗
+
+j  italic_j
+
+and
+
+u  k
+
+subscript  𝑢  𝑘
+
+u_{k}  italic_u start_POSTSUBSCRIPT italic_k end_POSTSUBSCRIPT
+
+is the velocity of phase
+
+k
+
+𝑘
+
+k  italic_k
+
+[ 50 ] .
+A partial elimination method formulated by  Passalacqua and Fox [ 52 ]  is used here to ensure appropriate coupling between the phases. A shared pressure equation is solved once for all the phases to determine pressure while enforcing an aggregate divergence constraint on phase velocity. At the wall, a no-slip boundary condition was used for the liquid phase and a slip boundary condition was used for the gas phase.
+
+An energy equation is solved to account for differences in inlet phase temperatures (
+
+287.15
+
+287.15
+
+287.15  287.15
+
+K for the liquid phase and
+
+273.15
+
+273.15
+
+273.15  273.15
+
+K for the gas phase as mentioned in Sec.
+
+3.1  ). A sensible energy transport equation for phase
+
+j
+
+𝑗
+
+j  italic_j
+
+is written as:
+
+∂
+
+ρ  j
+
+⁢
+
+α  j
+
+⁢
+
+E  j
+
+∂  t
+
++
+
+∇  ⋅
+
+(
+
+ρ  j
+
+⁢
+
+α  j
+
+⁢
+
+u  j
+
+⁢
+
+E  j
+
+)
+
+=
+
+∇  ⋅
+
+(
+
+α  j
+
+⁢
+
+κ  j
+
+⁢
+
+∇
+
+T  j
+
+)
+
++
+
+Q  ˙
+
+,
+
+subscript  𝜌  𝑗
+
+subscript  𝛼  𝑗
+
+subscript  𝐸  𝑗
+
+𝑡
+
+⋅  ∇
+
+subscript  𝜌  𝑗
+
+subscript  𝛼  𝑗
+
+subscript  𝑢  𝑗
+
+subscript  𝐸  𝑗
+
+⋅  ∇
+
+subscript  𝛼  𝑗
+
+subscript  𝜅  𝑗
+
+∇
+
+subscript  𝑇  𝑗
+
+˙  𝑄
+
+\frac{\partial\rho_{j}\alpha_{j}E_{j}}{\partial t}+\nabla\cdot(\rho_{j}\alpha_%
+{j}u_{j}E_{j})=\nabla\cdot(\alpha_{j}\kappa_{j}\nabla T_{j})+\dot{Q},  divide start_ARG ∂ italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_E start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT end_ARG start_ARG ∂ italic_t end_ARG + ∇ ⋅ ( italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_E start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) = ∇ ⋅ ( italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_κ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ∇ italic_T start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) + over˙ start_ARG italic_Q end_ARG ,
+
+(4)
+
+where
+
+E  j
+
+subscript  𝐸  𝑗
+
+E_{j}  italic_E start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the sensible energy enthalpy of the phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+T  j
+
+subscript  𝑇  𝑗
+
+T_{j}  italic_T start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the temperature of the phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+κ  j
+
+subscript  𝜅  𝑗
+
+\kappa_{j}  italic_κ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the effective thermal diffusivity of the phase
+
+j
+
+𝑗
+
+j  italic_j
+
+(including molecular and turbulent contributions) and
+
+Q  ˙
+
+˙  𝑄
+
+\dot{Q}  over˙ start_ARG italic_Q end_ARG
+
+is the heat exchange due to differences in temperature. Heat exchange through the interface is driven by temperature differences between phases. In particular the last term of equation (  4  ) can be written as:
+
+Q  ˙
+
+=
+
+h
+
+j  ⁢  l
+
+⁢
+
+(
+
+T  f
+
+−
+
+T  j
+
+)
+
+˙  𝑄
+
+subscript  ℎ
+
+𝑗  𝑙
+
+subscript  𝑇  𝑓
+
+subscript  𝑇  𝑗
+
+\dot{Q}=h_{jl}(T_{f}-T_{j})  over˙ start_ARG italic_Q end_ARG = italic_h start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT ( italic_T start_POSTSUBSCRIPT italic_f end_POSTSUBSCRIPT - italic_T start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT )
+
+(5)
+
+where
+
+h
+
+j  ⁢  l
+
+subscript  ℎ
+
+𝑗  𝑙
+
+h_{jl}  italic_h start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT
+
+is the heat transfer coefficient of species
+
+l
+
+𝑙
+
+l  italic_l
+
+in phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+T  j
+
+subscript  𝑇  𝑗
+
+T_{j}  italic_T start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+is the temperature of phase
+
+j
+
+𝑗
+
+j  italic_j
+
+and
+
+T  f
+
+subscript  𝑇  𝑓
+
+T_{f}  italic_T start_POSTSUBSCRIPT italic_f end_POSTSUBSCRIPT
+
+is the temperature at the interface. The temperature at the interface is computed based on the assumption that the rate of heat transfer must be equal to the latent heat
+
+λ  j
+
+subscript  𝜆  𝑗
+
+\lambda_{j}  italic_λ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+at the interface between phases
+
+j
+
+𝑗
+
+j  italic_j
+
+and
+
+k
+
+𝑘
+
+k  italic_k
+
+h
+
+j  ⁢  l
+
+⁢
+
+(
+
+T  j
+
+−
+
+T  f
+
+)
+
++
+
+h
+
+k  ⁢  l
+
+⁢
+
+(
+
+T  k
+
+−
+
+T  f
+
+)
+
+=
+
+m  ˙
+
+j  ,
+
+i  ⁢  n
+
+⁢
+
+λ  j
+
+.
+
+subscript  ℎ
+
+𝑗  𝑙
+
+subscript  𝑇  𝑗
+
+subscript  𝑇  𝑓
+
+subscript  ℎ
+
+𝑘  𝑙
+
+subscript  𝑇  𝑘
+
+subscript  𝑇  𝑓
+
+subscript
+
+˙  𝑚
+
+𝑗
+
+𝑖  𝑛
+
+subscript  𝜆  𝑗
+
+h_{jl}(T_{j}-T_{f})+h_{kl}(T_{k}-T_{f})=\dot{m}_{j,in}\lambda_{j}.  italic_h start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT ( italic_T start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT - italic_T start_POSTSUBSCRIPT italic_f end_POSTSUBSCRIPT ) + italic_h start_POSTSUBSCRIPT italic_k italic_l end_POSTSUBSCRIPT ( italic_T start_POSTSUBSCRIPT italic_k end_POSTSUBSCRIPT - italic_T start_POSTSUBSCRIPT italic_f end_POSTSUBSCRIPT ) = over˙ start_ARG italic_m end_ARG start_POSTSUBSCRIPT italic_j , italic_i italic_n end_POSTSUBSCRIPT italic_λ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT .
+
+(6)
+
+Although the energy equation is modeled to avoid unnecessary assumptions, the effect of heat exchange is likely negligible due to the narrow temperature difference between the liquid and the gas phase. Using the momentum and phase fraction, species mass fractions are transported as
+
+∂
+
+(
+
+ρ  j
+
+⁢
+
+α  j
+
+⁢
+
+Y
+
+j  ⁢  l
+
+)
+
+∂  t
+
++
+
+∇  ⋅
+
+(
+
+ρ  j
+
+⁢
+
+α  j
+
+⁢
+
+Y
+
+j  ⁢  l
+
+⁢
+
+u  j
+
+)
+
+=
+
+∇  ⋅
+
+(
+
+ρ  j
+
+⁢
+
+α  j
+
+⁢
+
+D
+
+j  ⁢  l
+
+⁢
+
+∇
+
+Y
+
+j  ⁢  l
+
+)
+
++
+
+S
+
+j  ⁢  l
+
+subscript  𝜌  𝑗
+
+subscript  𝛼  𝑗
+
+subscript  𝑌
+
+𝑗  𝑙
+
+𝑡
+
+⋅  ∇
+
+subscript  𝜌  𝑗
+
+subscript  𝛼  𝑗
+
+subscript  𝑌
+
+𝑗  𝑙
+
+subscript  𝑢  𝑗
+
+⋅  ∇
+
+subscript  𝜌  𝑗
+
+subscript  𝛼  𝑗
+
+subscript  𝐷
+
+𝑗  𝑙
+
+∇
+
+subscript  𝑌
+
+𝑗  𝑙
+
+subscript  𝑆
+
+𝑗  𝑙
+
+\frac{\partial(\rho_{j}\alpha_{j}Y_{jl})}{\partial t}+\nabla\cdot(\rho_{j}%
+\alpha_{j}Y_{jl}u_{j})=\nabla\cdot(\rho_{j}\alpha_{j}D_{jl}\nabla Y_{jl})+S_{jl}  divide start_ARG ∂ ( italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_Y start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT ) end_ARG start_ARG ∂ italic_t end_ARG + ∇ ⋅ ( italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_Y start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT italic_u start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT ) = ∇ ⋅ ( italic_ρ start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT italic_D start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT ∇ italic_Y start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT ) + italic_S start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT
+
+(7)
+
+where
+
+Y
+
+j  ⁢  l
+
+subscript  𝑌
+
+𝑗  𝑙
+
+Y_{jl}  italic_Y start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT
+
+is the
+
+l
+
+t  ⁢  h
+
+superscript  𝑙
+
+𝑡  ℎ
+
+l^{th}  italic_l start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+species mass fraction in phase
+
+j
+
+𝑗
+
+j  italic_j
+
+,
+
+D
+
+j  ⁢  l
+
+subscript  𝐷
+
+𝑗  𝑙
+
+D_{jl}  italic_D start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT
+
+is the diffusivity of the
+
+l
+
+t  ⁢  h
+
+superscript  𝑙
+
+𝑡  ℎ
+
+l^{th}  italic_l start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+species in phase
+
+j
+
+𝑗
+
+j  italic_j
+
+and
+
+S
+
+j  ⁢  l
+
+subscript  𝑆
+
+𝑗  𝑙
+
+S_{jl}  italic_S start_POSTSUBSCRIPT italic_j italic_l end_POSTSUBSCRIPT
+
+are source terms due to interphase mass transfer.
+
+The aforementioned conservation equations are closed through models for interphase physics and turbulent stress. The interphase drag force is obtained by using the Grace model  [ 53 ]  and transverse lift from the model by  Tomiyama et al. [ 54 ] . Wall lubrication forces are computed using the model by  Antal et al. [ 55 ]  and turbulent dispersion uses the model of  Burns et al. [ 56 ] . Interphase mass transfer of species is modeled by using the mass transfer coefficient obtained from Higbie correlation  [ 57 ] . The interphase mass transfer of a species also depends on the local saturation concentration obtained from Henry’s constant and the local gas phase concentration of the species. Therefore, the local gas density, which is determined by the local static pressure, plays a significant role in interphase mass transfer. Turbulent stress is  obtained from a mixture
+
+k  −  ε
+
+𝑘  𝜀
+
+k-\varepsilon  italic_k - italic_ε
+
+RANS closure model  [ 58 ]  for both the liquid and the gas phases,  wherein the bubble-induced turbulence model of Lahey  [ 59 ]  is used.  The wall boundary conditions for
+
+k
+
+𝑘
+
+k  italic_k
+
+and
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+use generalized wall functions  [ 60 ] .  Since
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+is used for modeling bubble breakage induced by turbulence  [ 19 ] , the modeling procedure of
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+plays an essential role in this work.
+
+2.2  Bubble size models
+
+Compared to our previous works  [ 49 ,  51 ] , the bubble size distribution (BSD) in this work is not assumed to be a Dirac
+
+δ
+
+𝛿
+
+\delta  italic_δ
+
+-distribution (constant bubble size), but is directly modeled using a population balance equation. In separate studies, several authors have noted the effect of BSD on global hydrodynamics of bubble column reactors  [ 61 ,  62 ,  63 ,  64 ]  and on species mass transfer  [ 65 ]  which is the main focus here.
+
+The population balance model uses a method of classes implementation as described by  Lehnigk et al. [ 50 ]  where the bubble size distribution is represented through a discretization of the number density function (NDF). This approach requires discretizing an internal coordinate (here the bubble size coordinate) and the spatial coordinates.
+The fundamental governing equation of the NDF can be derived through a finite volume analysis  [ 50 ]  and leads to
+
+∂
+
+n  v
+
+∂  t
+
++
+
+∇  ⋅
+
+(
+
+u  ⁢
+
+n  v
+
+)
+
+=
+
+h  v
+
+,
+
+subscript  𝑛  𝑣
+
+𝑡
+
+⋅  ∇
+
+𝑢
+
+subscript  𝑛  𝑣
+
+subscript  ℎ  𝑣
+
+\frac{\partial n_{v}}{\partial t}+\nabla\cdot(un_{v})=h_{v},  divide start_ARG ∂ italic_n start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT end_ARG start_ARG ∂ italic_t end_ARG + ∇ ⋅ ( italic_u italic_n start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT ) = italic_h start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT ,
+
+(8)
+
+where
+
+u
+
+𝑢
+
+u  italic_u
+
+is the phase velocity,
+
+t
+
+𝑡
+
+t  italic_t
+
+is time,
+
+n  v
+
+subscript  𝑛  𝑣
+
+n_{v}  italic_n start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT
+
+is the number density of bubbles of size
+
+v
+
+𝑣
+
+v  italic_v
+
+and the source term is
+
+h  v
+
+=
+
+B  b
+
+−
+
+B  d
+
++
+
+C  b
+
+−
+
+C  d
+
+−  D
+
++
+
+N  v
+
+˙
+
+subscript  ℎ  𝑣
+
+subscript  𝐵  b
+
+subscript  𝐵  d
+
+subscript  𝐶  b
+
+subscript  𝐶  d
+
+𝐷
+
+˙
+
+subscript  𝑁  𝑣
+
+h_{v}=B_{\rm b}-B_{\rm d}+C_{\rm b}-C_{\rm d}{\color[rgb]{0,0,0}\definecolor[%
+named]{pgfstrokecolor}{rgb}{0,0,0}\pgfsys@color@gray@stroke{0}%
+\pgfsys@color@gray@fill{0}{-}}D+\dot{N_{v}}  italic_h start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT = italic_B start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT - italic_B start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT + italic_C start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT - italic_C start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT - italic_D + over˙ start_ARG italic_N start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT end_ARG
+
+, where
+
+B  b
+
+subscript  𝐵  b
+
+B_{\rm b}  italic_B start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT
+
+(resp.
+
+C  b
+
+subscript  𝐶  b
+
+C_{\rm b}  italic_C start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT
+
+) is the bubble birth contribution from bubble breakup (resp. coalescence),
+
+B  d
+
+subscript  𝐵  d
+
+B_{\rm d}  italic_B start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT
+
+(resp.
+
+C  d
+
+subscript  𝐶  d
+
+C_{\rm d}  italic_C start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT
+
+) is the bubble death contribution from bubble breakup (resp. coalescence),
+
+D
+
+𝐷
+
+D  italic_D
+
+is the drift term that is due to changes of bubble volume  arising from pressure or mass transfer induced density changes , and
+
+N  v
+
+˙
+
+˙
+
+subscript  𝑁  𝑣
+
+\dot{N_{v}}  over˙ start_ARG italic_N start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT end_ARG
+
+is the bubble nucleation source term. The full expression of
+
+h  v
+
+subscript  ℎ  𝑣
+
+h_{v}  italic_h start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT
+
+is available elsewhere (see Eq.2 in Ref.  [ 50 ] ) and only specific modeling choices are described hereafter. The breakup and coalescence source terms depend on closure models for coalescence and breakup frequencies (also referred to as rates or kernels). For instance, the birth by breakup effect of bubbles of volume
+
+v  ′
+
+superscript  𝑣  ′
+
+v^{\prime}  italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+to bubbles of volume
+
+v
+
+𝑣
+
+v  italic_v
+
+(
+
+v
+
+v  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+v v^{\prime}  italic_v
+
+italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+) is represented in
+
+h  v
+
+subscript  ℎ  𝑣
+
+h_{v}  italic_h start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT
+
+as
+
+B  b
+
+=
+
+∫  v  ∞
+
+B
+
+v  ′
+
+⁢
+
+β
+
+v  ,
+
+v  ′
+
+⁢
+
+n
+
+v  ′
+
+⁢
+
+𝑑
+
+v  ′
+
+,
+
+subscript  𝐵  b
+
+superscript
+
+subscript
+
+𝑣
+
+subscript  𝐵
+
+superscript  𝑣  ′
+
+subscript  𝛽
+
+𝑣
+
+superscript  𝑣  ′
+
+subscript  𝑛
+
+superscript  𝑣  ′
+
+differential-d
+
+superscript  𝑣  ′
+
+B_{\rm b}=\int_{v}^{\infty}B_{v^{\prime}}\beta_{v,v^{\prime}}n_{v^{\prime}}dv^%
+{\prime},  italic_B start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT = ∫ start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT start_POSTSUPERSCRIPT ∞ end_POSTSUPERSCRIPT italic_B start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_β start_POSTSUBSCRIPT italic_v , italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_n start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_d italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT ,
+
+(9)
+
+where
+
+B
+
+v  ′
+
+subscript  𝐵
+
+superscript  𝑣  ′
+
+B_{v^{\prime}}  italic_B start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+is the breakup frequency of bubbles of volume
+
+v  ′
+
+superscript  𝑣  ′
+
+v^{\prime}  italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+, and
+
+β
+
+v  ,
+
+v  ′
+
+subscript  𝛽
+
+𝑣
+
+superscript  𝑣  ′
+
+\beta_{v,v^{\prime}}  italic_β start_POSTSUBSCRIPT italic_v , italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+is the daughter size distribution that describes how bubbles are redistributed within the internal coordinate (the binned bubble size). Similarly, the birth by coalescence effect of bubbles with volume
+
+v  ′
+
+superscript  𝑣  ′
+
+v^{\prime}  italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+and
+
+v  −
+
+v  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+v-v^{\prime}  italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+resulting in a bubble of volume
+
+v
+
+𝑣
+
+v  italic_v
+
+is represented in
+
+h  v
+
+subscript  ℎ  𝑣
+
+h_{v}  italic_h start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT
+
+as
+
+C  b
+
+=
+
+1  2
+
+⁢
+
+∫  0  v
+
+n  v  ′
+
+⁢
+
+n
+
+v  −
+
+v  ′
+
+⁢
+
+C
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+⁢
+
+𝑑
+
+v  ′
+
+,
+
+subscript  𝐶  b
+
+1  2
+
+superscript
+
+subscript
+
+0
+
+𝑣
+
+superscript
+
+subscript  𝑛  𝑣
+
+′
+
+subscript  𝑛
+
+𝑣
+
+superscript  𝑣  ′
+
+subscript  𝐶
+
+superscript  𝑣  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+differential-d
+
+superscript  𝑣  ′
+
+C_{\rm b}=\frac{1}{2}\int_{0}^{v}n_{v}^{\prime}n_{v-v^{\prime}}C_{v^{\prime},v%
+-v^{\prime}}dv^{\prime},  italic_C start_POSTSUBSCRIPT roman_b end_POSTSUBSCRIPT = divide start_ARG 1 end_ARG start_ARG 2 end_ARG ∫ start_POSTSUBSCRIPT 0 end_POSTSUBSCRIPT start_POSTSUPERSCRIPT italic_v end_POSTSUPERSCRIPT italic_n start_POSTSUBSCRIPT italic_v end_POSTSUBSCRIPT start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT italic_n start_POSTSUBSCRIPT italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_C start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_d italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT ,
+
+(10)
+
+where
+
+C
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+subscript  𝐶
+
+superscript  𝑣  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+C_{v^{\prime},v-v^{\prime}}  italic_C start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+is the frequency of coalescence for bubbles of size
+
+v  ′
+
+superscript  𝑣  ′
+
+v^{\prime}  italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+and
+
+v  −
+
+v  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+v-v^{\prime}  italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT
+
+.
+
+A noteworthy feature of the implementation of  Lehnigk et al. [ 50 ]  is that it includes redistribution schemes that conserve the 0  th
+
+and 1  st
+
+order moments of the NDF  [ 66 ,  67 ] . The coalescence kernel chosen is that of  Lehr et al. [ 68 ]  using a critical coalescence velocity of
+
+0.08
+
+0.08
+
+0.08  0.08
+
+m/s and a maximum packing density of
+
+0.6
+
+0.6
+
+0.6  0.6
+
+. In this model, the coalescence frequency
+
+C
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+subscript  𝐶
+
+superscript  𝑣  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+C_{v^{\prime},v-v^{\prime}}  italic_C start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+depends on turbulent fluctuations, and coalescence occurs if bubbles collide with a velocity greater than the critical velocity aforementioned. Two breakup models are investigated: a  global breakup model  described in  Laakkonen et al. [ 19 ]  and a  binary breakup model  described in  Lehr et al. [ 68 ]  which is common in bubble column reactor modeling  [ 69 ] . In the binary breakup approach, a bubble necessarily breaks up into two daughter bubbles from different size groups (or bins). In the global breakup approach, a bubble may break up into more than two bubbles  [ 19 ] . The number of “daughter bubbles” is controlled by the daughter size distribution.
+The default implementation of these models  [ 50 ,  17 ]  in OpenFOAM v9
+
+1
+
+1  1 https://github.com/OpenFOAM/OpenFOAM-9
+
+is used unless stated otherwise.
+
+3  Validation of the base model
+
+In this section, the experimental case simulated is described. A base simulation is compared to the experimental results and the effect of numerical errors and modeling errors is discussed.
+
+3.1  Experimental data
+
+Two experimental cases are used for model comparison here and documented in  Deckwer et al. [ 22 ]  as experiments 17 and 19. The system consists of a coflowing bubble column reactor schematically illustrated in Fig.
+
+2
+
+(left). Both cases differ in terms of their superficial gas velocity and inlet gas composition. These cases were chosen given that they were also used in other numerical analyses such as by  Hissanaga et al. [ 70 ]  and by  Ngu et al. [ 71 ] . In Exp. 17 the inlet gas velocity is
+
+3.42  ⁢  cm
+
+/  s
+
+3.42  cm
+
+s
+
+3.42\rm{cm/s}  3.42 roman_cm / roman_s
+
+and the inlet gas  \ce CO2 mole fraction is
+
+0.673
+
+0.673
+
+0.673  0.673
+
+. In Exp. 19, the inlet gas velocity is
+
+4.63  ⁢  cm
+
+/  s
+
+4.63  cm
+
+s
+
+4.63\rm{cm/s}  4.63 roman_cm / roman_s
+
+and the inlet gas  \ce CO2 mole fraction is
+
+0.478
+
+0.478
+
+0.478  0.478
+
+. The liquid phase is made of pure water at the inlet. Air is assumed to be pure  \ce N2 for simplification. The gas phase inlet temperature is set to
+
+273.15
+
+273.15
+
+273.15  273.15
+
+K consistently with  Deckwer et al. [ 22 ]  and the liquid phase (tap water) inlet temperature is assumed to be
+
+287.15
+
+287.15
+
+287.15  287.15
+
+K.
+
+3.2  Numerical details
+
+A hexahedral mesh was used to simulate these experiments using 180 mesh points of size 2.4 cm each in the vertical direction. A “pillow case” meshing (illustrated in Fig.
+
+1  ) was used in the radial and azimuthal direction with 15 mesh points through the radial direction and 24 points in the azimuthal direction. In total, 64,800 cells were used.
+
+Figure 1 :
+
+Illustration of the pillow case mesh in the radial and azimuthal directions.
+
+The internal coordinate (bubble diameter) was discretized with 10 classes (bins), uniformly distributed between
+
+1.66  ⁢  mm
+
+1.66  mm
+
+1.66~{}\rm{mm}  1.66 roman_mm
+
+and
+
+4.36  ⁢  mm
+
+4.36  mm
+
+4.36~{}\rm{mm}  4.36 roman_mm
+
+. In separate numerical investigations
+
+[  71 ,  72  ]  , the bubble size was assumed constant and equal  or near
+
+2.86  ⁢  mm
+
+2.86  mm
+
+2.86~{}\rm{mm}  2.86 roman_mm
+
+consistently with experimental data  [ 22 ] .  In
+
+D  , a discussion about the effect of the bubble size range on the calibration results is provided.  At the initial time, the NDF is initialized at 0 for all the classes except the one centered at
+
+2.86  ⁢  mm
+
+2.86  mm
+
+2.86~{}\rm{mm}  2.86 roman_mm
+
+. The gas phase is initialized as pure  \ce N2 and the liquid phase is initialized as pure water. Hereafter, the global breakup model and binary breakup model as described in Sec.
+
+2
+
+are successively used. Simulations of both Exp. 17 and Exp. 19 use the same numerical discretization. The liquid diffusivity of  \ce CO2 was set to
+
+1.4663  ×
+
+10
+
+−  9
+
+1.4663
+
+superscript  10
+
+9
+
+1.4663\times 10^{-9}  1.4663 × 10 start_POSTSUPERSCRIPT - 9 end_POSTSUPERSCRIPT
+
+m 2 /s and the Henry’s constant of  \ce CO2 was set to
+
+0.0192
+
+0.0192
+
+0.0192  0.0192
+
+mg/L/Pa which are the same values used by  Ngu et al. [ 71 ] . The simulations were run for
+
+400  ⁢  s
+
+400  s
+
+400~{}\rm{s}  400 roman_s
+
+which was found to be sufficient to reach steady state in terms of gas holdup and species concentration profiles. Each simulation required about 10 hours of wall clock time on 36 cores of Dual Intel Xeon Gold Skylake 6154 3.0 GHz processors. The timestep is dynamically adjusted based on the maximal Courant number (set to 0.5). The minimum timestep is set to
+
+0.1  ⁢  ms
+
+0.1  ms
+
+0.1~{}\rm{ms}  0.1 roman_ms
+
+and is only used for the first timestep before ramping up to about
+
+2  ⁢  ms
+
+2  ms
+
+2~{}\rm{ms}  2 roman_ms
+
+. Inlet boundary conditions for
+
+k
+
+𝑘
+
+k  italic_k
+
+and
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+based on freestream turbulence were found to lead to steep wall-normal gradients due to the wall functions used, and could lead to unphysical oscillations in
+
+α  j
+
+subscript  𝛼  𝑗
+
+\alpha_{j}  italic_α start_POSTSUBSCRIPT italic_j end_POSTSUBSCRIPT
+
+. The boundary conditions were adjusted to eliminate these oscillations without inducing appreciable differences in the quantities of interest (see
+
+B  ).
+
+Figure
+
+2
+
+(right) shows the  volumetric
+
+\ce CO2 mass fraction contour in the gas phase and the liquid phase for Exp. 17 which illustrates how the interphase mass transfer occurs in the coflowing bubble column. The gas phase is gradually depleted of  \ce CO2 with height (z in Fig.
+
+2  ) while the liquid phase  \ce CO2 concentration increases.
+
+Figure 2 :
+
+Left: schematic illustration of the case simulated with inlet conditions for Exp. 17 (blue) and Exp. 19 (red). Right: volumetric contours of  \ce CO2 mass fraction at steady state for Exp. 17 of  Deckwer et al. [ 22 ]  in the gas phase (left) and the liquid phase (right).
+
+3.3  Comparison to experiments
+
+The experimental measurements provide the average local gas holdup and  \ce CO2 gas concentration at different heights in the reactor. In the simulations, these quantities are reconstructed by performing a conditional average of gas volume fraction and  \ce CO2 mole fraction conditioned on the height coordinate (z). The conditional average allows to eliminate radial variability at a given cross-section of the reactor. Figure
+
+3
+
+shows the comparison between simulations that were run with a global breakup model  [ 19 ]  and the experiments. For both the gas holdup and the  \ce CO2 gas mole fraction, the base simulation reasonably captures the experimental observations.  Note that the conditional averaging operation smooths out the gradients of  \ce CO2 mole fraction and gas hold up which explains the discrepancy at the inlet.
+
+However significant differences can be observed especially for Exp. 19 for gas holdup and for Exp. 17 for  \ce CO2 gas concentration, especially near the top of the reactor. Other numerical investigations  [ 70 ,  71 ]  where a one-dimensional spatio-temporal approximation of the phase conservation equations was used, also deviate from experimental observations in a similar way. Several investigations have observed that refining modeling strategies may not always close the gap between experimental observations and numerical simulations. For example, Huang et al.  [ 73 ]  shows that a population balance modeling approach for bubble size may not always be beneficial as compared to constant bubble size assumptions.
+It should also be noted that the conversion of  \ce CO2 to carbonates and bicarbonates could play an important role but gas-to-liquid  \ce CO2 mass transfer rates are typically much faster than these reaction rates, as described by Yue et al.  [ 74 ] , which would mean that gas-to-liquid mass transfer is the dominant physics in these experiments.
+
+Figure 3 :
+
+Height conditional average of gas holdup (left) and  \ce CO2 mole fraction in the gas phase (right) for experiments (
+
+)  [ 22 ] , Ref.  [ 70 ]  (
+
+), Ref.  [ 71 ]  (
+
+) and our results (
+
+), for Exp. 17 (blue) and Exp. 19 (red).
+
+3.4  Source of discrepancy between numerical simulation and the experiments
+
+Two reasons might explain the deviation between numerical simulations and experiments. First numerical errors may originate from the discretization of the domain and must be ruled out before considering model modifications  [ 29 ] . A fine grid simulation was conducted using 176,400 cells (400 cells in the vertical direction, 28 in the azimuthal direction, and approximately 16 in the radial direction) compared to our baseline case with 64,800 cells. Additionally, a fine phase-space simulation was run using 20 bins for bubble-size discretization compared to 10 bins in the baseline case. In the fine grid simulation, the timestep is also based on the Courant number and is
+
+1  ⁢  ms
+
+1  ms
+
+1~{}\rm{ms}  1 roman_ms
+
+on average. As shown in Fig.
+
+4  , neither simulation deviated sufficiently from the base case to explain the discrepancy with experimental observations. Therefore, model errors are the likely cause of the discrepancy.
+
+Figure 4 :
+
+Height conditional average of gas holdup (left) and  \ce CO2 mole fraction in the gas phase (right) for experiments (
+
+)  [ 22 ] , coarse grid (
+
+), fine grid (
+
+), coarse grid with fine bubble size discretization (
+
+), for Exp. 17 (blue) and Exp. 19 (red). Dark lines: global breakup model  [ 19 ] . Light lines: binary breakup model  [ 68 ] .
+
+The same suite of runs (coarse and fine grids) was conducted with a binary breakup model  [ 68 ]  instead of a global breakup model  [ 19 ] . This test serves here to understand how much variability can be expected due to a bubble size dynamics modeling error (similar to the approach of  Mueller and Raman [ 75 ] ). It can be seen in Fig.
+
+4
+
+that, once again, the numerical errors are unlikely to explain the discrepancy between numerical simulations and experiments. However, significant variability may be observed due to the modeling assumption adopted, and this variability may indeed close the gap to experimental observations.
+
+4  Model calibration
+
+In view of the results shown above, the modeling approach may explain the discrepancy with the experimental data. Therefore, we used the experiments of  Deckwer et al. [ 22 ]  to calibrate the breakup and coalescence models, in line with recommendations from previous research  [ 18 ,  19 ,  20 ] . The differences presented in Figure
+
+4
+
+suggest that adjusting a set of parameters might be enough to resolve part of the discrepancy between simulation and experiments. The magnitude of the breakage rate, coalescence rate, and surface tension are likely candidates for these corrections. In other terms, it would be a reasonable model correction to adjust the selected parameters if the objective is to accurately capture mass transfer and gas holdup. In particular, it is possible that adjusting other parameters could resolve the same discrepancy. What is unique to the present study is that 1) the forward simulations are expensive (each forward run requires 360 CPU hours) and many runs were necessary to rule out numerical errors  [ 29 ]  and, 2) there appears to be irreducible discrepancies between some of the experimental data and numerical simulations. Therefore, the inclusion of experimental data in the calibration procedure requires taking into account those irreducible errors. In this section, the solutions to both issues are provided and exercised.  2
+
+2  2 The calibration methods and the model surrogates described in this section are available in a companion repository ( https://github.com/NREL/BioReactorDesign/tree/v0.0.16/  [ 76 ]  ).
+
+4.1  Calibration problem
+
+Given the high computational expense required for evaluating the forward model, the calibration procedure should not involve too many parameters. The higher the dimension of the parameter space, the larger the number of forward model evaluations needed to explore the parameter space. Note that even if a surrogate model is used for the Bayesian inference, it would still need to be trained using data that span the entire parameter space  [ 77 ] . Even when using faster forward models, other investigations have reduced the high-dimensional parameter space by assuming no joint effect of subsets of the entire parameter set  [ 19 ] .
+
+In this work, we calibrated 3 parameters: an efficiency factor for the coalescence kernel
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+, an efficiency factor for the breakup kernel
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+, and the surface tension
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+. The base coalescence model is that of  Lehr et al. [ 68 ] . For the breakup model, two separate corrections are derived for the global breakup model of  Laakkonen et al. [ 19 ]  and the binary breakup model of  Lehr et al. [ 68 ] .
+
+The scaled coalescence and breakup kernels are expressed as
+
+C
+
+corr  ,
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+=
+
+C  eff
+
+⁢
+
+C
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+subscript  𝐶
+
+corr
+
+superscript  v  ′
+
+v
+
+superscript  v  ′
+
+subscript  𝐶  eff
+
+subscript  𝐶
+
+superscript  𝑣  ′
+
+𝑣
+
+superscript  𝑣  ′
+
+C_{\rm{corr},v^{\prime},v-v^{\prime}}=C_{\rm eff}C_{v^{\prime},v-v^{\prime}}  italic_C start_POSTSUBSCRIPT roman_corr , roman_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , roman_v - roman_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT = italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT italic_C start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , italic_v - italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+(11)
+
+and
+
+B
+
+corr  ,  v
+
+=
+
+B  eff
+
+⁢
+
+β
+
+v  ,
+
+v  ′
+
+⁢
+
+B
+
+v  ′
+
+,
+
+subscript  𝐵
+
+corr  v
+
+subscript  𝐵  eff
+
+subscript  𝛽
+
+𝑣
+
+superscript  𝑣  ′
+
+subscript  𝐵
+
+superscript  𝑣  ′
+
+{\color[rgb]{0,0,0}\definecolor[named]{pgfstrokecolor}{rgb}{0,0,0}%
+\pgfsys@color@gray@stroke{0}\pgfsys@color@gray@fill{0}{B_{\rm{corr},v}=B_{\rm
+eff%
+}\beta_{v,v^{\prime}}B_{v^{\prime}}}},  italic_B start_POSTSUBSCRIPT roman_corr , roman_v end_POSTSUBSCRIPT = italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT italic_β start_POSTSUBSCRIPT italic_v , italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT italic_B start_POSTSUBSCRIPT italic_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT ,
+
+(12)
+
+where
+
+C
+
+corr  ,
+
+v  ′
+
+,
+
+v  −
+
+v  ′
+
+subscript  𝐶
+
+corr
+
+superscript  v  ′
+
+v
+
+superscript  v  ′
+
+C_{\rm{corr},v^{\prime},v-v^{\prime}}  italic_C start_POSTSUBSCRIPT roman_corr , roman_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT , roman_v - roman_v start_POSTSUPERSCRIPT ′ end_POSTSUPERSCRIPT end_POSTSUBSCRIPT
+
+and
+
+B
+
+corr  ,  v
+
+subscript  𝐵
+
+corr  v
+
+B_{\rm{corr},v}  italic_B start_POSTSUBSCRIPT roman_corr , roman_v end_POSTSUBSCRIPT
+
+are the corrected coalescence and breakup kernels and
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+and
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+are the unitless efficiency factors that scale the base models.
+
+The choice of efficiency factors to calibrate the coalescence and breakup kernel is motivated by three reasons: 1) it allows to modulate the amplitude of the breakup and coalescence kernel by only manipulating one parameter which allows using a reduced number of forward evaluations; 2) the efficiency factor can be defined for any kernel functional which allows comparing different kernels and by how much each one must be corrected; 3) the efficiency factors are easily interpretable since their effect is linear on the frequency of breakup or coalescence.
+
+Finally, the choice of calibrating surface tension
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+is motivated by the fact that liquid surface tension can be modified by the presence of surfactants in fermentation media and thus affect BSD and the mass transfer.
+
+To decide what efficiency factors and surface tension values are most appropriate to explain the discrepancy between simulations and experimental observations, multiple simulations are run with different parameter values. A total of 120 numerical simulations were run with a coalescence/break-up efficiency factor varying in the range
+
+[  0.05  ,  20  ]
+
+0.05  20
+
+[0.05,20]  [ 0.05 , 20 ]
+
+, and tap water surface tension varying in the range
+
+[  0.03  ,  0.11  ]
+
+⁢  N
+
+/  m
+
+0.03  0.11
+
+N
+
+m
+
+[0.03,0.11]\rm{N/m}  [ 0.03 , 0.11 ] roman_N / roman_m
+
+.  In practice, the number of numerical simulations used to build the surrogate depends on the input space dimension and the smoothness of the function to approximate. Here, 120 simulations are equivalent to 5 discretization points per input dimension.  The results are shown in Fig.
+
+5
+
+for the global breakup and are colored by the breakup efficiency factor value, indicating that the computed gas holdup and  \ce CO2 mole fraction axial profiles are sensitive to the model parameters varied.
+
+Figure 5 :
+
+Top: Height conditional average of gas holdup (left) and  \ce CO2 mole fraction in the gas phase (right) for experiments (
+
+)  [ 22 ] , and simulated results using a global breakup model  [ 19 ]  (
+
+) for Exp. 17 (blue) and Exp. 19 (red). Darker colors denote the higher value of breakup efficiency.
+Bottom: scatter plot of the distribution of the 120 numerical simulations in the model parameter space for the global breakup model.
+
+As suggested by the results of Sec.
+
+3.4
+
+the model parameter variation induces significant variability that could resolve part of the discrepancy to experimental observations. However, an optimal breakup efficiency factor is difficult to identify from Fig.
+
+5  . On the one hand, high values of the breakup efficiency factor improve the  \ce CO2 mole fraction prediction, while on the other hand, low values of breakup efficiency promote a better match of gas holdup with experiments. In addition, there remain irreducible errors that cannot be mitigated through the variation of the parameters considered (see for instance gas  \ce CO2 concentration near the top of the reactor for Exp. 17). The same set of simulations resulted in similar conclusions when using the binary breakup kernel and is not described further for brevity.
+
+4.2  Bayesian inference approach
+
+To calibrate the chosen model parameters, while accounting for experimental uncertainty, a Bayesian calibration approach is used. In Bayesian calibration, the objective is to compute the posterior probability (or more commonly referred to as the posterior) of the parameters calibrated, denoted as
+
+p  post
+
+⁢
+
+(
+
+𝒑  |  𝒅
+
+)
+
+subscript  𝑝  post
+
+conditional  𝒑  𝒅
+
+p_{\rm post}(\bm{p}|\bm{d})  italic_p start_POSTSUBSCRIPT roman_post end_POSTSUBSCRIPT ( bold_italic_p | bold_italic_d )
+
+, where
+
+𝒑
+
+𝒑
+
+\bm{p}  bold_italic_p
+
+are the model parameters, and
+
+𝒅
+
+𝒅
+
+\bm{d}  bold_italic_d
+
+are the experimental observations. The posterior
+
+p  post
+
+subscript  𝑝  post
+
+p_{\rm post}  italic_p start_POSTSUBSCRIPT roman_post end_POSTSUBSCRIPT
+
+is obtained using the Bayes theorem
+
+p  post
+
+⁢
+
+(
+
+𝒑  |  𝒅
+
+)
+
+=
+
+p  prior
+
+⁢
+
+(  𝒑  )
+
+⁢
+
+p  like
+
+⁢
+
+(
+
+𝒅  |  𝒑
+
+)
+
+p  evi
+
+⁢
+
+(  𝒅  )
+
+,
+
+subscript  𝑝  post
+
+conditional  𝒑  𝒅
+
+subscript  𝑝  prior
+
+𝒑
+
+subscript  𝑝  like
+
+conditional  𝒅  𝒑
+
+subscript  𝑝  evi
+
+𝒅
+
+p_{\rm post}(\bm{p}|\bm{d})=\frac{p_{\rm prior}(\bm{p})p_{\rm like}(\bm{d}|\bm%
+{p})}{p_{\rm evi}(\bm{d})},  italic_p start_POSTSUBSCRIPT roman_post end_POSTSUBSCRIPT ( bold_italic_p | bold_italic_d ) = divide start_ARG italic_p start_POSTSUBSCRIPT roman_prior end_POSTSUBSCRIPT ( bold_italic_p ) italic_p start_POSTSUBSCRIPT roman_like end_POSTSUBSCRIPT ( bold_italic_d | bold_italic_p ) end_ARG start_ARG italic_p start_POSTSUBSCRIPT roman_evi end_POSTSUBSCRIPT ( bold_italic_d ) end_ARG ,
+
+(13)
+
+where
+
+p  prior
+
+⁢
+
+(  𝒑  )
+
+subscript  𝑝  prior
+
+𝒑
+
+p_{\rm prior}(\bm{p})  italic_p start_POSTSUBSCRIPT roman_prior end_POSTSUBSCRIPT ( bold_italic_p )
+
+is the prior probability that encodes prior knowledge about the parameters, and
+
+p  like
+
+⁢
+
+(
+
+𝒅  |  𝒑
+
+)
+
+subscript  𝑝  like
+
+conditional  𝒅  𝒑
+
+p_{\rm like}(\bm{d}|\bm{p})  italic_p start_POSTSUBSCRIPT roman_like end_POSTSUBSCRIPT ( bold_italic_d | bold_italic_p )
+
+is the likelihood function that characterizes how likely a parameter set
+
+𝒑
+
+𝒑
+
+\bm{p}  bold_italic_p
+
+is to explain the observed data
+
+𝒅
+
+𝒅
+
+\bm{d}  bold_italic_d
+
+. The evidence
+
+p  evi
+
+⁢
+
+(  𝒅  )
+
+subscript  𝑝  evi
+
+𝒅
+
+p_{\rm evi}(\bm{d})  italic_p start_POSTSUBSCRIPT roman_evi end_POSTSUBSCRIPT ( bold_italic_d )
+
+is shown for the sake of completeness but does not need to be defined for the Bayesian calibration procedure: it can be treated as a multiplicative factor independent of the parameters calibrated. Typically, the likelihood function is chosen to be a multivariate normal  [ 38 ,  41 ,  40 ]  defined by
+
+p  like
+
+⁢
+
+(
+
+𝒅  |  𝒑
+
+)
+
+=
+
+1
+
+(
+
+2  ⁢  π  ⁢
+
+σ  2
+
+)
+
+N  d
+
+/  2
+
+×
+
+exp  ⁡
+
+[
+
+−
+
+1
+
+2  ⁢
+
+σ  2
+
+⁢
+
+∑
+
+i  =  1
+
+N  d
+
+(
+
+d  i
+
+−
+
+d
+
+i  ,  pred
+
+⁢
+
+(  𝒑  )
+
+)
+
+2
+
+]
+
+,
+
+subscript  𝑝  like
+
+conditional  𝒅  𝒑
+
+1
+
+superscript
+
+2  𝜋
+
+superscript  𝜎  2
+
+subscript  𝑁  d
+
+2
+
+1
+
+2
+
+superscript  𝜎  2
+
+superscript
+
+subscript
+
+𝑖  1
+
+subscript  𝑁  d
+
+superscript
+
+subscript  𝑑  i
+
+subscript  𝑑
+
+i  pred
+
+𝒑
+
+2
+
+{\color[rgb]{0,0,0}\definecolor[named]{pgfstrokecolor}{rgb}{0,0,0}%
+\pgfsys@color@gray@stroke{0}\pgfsys@color@gray@fill{0}{p_{\rm like}(\bm{d}|\bm%
+{p})=\frac{1}{(2\pi\sigma^{2})^{N_{\rm d}/2}}\times\ \exp\left[-\frac{1}{2%
+\sigma^{2}}\sum_{i=1}^{N_{\rm d}}({d}_{\rm i}-{d}_{\rm i,pred}(\bm{p}))^{2}%
+\right]}},  italic_p start_POSTSUBSCRIPT roman_like end_POSTSUBSCRIPT ( bold_italic_d | bold_italic_p ) = divide start_ARG 1 end_ARG start_ARG ( 2 italic_π italic_σ start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT ) start_POSTSUPERSCRIPT italic_N start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT / 2 end_POSTSUPERSCRIPT end_ARG × roman_exp [ - divide start_ARG 1 end_ARG start_ARG 2 italic_σ start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT end_ARG ∑ start_POSTSUBSCRIPT italic_i = 1 end_POSTSUBSCRIPT start_POSTSUPERSCRIPT italic_N start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT end_POSTSUPERSCRIPT ( italic_d start_POSTSUBSCRIPT roman_i end_POSTSUBSCRIPT - italic_d start_POSTSUBSCRIPT roman_i , roman_pred end_POSTSUBSCRIPT ( bold_italic_p ) ) start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT ] ,
+
+(14)
+
+where
+
+N  d
+
+subscript  𝑁  d
+
+N_{\rm d}  italic_N start_POSTSUBSCRIPT roman_d end_POSTSUBSCRIPT
+
+is the number of observations,
+
+σ
+
+𝜎
+
+\sigma  italic_σ
+
+is the uncertainty in the experimental observations (where uncertainty is assumed to be the same for all observations),
+
+d
+
+i  ,  pred
+
+⁢
+
+(  𝒑  )
+
+subscript  𝑑
+
+i  pred
+
+𝒑
+
+{d}_{\rm i,pred}(\bm{p})  italic_d start_POSTSUBSCRIPT roman_i , roman_pred end_POSTSUBSCRIPT ( bold_italic_p )
+
+is the prediction of the
+
+i
+
+t  ⁢  h
+
+superscript  𝑖
+
+𝑡  ℎ
+
+i^{th}  italic_i start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+observations that would be obtained if parameter set
+
+𝒑
+
+𝒑
+
+\bm{p}  bold_italic_p
+
+was chosen, and
+
+d  i
+
+subscript  𝑑  i
+
+{d}_{\rm i}  italic_d start_POSTSUBSCRIPT roman_i end_POSTSUBSCRIPT
+
+is the
+
+i
+
+t  ⁢  h
+
+superscript  𝑖
+
+𝑡  ℎ
+
+i^{th}  italic_i start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+observations.
+
+The advantage of the Bayesian calibration is that the experimental uncertainty and the remaining model uncertainty that cannot be explained with the parameters calibrated can be lumped into the
+
+σ
+
+𝜎
+
+\sigma  italic_σ
+
+uncertainty value of the likelihood function  [ 41 ,  42 ]  (see Sec.
+
+4.4  ). Choosing a specific uncertainty for a specific experimental dataset allows to appropriately weight the experimental data, rather than averaging the error across all experimental data  [ 26 ,  28 ] .
+
+4.3  Surrogate modeling approach
+
+The main drawback of Bayesian calibration is its computational cost. The high cost of Bayesian calibration is due to evaluating the likelihood function. In the present case, it requires computing the prediction
+
+𝒅  pred
+
+⁢
+
+(  𝒑  )
+
+subscript  𝒅  pred
+
+𝒑
+
+\bm{d}_{\rm pred}(\bm{p})  bold_italic_d start_POSTSUBSCRIPT roman_pred end_POSTSUBSCRIPT ( bold_italic_p )
+
+which would necessitate a forward model evaluation (here running a CFD simulation). To accelerate the Bayesian calibration, the function
+
+𝒅  pred
+
+⁢
+
+(  𝒑  )
+
+subscript  𝒅  pred
+
+𝒑
+
+\bm{d}_{\rm pred}(\bm{p})  bold_italic_d start_POSTSUBSCRIPT roman_pred end_POSTSUBSCRIPT ( bold_italic_p )
+
+can, however, be approximated with a data-based model which was trained, in our case using the 120 simulations shown in Fig.
+
+5  . Other uncertainty quantification approaches that require multiple forward model evaluations adopt similar strategies  [ 78 ,  79 ] .
+
+Here, the surrogate models are constructed using a fully connected neural network schematically illustrated in Fig.
+
+6(a)  . The neural net contains four inputs: the vertical direction
+
+z
+
+𝑧
+
+z  italic_z
+
+and the three calibrated model parameters (
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+and
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+). The output of the neural net is one dimensional and consists of either the gas-holdup or the gas molar fraction of  \ce CO2. In total, eight different surrogate models were trained, a different one for each measured quantity (gas hold up or  \ce CO2 mole fraction), each experiment (Exp. 17 or Exp. 19), and each breakup kernel (binary or global). For each surrogate model, 32 conditional average points are drawn for each simulation which amounts to 3840 data points per surrogate. One percent of the data is reserved for validation. For simplification, all surrogate models used the same hyperparameters that are summarized in Tab.
+
+1(a)  .  Given the small amount of training data, the number of trainable parameters needs to be small enough to prevent overfitting. Here, the number of hidden layers was fixed to 4 and the number of neurons in each layer was manually reduced until the validation loss reached levels similar to the training loss (  A  ).  The neural nets were trained with a classical mean-square error loss. Further details on the effect of the epoch number are provided in
+
+A  .
+
+(a)
+
+Input output mapping of each surrogate model. Each surrogate takes 4 input and generates only one output denoted by QoI.
+
+Name
+
+Value
+
+Hidden layer size
+
+{ 10, 20, 10, 5}
+
+Activation
+
+tanh
+
+Batch size
+
+32
+
+Learning rate
+
+1  ⁢  e
+
+−  03
+
+1  e
+
+03
+
+1\mathrm{e}{-03}  1 roman_e - 03
+
+Epochs
+
+1000
+
+(a)
+
+Hyperparameters used for the neural net surrogates. The hidden layer size denotes the number of neurons in the 4 hidden layers used.
+
+Figure 6 :
+
+Architecture of the neural network surrogates.
+
+The surrogate model can be used to compute the likelihood function
+
+p  like
+
+⁢
+
+(
+
+𝒅  |  𝒑
+
+)
+
+subscript  𝑝  like
+
+conditional  𝒅  𝒑
+
+p_{\rm like}(\bm{d}|\bm{p})  italic_p start_POSTSUBSCRIPT roman_like end_POSTSUBSCRIPT ( bold_italic_d | bold_italic_p )
+
+. To perform Bayesian calibration, the prior distribution of the parameters must also be chosen. In order to use the surrogate model, the support of the priors cannot be larger than the input feature intervals over which the surrogate was trained. The priors for the coalescence and the breakup efficiency factor are chosen to be uniform distributions
+
+𝒰  ⁢
+
+(  0.05  ,  20  )
+
+𝒰
+
+0.05  20
+
+\mathcal{U}(0.05,20)  caligraphic_U ( 0.05 , 20 )
+
+, whose support is the same as the interval over which the surrogate was trained. In general, the magnitude of the breakup kernels adopted does not vary by a factor greater than 20  [ 25 ] . The priors adopted reflect that scaling the coalescence and breakup kernel by a factor greater than 20 is unreasonable. The prior for the surface tension is chosen to be
+
+𝒰  ⁢
+
+(  0.065  ,  0.075  )
+
+𝒰
+
+0.065  0.075
+
+\mathcal{U}(0.065,0.075)  caligraphic_U ( 0.065 , 0.075 )
+
+N/m. Given available estimates of the surface tension of tap water  [ 80 ,  81 ] , the support of the surface tension prior was made tighter than the interval over which the surrogate was trained.
+
+4.4  Combining multiple observations
+
+As mentioned in Sec.
+
+1.1  , it is common practice to calibrate bubble size dynamics models against the simulation of experimental observations, by uniformly weighting the errors to experimental data  [ 26 ,  28 ,  31 ] . This approach implicitly assumes that all experiments are equally informative to calibrating model parameters. However, different experiments may be subject to different levels of noise, especially when different variables are measured.  In practice, noise may be due to statistical uncertainty  [ 82 ]  or to non-controllable variability in macroscopic operating conditions (for example, volume flow rate or mean temperature), that affect different measurement types in distinct ways.  For instance, Fig.
+
+4
+
+suggests that the noise-to-signal ratio is larger for the gas holdup compared to  \ce CO2 mole fraction. Furthermore, despite pushing the parameters to calibrate to their limit, there remain irreducible discrepancies between some experiments and simulation results (Fig.
+
+5  ). In these cases, to match such experimental observations, the models need to be equipped with additional physics that are missing. The missing physics could be because of inherent model deficiencies, or because the experiments were affected by unknown or undocumented variables. Either way, the missing physics makes the experimental observation less informative about the parameters being calibrated. Figure
+
+7
+
+schematically illustrates the missing physics issue. To account for the missing physics, the likelihood uncertainty
+
+σ
+
+𝜎
+
+\sigma  italic_σ
+
+(Eq.
+
+14  ) can be adjusted to reflect the fact some experiments are less informative for the parameter calibration. In Fig.
+
+7  , the likelihood uncertainty is plotted as an experimental uncertainty (red dashed lined) that contains the noise and the missing physics. Hereafter, the likelihood uncertainty is assumed uniform for each one of the four experimental datasets: a single likelihood uncertainty is used for each measurement type (
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+, gas holdup) and each experimental campaign (Exp. 17 and Exp. 19).
+
+Figure 7 :
+
+Illustration of the missing physics issue. If experimental noise and model parameter uncertainty (black dashed lines) are not necessary to explain discrepancies between simulation and experiments, a missing physics component is added to the likelihood uncertainty (red dashed lines).
+
+To set the likelihood uncertainty so as to reflect both the experimental noise and the missing physics, two different methods are used. First, the Bayesian calibration can be done for each one of the four experimental datasets while calibrating the likelihood uncertainty along with the physical parameters (coalescence efficiency, breakup efficiency, surface tension). As a second step, the mean likelihood uncertainty of each one of the four experimental datasets is gathered and used to perform the final calibration that combines all experimental data. This procedure is summarized in Algo.
+
+1
+
+where
+
+𝔼
+
+p  post
+
+⁢
+
+(  σ  )
+
+subscript  𝔼
+
+subscript  𝑝  post
+
+𝜎
+
+\mathbb{E}_{p_{\rm post}}(\sigma)  blackboard_E start_POSTSUBSCRIPT italic_p start_POSTSUBSCRIPT roman_post end_POSTSUBSCRIPT end_POSTSUBSCRIPT ( italic_σ )
+
+denotes the average of the likelihood
+
+σ
+
+𝜎
+
+\sigma  italic_σ
+
+averaged over the posterior probability sampled.
+
+Algorithm 1
+
+Likelihood uncertainty calibration.
+
+1:
+
+for
+
+Exp  i
+
+subscript
+
+Exp
+
+i
+
+\text{Exp}_{\rm i}  Exp start_POSTSUBSCRIPT roman_i end_POSTSUBSCRIPT
+
+∈
+
+\in  ∈
+
+{ Exp. 17 Gas Holdup, Exp. 17
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+, Exp. 19 Gas Holdup, Exp. 19
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+}  do
+
+2:
+
+Calibrate
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+and
+
+σ
+
+𝜎
+
+\sigma  italic_σ
+
+3:
+
+Compute
+
+σ  i
+
+=
+
+𝔼
+
+p
+
+post  ,  i
+
+⁢
+
+(  σ  )
+
+subscript  𝜎  𝑖
+
+subscript  𝔼
+
+subscript  𝑝
+
+post  i
+
+𝜎
+
+\sigma_{i}=\mathbb{E}_{p_{\rm post,i}}(\sigma)  italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT = blackboard_E start_POSTSUBSCRIPT italic_p start_POSTSUBSCRIPT roman_post , roman_i end_POSTSUBSCRIPT end_POSTSUBSCRIPT ( italic_σ )
+
+4:
+
+end
+
+for
+
+Second, the likelihood uncertainty can be treated as a hyperparameter that needs to be optimized. Qualitatively, the uncertainty band obtained by calibrating the model parameters (black dashed lines in Fig.
+
+7  ) must be contained in the likelihood uncertainty assigned to the experiments (the red dashed lines in Fig.
+
+7  ). The definition of uncertainty bands is arbitrary and is chosen to be the
+
+95  %
+
+percent  95
+
+95\%  95 %
+
+confidence interval for the experiments, and the
+
+95  %
+
+percent  95
+
+95\%  95 %
+
+confidence interval for the model predictions. Formally, the likelihood uncertainty
+
+σ  i
+
+subscript  𝜎  𝑖
+
+\sigma_{i}  italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+is chosen by solving the following optimization problem for each experiment
+
+i
+
+𝑖
+
+i  italic_i
+
+min
+
+σ  i
+
+subscript
+
+subscript  𝜎  𝑖
+
+\displaystyle\min_{\sigma_{i}}  roman_min start_POSTSUBSCRIPT italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT end_POSTSUBSCRIPT
+
+(15)
+
+s.t.
+
+V
+
+i  ,  j
+
++
+
+2  ⁢
+
+σ  i
+
+P
+
+i  ,  j  ,  97.5
+
+⁢
+
+(
+
+σ  i
+
+)
+
+,
+
+∀  j
+
+subscript  𝑉
+
+𝑖  𝑗
+
+2
+
+subscript  𝜎  𝑖
+
+subscript  𝑃
+
+𝑖  𝑗  97.5
+
+subscript  𝜎  𝑖
+
+for-all  𝑗
+
+\displaystyle V_{i,j}+2\sigma_{i} P_{i,j,97.5}(\sigma_{i}),~{}\forall j  italic_V start_POSTSUBSCRIPT italic_i , italic_j end_POSTSUBSCRIPT + 2 italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+italic_P start_POSTSUBSCRIPT italic_i , italic_j , 97.5 end_POSTSUBSCRIPT ( italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT ) , ∀ italic_j
+
+V
+
+i  ,  j
+
+−
+
+2  ⁢
+
+σ  i
+
+P
+
+i  ,  j  ,  2.5
+
+⁢
+
+(
+
+σ  i
+
+)
+
+,
+
+∀  j
+
+,
+
+subscript  𝑉
+
+𝑖  𝑗
+
+2
+
+subscript  𝜎  𝑖
+
+subscript  𝑃
+
+𝑖  𝑗  2.5
+
+subscript  𝜎  𝑖
+
+for-all  𝑗
+
+\displaystyle V_{i,j}-2\sigma_{i} P_{i,j,2.5}(\sigma_{i}),~{}\forall j,  italic_V start_POSTSUBSCRIPT italic_i , italic_j end_POSTSUBSCRIPT - 2 italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+italic_P start_POSTSUBSCRIPT italic_i , italic_j , 2.5 end_POSTSUBSCRIPT ( italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT ) , ∀ italic_j ,
+
+where
+
+V
+
+i  ,  j
+
+subscript  𝑉
+
+𝑖  𝑗
+
+V_{i,j}  italic_V start_POSTSUBSCRIPT italic_i , italic_j end_POSTSUBSCRIPT
+
+is the
+
+j
+
+t  ⁢  h
+
+superscript  𝑗
+
+𝑡  ℎ
+
+j^{th}  italic_j start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+measurement of experimental dataset
+
+i
+
+𝑖
+
+i  italic_i
+
+,
+
+P
+
+i  ,  j  ,  97.5
+
+subscript  𝑃
+
+𝑖  𝑗  97.5
+
+P_{i,j,97.5}  italic_P start_POSTSUBSCRIPT italic_i , italic_j , 97.5 end_POSTSUBSCRIPT
+
+(resp.
+
+P
+
+i  ,  j  ,  2.5
+
+subscript  𝑃
+
+𝑖  𝑗  2.5
+
+P_{i,j,2.5}  italic_P start_POSTSUBSCRIPT italic_i , italic_j , 2.5 end_POSTSUBSCRIPT
+
+) is the 97.5  th
+
+(resp. 2.5  th  ) percentile of the model predictions for the
+
+j
+
+t  ⁢  h
+
+superscript  𝑗
+
+𝑡  ℎ
+
+j^{th}  italic_j start_POSTSUPERSCRIPT italic_t italic_h end_POSTSUPERSCRIPT
+
+measurement of experiment
+
+i
+
+𝑖
+
+i  italic_i
+
+obtained by sampling the posterior of
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+and
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+.
+
+The optimal value of the likelihood uncertainty can be iteratively searched, where each iteration consists in choosing a value of
+
+σ  i
+
+subscript  𝜎  𝑖
+
+\sigma_{i}  italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+and calibrating the model parameters (
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+,
+
+Ω
+
+Ω
+
+\Omega  roman_Ω
+
+) using
+
+σ  i
+
+subscript  𝜎  𝑖
+
+\sigma_{i}  italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+as likelihood uncertainty. Since a surrogate model is used in place of the physics model, the calibration process is sufficiently cheap to allow performing multiple calibrations. The procedure is summarized in Algo.
+
+2  .  A validation procedure in a simple illustrative case is provided in
+
+C  .
+
+Algorithm 2
+
+Likelihood uncertainty optimization.
+
+1:
+
+for
+
+Exp  i
+
+subscript
+
+Exp
+
+i
+
+\text{Exp}_{\rm i}  Exp start_POSTSUBSCRIPT roman_i end_POSTSUBSCRIPT
+
+∈
+
+\in  ∈
+
+{ Exp. 17 Gas Holdup, Exp. 17
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+, Exp. 19 Gas Holdup, Exp. 19
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+}  do
+
+2:
+
+Solve Eq.  15
+
+via a bisection method
+
+3:
+
+Store the solution
+
+σ  i
+
+subscript  𝜎  𝑖
+
+\sigma_{i}  italic_σ start_POSTSUBSCRIPT italic_i end_POSTSUBSCRIPT
+
+for
+
+Exp  i
+
+subscript
+
+Exp
+
+i
+
+\text{Exp}_{\rm i}  Exp start_POSTSUBSCRIPT roman_i end_POSTSUBSCRIPT
+
+.
+
+4:
+
+end
+
+for
+
+The likelihood uncertainties obtained with both methods are shown in Tab.
+
+2
+
+for the Binary breakup and the global breakup model. Overall, the uncertainties predicted with both methods are in agreement with each other, which suggests that calibrating likelihood uncertainties is equivalent to solving the optimization problem shown in Eq.
+
+15  . Importantly, calibrating the likelihood uncertainties only requires one calibration procedure per experiment, while 10 were used for the hyperparameter search.
+
+The likelihood uncertainties reflect the amount of noise in the experimental data as well as the amount of physics missing to explain the experiments with the models. By comparing the likelihood uncertainties across modeling assumptions (global breakup or binary breakup assumption), one can compare the amount of physics missing in each model, irrespective of the calibrated model parameters. This is possible here since the breakup model is the only modeling choice varied, while the coalescence model is the same. Other Bayesian model ranking strategies have been proposed  [ 38 ]  by accounting for the amount of parameter tuning needed for each model. A simpler model ranking method is used here since both models need to be tuned by the same amount (see Sec.
+
+4.5  ).
+Here, it appears that the global breakup model is about two times more accurate than the binary breakup model for
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+and is only 10-20% less accurate than the binary breakup model for gas holdup.
+
+Exp. 17
+
+Exp. 19
+
+X
+
+C  ⁢
+
+O  2
+
+subscript  𝑋
+
+𝐶
+
+subscript  𝑂  2
+
+X_{CO_{2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT end_POSTSUBSCRIPT
+
+Gas Holdup
+
+X
+
+C  ⁢
+
+O  2
+
+subscript  𝑋
+
+𝐶
+
+subscript  𝑂  2
+
+X_{CO_{2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT end_POSTSUBSCRIPT
+
+Gas Holdup
+
+Binary Breakup
+
+0.058
+
+0.009
+
+0.03
+
+0.016
+
+Global Breakup
+
+0.034
+
+0.008
+
+0.015
+
+0.02
+
+(a)
+
+Likelihood uncertainties obtained using Algo.
+
+1  .
+
+Exp. 17
+
+Exp. 19
+
+X
+
+C  ⁢
+
+O  2
+
+subscript  𝑋
+
+𝐶
+
+subscript  𝑂  2
+
+X_{CO_{2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT end_POSTSUBSCRIPT
+
+Gas Holdup
+
+X
+
+C  ⁢
+
+O  2
+
+subscript  𝑋
+
+𝐶
+
+subscript  𝑂  2
+
+X_{CO_{2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O start_POSTSUBSCRIPT 2 end_POSTSUBSCRIPT end_POSTSUBSCRIPT
+
+Gas Holdup
+
+Binary Breakup
+
+0.066
+
+0.009
+
+0.039
+
+0.024
+
+Global Breakup
+
+0.025
+
+0.010
+
+0.015
+
+0.027
+
+(b)
+
+Likelihood uncertainties obtained using Algo.
+
+2  .
+
+Table 2 :
+
+Optimal likelihood uncertainty for each experimental dataset and each breakup model.
+
+Given that interphase mass transfer is a critical parameter for  \ce CO2 gas fermenters, accurate predictions of the gas mole fraction
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+are needed. The calibrated and optimized likelihood uncertainties suggest that irrespective of efficiency parameter calibration, a global breakup model  [ 19 ]  is more appropriate to capture the experimental interphase mass transfer observed compared to the binary breakup model  [ 68 ] .
+
+4.5  Results
+
+4.5.1  Parameters’ posteriors
+
+The Bayesian calibration is conducted using Hamiltonian Monte-Carlo (HMC)  [ 83 ,  84 ]  which is made possible due to the auto-differentiation capability of the neural network surrogate. The likelihood uncertainties obtained with the calibration (Algo.
+
+1  ) and the optimization method (Algo.
+
+2  ) are used to compute the likelihood function that combines all the experiments. One calibration is done with the global breakup model and one with the binary breakup model. Figure
+
+8
+
+shows the posterior probability density function (PDF) of the calibrated parameters obtained when combining all the experiments and using the likelihood uncertainties computed via the optimization method (Algo.
+
+2  ). The posteriors obtained when using the likelihood uncertainties computed via the calibration method (Algo.
+
+1  ) are similar and are not shown here for the sake of concision.
+
+Figure 8 :
+
+Corner plots of the posterior probability obtained for the global breakup model  [ 19 ]  (left) and the binary breakup model  [ 68 ]  (right).
+
+First, it appears that any value of surface tension within the interval chosen is reasonable to explain the discrepancy with experimental data. Therefore, the experimental data is not sufficient to confidently decide whether the surface tension of tap water was affected by surfactants.  This result is confirmed by a separate sensitivity analysis which shows that the predicted gas holdup and gaseous  \ce CO2 mole fraction are more sensitive to breakup and coalescence efficiency than surface tension (  E  ).  However, only narrow regions of the coalescence and breakup efficiency domain of definition are likely. The coalescence efficiency is found most likely between 2 and 4, while the breakup efficiency is found most likely between values 10 and 15. Remarkably, both breakup models (global and binary) land on similar conclusions regarding the posterior probability. The posterior exhibits a correlation between coalescence and breakup efficiencies which can be understood by the fact that higher breakup rates may be compensated by higher coalescence rates. The agreement of the calibrated efficiency factors suggests that the model correction are a) either needed for modeling the bubble dynamics of gaseous  \ce CO2; or b) needed to model the specific experiment simulated here. A definitive conclusion would require performing the same calibration exercise with other experimental measurements and is left for future work.  Finally, the most likely parameter values are not located at the prior bounds (except for breakup efficiency of the binary breakup case). Therefore, further extending the support of the priors is unlikely to yield a significant change in the calibration results.
+
+A last set of simulations, termed  a posteriori  runs, was performed to verify the predictions of the optimized models. A binary breakup model was used with coalescence efficiency factor
+
+C  eff
+
+=  1.83
+
+subscript  𝐶  eff
+
+1.83
+
+C_{\rm eff}=1.83  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 1.83
+
+and breakup efficiency factor
+
+B  eff
+
+=  13.565
+
+subscript  𝐵  eff
+
+13.565
+
+B_{\rm eff}=13.565  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 13.565
+
+and a global breakup model was used with
+
+C  eff
+
+=  4.695
+
+subscript  𝐶  eff
+
+4.695
+
+C_{\rm eff}=4.695  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 4.695
+
+and
+
+B  eff
+
+=  13.83
+
+subscript  𝐵  eff
+
+13.83
+
+B_{\rm eff}=13.83  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 13.83
+
+. The values chosen correspond to the posterior means of
+
+B  eff
+
+subscript  𝐵  eff
+
+B_{\rm eff}  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+and
+
+C  eff
+
+subscript  𝐶  eff
+
+C_{\rm eff}  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT
+
+. Figure
+
+9
+
+shows the predicted results of the optimized models against the base models using the baseline computational grid and bubble size discretizations (Sec.
+
+3.4  ). In the case of the binary breakup model, the optimized model mostly affected the gas holdup prediction, especially for Exp. 19. However, the gas mole fraction concentrations are left almost unchanged. This is a consequence of the high likelihood uncertainty for
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+(relative to the value of
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+)  which leads to prioritize gas holdup in the model calibration. The opposite effect can be seen for the global breakup model where significant improvement can be observed for
+
+X
+
+\ce
+
+⁢  C  ⁢  O  ⁢  2
+
+subscript  𝑋
+
+\ce
+
+𝐶  𝑂  2
+
+X_{\ce{CO2}}  italic_X start_POSTSUBSCRIPT italic_C italic_O 2 end_POSTSUBSCRIPT
+
+while gas holdup is unchanged or even less accurate (especially for Exp. 17). Overall, the calibration using the neural network surrogate is consistent with the a posteriori runs, which confirms that the neural network surrogate was sufficiently accurate.  The effect of the calibrated model can also be evaluated with the BSD and is shown in
+
+D  .
+
+Finally, since the same target dataset is used to calibrate the binary breakup and the global breakup model, one could have expected that both calibrated models match. However, the missing physics uncertainty quantification procedure weighs each experimental dataset differently for each breakup model, which explains why the calibrated results differ.
+
+Figure 9 :
+
+Height conditional average of gas holdup (left) and  \ce CO2 mole fraction in the gas phase (right) for experiments (
+
+)  [ 22 ] , the base model (
+
+), the calibrated model (
+
+) for Exp. 17 (blue) and Exp. 19 (red). Dark lines: global breakup model  [ 19 ] . Light lines: binary breakup model  [ 68 ] .
+
+4.5.2
+
+Test for general applicability
+
+The parameter calibration procedure was performed over a single experimental investigation in order to capture gas holdup an interphase mass transfer only. In general, it is not possible to guarantee that the model parameters will accurately predict any other variable, or that the model parameters will be applicable to other reactor types. The results of Sec.
+
+4.5.1
+
+suggest, however, that the appropriate efficiency factors to use are similar even for different breakup model assumptions, which points to a general applicability of the parameters identified. In this section, the applicability of the optimal correction factors  for breakup and coalescence efficiency  is tested in a different case described in Laakkonen et al.  [ 19 ] .  Surface tension is not adjusted because it is a model input that depend of the experiment conducted.  The configuration simulated is the 14L  stirred-tank reactor  graphically illustrated in Fig.
+
+10
+
+(left with T=
+
+260
+
+260
+
+260  260
+
+mm). The reactor is operated with pure gaseous  \ce CO2 and pure liquid n-butanol. The rotation speed of the impeller (shown in red in Fig.
+
+10
+
+right) is 700 rpm, and the mass flow rate of gaseous  \ce CO2 is set to 0.7 vvm. To simplify the meshing, the baffles, and the propeller blades were modeled
+as zero-thickness walls. The inlet is constructed with 12 holes of diameter 1 mm. The mesh is refined near the inlet holes as shown in Fig.
+
+10
+
+(right). The smallest cell has an edge length of 0.1 mm and the largest has an edge length of 6.2 mm. In total, the mesh contains 2.2 million cells. Similar to Sec.
+
+3.2  , a no-slip boundary condition is used at the walls for the liquid phase, and a slip boundary condition is used at the wall for the gas phase.
+The BSD is discretized using 14 bins equally spaced ranging from 0.1 mm to 4 mm. Similar to Sec.
+
+2  , the timestep was dynamically adjusted based on the maximal Courant number, and was
+
+2.5  ⁢  μ  ⁢  s
+
+2.5  𝜇  s
+
+2.5~{}\rm{\mu s}  2.5 italic_μ roman_s
+
+on average. The
+
+k
+
+𝑘
+
+k  italic_k
+
+-
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+model was used (consistently with Sec.
+
+2  ) and the inlet boundary conditions for
+
+k
+
+𝑘
+
+k  italic_k
+
+and
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+were based on freestream turbulence.
+
+Figure 10 :
+
+Left: schematic illustration of  stirred-tank reactor  simulated adapted from  [ 19 ] . Right: computational mesh used for simulating the  stirred-tank reactor .
+
+In Ref.  [ 19 ] , the bubble size distribution is reported at 4 different windows in the reactor (also shown in Fig.
+
+10
+
+left). The n-butanol solvent was chosen to ensure minimal interphase mass transfer. Here, mass transfer is modeled and the Henry’s constant is obtained from  [ 85 ]  where it is reported for an ethanol liquid phase (instead of n-butanol). As a separate analysis, not reported here, the effect of this assumption was tested by canceling the interphase mass transfer entirely which resulted in minimal impact on the quantities of interest (the bubble size distribution). Similar to Sec.
+
+2  , the model of  Lehr et al. [ 68 ]  is used for coalescence, and the model of  Laakkonen et al. [ 19 ]  is used for breakup. Two cases are simulated: case 1 uses a coalescence and breakup efficiency factor of
+
+1
+
+1
+
+1  1
+
+; case 2 uses a coalescence efficiency factor of
+
+C  eff
+
+=  4.695
+
+subscript  𝐶  eff
+
+4.695
+
+C_{\rm eff}=4.695  italic_C start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 4.695
+
+and
+
+B  eff
+
+=  13.83
+
+subscript  𝐵  eff
+
+13.83
+
+B_{\rm eff}=13.83  italic_B start_POSTSUBSCRIPT roman_eff end_POSTSUBSCRIPT = 13.83
+
+, consistently with Sec.
+
+4.5.1  .
+
+Figure 11 :
+
+Bubble size distribution at the 4 measurement windows from experimental measurements  [ 19 ]  (
+
+) and from the present simulations (
+
+). Error bars denote a one standard deviation variability over the spatial averaging window. Top: case 1. Bottom: case 2.
+
+Figure
+
+11
+
+shows the bubble size distribution results for case 1 and case 2 at steady state. Although the efficiency factors were not calibrated to capture BSD, it is clear that they significantly improve the predicted BSD. In particular, Fig.
+
+11
+
+shows that case 1 severely underestimates the bubble breakup. Note that in  Laakkonen et al. [ 19 ] , the breakage model was derived in tandem with a coalescence model to match the bubble size distribution. Here, since only the breakage model from  Laakkonen et al. [ 19 ]  is used, the same output cannot be expected. For case 2, the accuracy of the BSD is significantly improved and the mismatch observed is on par with other analyses  [ 50 ] .
+
+5  Conclusions
+
+In this work, an inverse modeling procedure was conducted to calibrate bubble size dynamics models against experimental measurements of a coflowing bubble column reactor.
+
+Experimental noise and simulation bias were accounted for using a Bayesian inference approach. Given the common practice of calibrating bubble size dynamics model parameters, choosing an appropriate model functional form, irrespective of the parameter calibration is non-trivial. Here, it is shown that estimating the simulation bias allows one to discriminate between modeling approaches. In the present case, a global breakup modeling approach proved more appropriate for capturing interphase mass transfer, which is essential for gas fermentation applications. The simulation bias can be estimated either by including the likelihood uncertainty in the set of calibrated parameters, or by treating the likelihood uncertainty as a hyperparameter.
+
+For computational tractability, the Bayesian inference needs to be paired with a surrogate model rather than a physics model. It was shown that a simple neural network was able to approximate the dependence of the model prediction with respect to the model parameters inferred.  The computational approach proposed is applicable to gas-liquid systems in general where parameters, subject to uncertainty, are used for closure modeling.
+
+The calibration results show that for both global breakup and binary breakup modeling approaches, the magnitude of the breakup kernel needs to be increased by about one order of magnitude in order to accurately capture gas holdup and interphase mass transfer.
+
+The specific parameter adjustments proposed in this work do not necessarily apply to all gas-liquid systems, but the tests in this work indicate general applicability.
+
+In particular, calibrated parameters were shown to be beneficial to predict bubble size distribution in an unseen stirred-tank reactor case . Since both breakup modeling approaches led to similar conclusions, and are also appropriate for a test case not used to calibrate the parameters, it is reasonable to suspect a physical reason behind the identified efficiency factors. Either the breakup dynamics of  \ce CO2 gas are atypical, or an element of both experimental apparatuses promoted high breakage rates. A definitive conclusion would require exercising the calibration method described against a larger experimental dataset and additional model parameters.
+
+Acknowledgments
+
+The authors thank Julie Bessac for fruitful discussions.
+This work was authored by the National Renewable Energy Laboratory (NREL), operated by Alliance for Sustainable Energy, LLC, for the U.S. Department of Energy (DOE) under Contract No. DE-AC36-08GO28308. This work was supported by the U.S. Department of Energy Office of Energy Efficiency and Renewable Energy Bioenergy Technologies Office (BETO). The research was performed using computational resources sponsored by the Department of Energy’s Office of Energy Efficiency and Renewable Energy and located at the National Renewable Energy Laboratory. The views expressed in the article do not necessarily represent the views of the DOE or the U.S. Government. The U.S. Government retains and the publisher, by accepting the article for publication, acknowledges that the U.S. Government retains a nonexclusive, paid-up, irrevocable, worldwide license to publish or reproduce the published form of this work, or allow others to do so, for U.S. Government purposes.
+
+References
+
+Lee et al. [2023]
+
+H. Lee, K. Calvin, D. Dasgupta, G. Krinner, A. Mukherji, P. Thorne, C. Trisos, J. Romero, P. Aldunce, K. Barret, et al.,
+
+IPCC, 2023: Climate Change 2023: Synthesis Report, Summary for Policymakers. Contribution of Working Groups I, II and III to the Sixth Assessment Report of the Intergovernmental Panel on Climate Change (2023).
+
+Bergero et al. [2023]
+
+C. Bergero, G. Gosnell, D. Gielen, S. Kang, M. Bazilian, S. J. Davis,
+
+Pathways to net-zero emissions from aviation,
+
+Nature Sustainability 6 (2023) 404–414.
+
+Schwab et al. [2021]
+
+A. Schwab, A. Thomas, J. Bennett, E. Robertson, S. Cary, Electrification of aircraft: Challenges, barriers, and potential impacts, Technical Report, National Renewable Energy Lab.(NREL), Golden, CO (United States), 2021.
+
+Shahriar and Khanal [2022]
+
+M. F. Shahriar, A. Khanal,
+
+The current techno-economic, environmental, policy status and perspectives of sustainable aviation fuel (SAF),
+
+Fuel 325 (2022) 124905.
+
+Grim et al. [2023]
+
+R. G. Grim, J. R. Ferrell III, Z. Huang, L. Tao, M. G. Resch,
+
+The feasibility of direct CO2 conversion technologies on impacting mid-century climate goals,
+
+Joule 7 (2023) 1684–1699.
+
+Tarraran et al. [2023]
+
+L. Tarraran, V. Agostino, N. S. Vasile, A. A. Azim, G. Antonicelli, J. Baker, J. Millard, A. Re, B. Menin, T. Tommasi, et al.,
+
+High-pressure fermentation of CO2 and H2 by a modified Acetobacterium woodii,
+
+Journal of CO2 Utilization 76 (2023) 102583.
+
+Straub et al. [2014]
+
+M. Straub, M. Demler, D. Weuster-Botz, P. Dürre,
+
+Selective enhancement of autotrophic acetate production with genetically modified Acetobacterium woodii,
+
+Journal of Biotechnology 178 (2014) 67–72.
+
+Pfeifer et al. [2021]
+
+K. Pfeifer, İ. Ergal, M. Koller, M. Basen, B. Schuster, K.-M. R. Simon,
+
+Archaea biotechnology,
+
+Biotechnology Advances 47 (2021) 107668.
+
+Yan et al. [2023]
+
+S.-l. Yan, X.-q. Wang, L.-t. Zhu, X.-b. Zhang, Z.-h. Luo,
+
+Mechanisms and modeling of bubble dynamic behaviors and mass transfer under gravity: a review,
+
+Chemical Engineering Science (2023) 118854.
+
+McGraw [1997]
+
+R. McGraw,
+
+Description of aerosol dynamics by the quadrature method of moments,
+
+Aerosol Science and Technology 27 (1997) 255–265.
+
+Krepper et al. [2007]
+
+E. Krepper, T. Frank, D. Lucas, H.-M. Prasser, P. J. Zwart,
+
+Inhomogeneous MUSIG model - a population balance approach for polydispersed bubbly flows,
+
+in: The 12th International Topical Meeting on Nuclear Reactor Thermal Hydraulics (NURETH-12), volume 30, 2007, p. 2007.
+
+Lo [1996]
+
+S. Lo, Application of population balance to CFD modeling of bubbly flow via the MUSIG model, 1996.
+
+Marchisio et al. [2003]
+
+D. L. Marchisio, J. T. Pikturna, R. O. Fox, R. D. Vigil, A. A. Barresi,
+
+Quadrature method of moments for population-balance equations,
+
+AIChE Journal 49 (2003) 1266–1276.
+
+Gao et al. [2016]
+
+Z. Gao, D. Li, A. Buffo, W. Podgórska, D. L. Marchisio,
+
+Simulation of droplet breakage in turbulent liquid–liquid dispersions with CFD-PBM: Comparison of breakage kernels,
+
+Chemical Engineering Science 142 (2016) 277–288.
+
+Kálal et al. [2014]
+
+Z. Kálal, M. Jahoda, I. Fořt,
+
+Modelling of the bubble size distribution in an aerated stirred tank: Theoretical and numerical comparison of different breakup models,
+
+Chemical and Process Engineering (2014) 331–348.
+
+Wang et al. [2005]
+
+T. Wang, J. Wang, Y. Jin,
+
+Population balance model for gas- liquid flows: Influence of bubble coalescence and breakup models,
+
+Industrial
+
+Engineering Chemistry Research 44 (2005) 7540–7549.
+
+Li and Liao [2024]
+
+S. Li, Y. Liao,
+
+CFD investigation of bubble breakup and coalescence in a rectangular pool-scrubbing column,
+
+Nuclear Engineering and Design 425 (2024) 113342.
+
+Laakkonen et al. [2006]
+
+M. Laakkonen, V. Alopaeus, J. Aittamaa,
+
+Validation of bubble breakage, coalescence and mass transfer models for gas–liquid dispersion in agitated vessel,
+
+Chemical Engineering Science 61 (2006) 218–228.
+
+Laakkonen et al. [2007]
+
+M. Laakkonen, P. Moilanen, V. Alopaeus, J. Aittamaa,
+
+Modelling local bubble size distributions in agitated vessels,
+
+Chemical Engineering Science 62 (2007) 721–740.
+
+Singh et al. [2009]
+
+K. Singh, S. Mahajani, K. Shenoy, S. Ghosh,
+
+Population balance modeling of liquid- liquid dispersions in homogeneous continuous-flow stirred tank,
+
+Industrial
+
+Engineering Chemistry research 48 (2009) 8121–8133.
+
+Gel et al. [2023]
+
+A. Gel, A. Vaidheeswaran, M. A. Clarke,
+
+Comparison of Deterministic and Bayesian Calibration of MFiX-PIC, Part 1: Settling Bed,
+
+arXiv preprint arXiv:2305.01132 (2023).
+
+Deckwer et al. [1978]
+
+W.-D. Deckwer, I. Adler, A. Zaidi,
+
+A comprehensive study on CO2-interphase mass transfer in vertical cocurrent and countercurrent gas-liquid flow,
+
+The Canadian Journal of Chemical Engineering 56 (1978) 43–55.
+
+Alopaeus et al. [2002]
+
+V. Alopaeus, J. Koskinen, K. I. Keskinen, J. Majander,
+
+Simulation of the population balances for liquid–liquid systems in a nonideal stirred tank. Part 2—parameter fitting and the use of the multiblock model for dense dispersions,
+
+Chemical Engineering Science 57 (2002) 1815–1825.
+
+Ruiz and Padilla [2005]
+
+M. Ruiz, R. Padilla,
+
+Determination of coalescence functions in liquid–liquid dispersions,
+
+Hydrometallurgy 80 (2005) 32–42.
+
+Azizi and Al Taweel [2011]
+
+F. Azizi, A. Al Taweel,
+
+Turbulently flowing liquid–liquid dispersions. Part I: drop breakage and coalescence,
+
+Chemical Engineering Journal 166 (2011) 715–725.
+
+Castellano et al. [2019]
+
+S. Castellano, L. Carrillo, N. Sheibat-Othman, D. Marchisio, A. Buffo, S. Charton,
+
+Using the full turbulence spectrum for describing droplet coalescence and breakage in industrial liquid-liquid systems: Experiments and modeling,
+
+Chemical Engineering Journal 374 (2019) 1420–1432.
+
+Sathyagal et al. [1995]
+
+A. Sathyagal, D. Ramkrishna, G. Narsimhan,
+
+Solution of inverse problems in population balances-II. Particle break-up,
+
+Computers
+
+Chemical Engineering 19 (1995) 437–451.
+
+Mignard et al. [2006]
+
+D. Mignard, L. P. Amin, X. Ni,
+
+Determination of breakage rates of oil droplets in a continuous oscillatory baffled tube,
+
+Chemical Engineering Science 61 (2006) 6902–6917.
+
+Maluta et al. [2021]
+
+F. Maluta, A. Buffo, D. Marchisio, G. Montante, A. Paglianti, M. Vanni,
+
+Effect of turbulent kinetic energy dissipation rate on the prediction of droplet size distribution in stirred tanks,
+
+International Journal of Multiphase Flow 136 (2021) 103547.
+
+Maaß and Kraume [2012]
+
+S. Maaß, M. Kraume,
+
+Determination of breakage rates using single drop experiments,
+
+Chemical Engineering Science 70 (2012) 146–164.
+
+Solsvik et al. [2014]
+
+J. Solsvik, P. J. Becker, N. Sheibat-Othman, H. A. Jakobsen,
+
+Population balance model: Breakage kernel parameter estimation to emulsification data,
+
+The Canadian Journal of Chemical Engineering 92 (2014) 1082–1099.
+
+Becker et al. [2014]
+
+P. J. Becker, F. Puel, H. A. Jakobsen, N. Sheibat-Othman,
+
+Development of an improved breakage kernel for high dispersed viscosity phase emulsification,
+
+Chemical Engineering Science 109 (2014) 326–338.
+
+Rzehak et al. [2017]
+
+R. Rzehak, T. Ziegenhein, S. Kriebitzsch, E. Krepper, D. Lucas,
+
+Unified modeling of bubbly flows in pipes, bubble columns, and airlift columns,
+
+Chemical Engineering Science 157 (2017) 147–158.
+
+Besagni et al. [2017]
+
+G. Besagni, F. Inzoli, T. Ziegenhein, D. Lucas,
+
+Computational fluid-dynamic modeling of the pseudo-homogeneous flow regime in large-scale bubble columns,
+
+Chemical Engineering Science 160 (2017) 144–160.
+
+Tierney [1994]
+
+L. Tierney,
+
+Markov chains for exploring posterior distributions,
+
+Ann. Stat. (1994) 1701–1728.
+
+Roberts and Smith [1994]
+
+G. Roberts, A. Smith,
+
+Simple conditions for the convergence of the Gibbs sampler and Metropolis-Hastings algorithms,
+
+Stochastic Process. Appl. 49 (1994) 207–216.
+
+Gelman et al. [1997]
+
+A. Gelman, W. Gilks, G. Roberts,
+
+Weak convergence and optimal scaling of random walk Metropolis algorithms,
+
+Ann. Appl. Probab. 7 (1997) 110–120.
+
+Braman et al. [2013]
+
+K. Braman, T. A. Oliver, V. Raman,
+
+Bayesian analysis of syngas chemistry models,
+
+Combustion Theory and Modelling 17 (2013) 858–887.
+
+Hassanaly et al. [2021]
+
+M. Hassanaly, H. Sitaraman, K. L. Schulte, A. J. Ptak, J. Simon, K. Udwary, J. H. Leach, H. Splawn,
+
+Surface chemistry models for gaas epitaxial growth and hydride cracking using reacting flow simulations,
+
+Journal of Applied Physics 130 (2021).
+
+Bell et al. [2019]
+
+J. Bell, M. Day, J. Goodman, R. Grout, M. Morzfeld,
+
+A Bayesian approach to calibrating hydrogen flame kinetics using many experiments and parameters,
+
+Combustion and Flame 205 (2019) 305–315.
+
+Hassanaly et al. [2024]
+
+M. Hassanaly, P. J. Weddle, R. N. King, S. De, A. Doostan, C. R. Randall, E. J. Dufek, A. M. Colclasure, K. Smith,
+
+Pinn surrogate of li-ion battery models for parameter inference, part ii: Regularization and application of the pseudo-2d model,
+
+Journal of Energy Storage 98 (2024) 113104.
+
+Smith et al. [2021]
+
+P. J. Smith, S. T. Smith, O. H. Diaz-Ibarra, J. C. Parra-Álvarez, J. N. Thornock, J. Spinti, S. Harding, L. Marshall, B. Fischer,
+
+The Atikokan Digital Twin: Bayesian Physics-based Machine Learning for Low-load Firing in the Atikokan Biomass Utility Boiler,
+
+in: International Journal of Energy for a Clean Environment, volume 24, 2021, pp. 63–78.
+
+Vaidheeswaran et al. [2021]
+
+A. Vaidheeswaran, A. Gel, M. A. Clarke, W. Rogers, Sensitivity analysis of particle-in-cell modeling parameters in settling bed, bubbling fluidized bed and circulating fluidized bed, Technical Report, National Energy Technology Laboratory (NETL), Pittsburgh, PA, Morgantown, WV …, 2021.
+
+Gao et al. [2021]
+
+Y. Gao, X. Zhang, C. Zhu, B. Guo,
+
+Global parameter sensitivity analysis of electrochemical model for lithium-ion batteries considering aging,
+
+IEEE/ASME Transactions on Mechatronics 26 (2021) 1283–1294.
+
+Volger et al. [2023]
+
+R. Volger, L. Puiman, C. Haringa,
+
+Bubbles and Broth: A review on the impact of broth composition on bubble column bioreactor hydrodynamics,
+
+Biochemical Engineering Journal (2023) 109124.
+
+McClure et al. [2015]
+
+D. D. McClure, A. C. Lee, J. M. Kavanagh, D. F. Fletcher, G. W. Barton,
+
+Impact of surfactant addition on oxygen mass transfer in a bubble column,
+
+Chemical Engineering
+
+Technology 38 (2015) 44–52.
+
+Painmanakul et al. [2005]
+
+P. Painmanakul, K. Loubière, G. Hébrard, M. Mietton-Peuchot, M. Roustan,
+
+Effect of surfactants on liquid-side mass transfer coefficients,
+
+Chemical Engineering Science 60 (2005) 6480–6491.
+
+Weller et al. [1998]
+
+H. G. Weller, G. Tabor, H. Jasak, C. Fureby,
+
+A tensorial approach to computational continuum mechanics using object-oriented techniques,
+
+Computers in Physics 12 (1998) 620–631.
+
+Rahimi et al. [2018]
+
+M. J. Rahimi, H. Sitaraman, D. Humbird, J. J. Stickel,
+
+Computational fluid dynamics study of full-scale aerobic bioreactors: Evaluation of gas–liquid mass transfer, oxygen uptake, and dynamic oxygen distribution,
+
+Chemical Engineering Research and Design 139 (2018) 283–295.
+
+Lehnigk et al. [2022]
+
+R. Lehnigk, W. Bainbridge, Y. Liao, D. Lucas, T. Niemi, J. Peltola, F. Schlegel,
+
+An open-source population balance modeling framework for the simulation of polydisperse multiphase flows,
+
+AIChE Journal 68 (2022) e17539.
+
+Sitaraman et al. [2023]
+
+H. Sitaraman, J. Lischeske, Y. Lu, J. Stickel,
+
+A reacting multiphase computational flow model for 2 3-butanediol synthesis in industrial-scale bioreactors,
+
+Chemical Engineering Research and Design 197 (2023) 38–52.
+
+Passalacqua and Fox [2011]
+
+A. Passalacqua, R. O. Fox,
+
+Implementation of an iterative solution procedure for multi-fluid gas–particle flow models on unstructured grids,
+
+Powder Technology 213 (2011) 174–187.
+
+Grace [1976]
+
+J. R. Grace,
+
+Shapes and Velocities of Single Drops and Bubbles Moving Freely through Immisicible Liquids,
+
+Trans. Inst. Chem. Eng. 54 (1976) 167–173.
+
+Tomiyama et al. [2002]
+
+A. Tomiyama, H. Tamai, I. Zun, S. Hosokawa,
+
+Transverse migration of single bubbles in simple shear flows,
+
+Chemical Engineering Science 57 (2002) 1849–1858.
+
+Antal et al. [1991]
+
+S. Antal, R. Lahey Jr, J. Flaherty,
+
+Analysis of phase distribution in fully developed laminar bubbly two-phase flow,
+
+International Journal of Multiphase Flow 17 (1991) 635–652.
+
+Burns et al. [2004]
+
+A. D. Burns, T. Frank, I. Hamill, J.-M. Shi,
+
+The Favre averaged drag model for turbulent dispersion in Eulerian multi-phase flows,
+
+in: 5th International Conference on Multiphase Flow, ICMF, volume 4, ICMF, 2004, pp. 1–17.
+
+Higbie [1935]
+
+R. Higbie,
+
+The rate of absorption of pure gas into a still liquid during short periods of exposure,
+
+Trans. Am. Inst. Chem. Engrs. 31 (1935) 365–389.
+
+Behzadi et al. [2004]
+
+A. Behzadi, R. Issa, H. Rusche,
+
+Modelling of dispersed bubble and droplet flow at high phase fractions,
+
+Chemical Engineering Science 59 (2004) 759–770.
+
+Lahey Jr [2005]
+
+R. T. Lahey Jr,
+
+The simulation of multidimensional multiphase flows,
+
+Nuclear Engineering and Design 235 (2005) 1043–1060.
+
+Popovac and Hanjalic [2007]
+
+M. Popovac, K. Hanjalic,
+
+Compound wall treatment for RANS computation of complex turbulent flows and heat transfer,
+
+Flow, Turbulence and Combustion 78 (2007) 177–202.
+
+Buwa and Ranade [2002]
+
+V. V. Buwa, V. V. Ranade,
+
+Dynamics of gas–liquid flow in a rectangular bubble column: experiments and single/multi-group CFD simulations,
+
+Chemical Engineering Science 57 (2002) 4715–4736.
+
+Díaz et al. [2008]
+
+M. E. Díaz, A. Iranzo, D. Cuadra, R. Barbero, F. J. Montes, M. A. Galán,
+
+Numerical simulation of the gas–liquid flow in a laboratory scale bubble column: influence of bubble size distribution and non-drag forces,
+
+Chemical Engineering Journal 139 (2008) 363–379.
+
+Colella et al. [1999]
+
+D. Colella, D. Vinci, R. Bagatin, M. Masi, E. A. Bakr,
+
+A study on coalescence and breakage mechanisms in three different bubble columns,
+
+Chemical Engineering Science 54 (1999) 4767–4777.
+
+Lucas and Ziegenhein [2019]
+
+D. Lucas, T. Ziegenhein,
+
+Influence of the bubble size distribution on the bubble column flow regime,
+
+International Journal of Multiphase Flow 120 (2019) 103092.
+
+Ramezani et al. [2012]
+
+M. Ramezani, N. Mostoufi, M. R. Mehrnia,
+
+Improved modeling of bubble column reactors by considering the bubble size distribution,
+
+Industrial
+
+Engineering Chemistry Research 51 (2012) 5705–5714.
+
+Kumar and Ramkrishna [1996]
+
+S. Kumar, D. Ramkrishna,
+
+On the solution of population balance equations by discretization—I. A fixed pivot technique,
+
+Chemical Engineering Science 51 (1996) 1311–1332.
+
+Liao et al. [2018]
+
+Y. Liao, R. Oertel, S. Kriebitzsch, F. Schlegel, D. Lucas,
+
+A discrete population balance equation for binary breakage,
+
+International Journal for Numerical Methods in Fluids 87 (2018) 202–215.
+
+Lehr et al. [2002]
+
+F. Lehr, M. Millies, D. Mewes,
+
+Bubble-size distributions and flow fields in bubble columns,
+
+AIChE Journal 48 (2002) 2426–2443.
+
+Kostoglou and Karabelas [2005]
+
+M. Kostoglou, A. Karabelas,
+
+Toward a unified framework for the derivation of breakage functions based on the statistical theory of turbulence,
+
+Chemical Engineering Science 60 (2005) 6584–6595.
+
+Hissanaga et al. [2020]
+
+A. Hissanaga, N. Padoin, E. Paladino,
+
+Mass transfer modeling and simulation of a transient homogeneous bubbly flow in a bubble column,
+
+Chemical Engineering Science 218 (2020) 115531.
+
+Ngu et al. [2022]
+
+V. Ngu, J. Morchain, A. Cockx,
+
+Spatio-temporal 1D gas–liquid model for biological methanation in lab scale and industrial bubble column,
+
+Chemical Engineering Science 251 (2022) 117478.
+
+Rzehak and Krepper [2016]
+
+R. Rzehak, E. Krepper,
+
+Euler-Euler simulation of mass-transfer in bubbly flows,
+
+Chemical Engineering Science 155 (2016) 459–468.
+
+Huang et al. [2018]
+
+Z. Huang, D. D. McClure, G. W. Barton, D. F. Fletcher, J. M. Kavanagh,
+
+Assessment of the impact of bubble size modelling in cfd simulations of alternative bubble column configurations operating in the heterogeneous regime,
+
+Chemical Engineering Science 186 (2018) 88–101.
+
+Yue et al. [2007]
+
+J. Yue, G. Chen, Q. Yuan, L. Luo, Y. Gonthier,
+
+Hydrodynamics and mass transfer characteristics in gas–liquid flow through a rectangular microchannel,
+
+Chemical Engineering Science 62 (2007) 2096–2108.
+
+Mueller and Raman [2018]
+
+M. E. Mueller, V. Raman,
+
+Model form uncertainty quantification in turbulent combustion simulations: Peer models,
+
+Combustion and Flame 187 (2018) 137–146.
+
+Hassanaly et al. [2024a]
+
+M. Hassanaly, H. Sitaraman, M. Rahimi, M. Parra-Alvarez, BiRD (BioReactorDesign) [SWR-24-35], 2024a. URL:  https://www.osti.gov/biblio/2319227 . doi:  10.11578/dc.20240307.3  .
+
+Hassanaly et al. [2024b]
+
+M. Hassanaly, P. J. Weddle, R. N. King, S. De, A. Doostan, C. R. Randall, E. J. Dufek, A. M. Colclasure, K. Smith,
+
+Pinn surrogate of li-ion battery models for parameter inference, part i: Implementation and multi-fidelity hierarchies for the single-particle model,
+
+Journal of Energy Storage 98 (2024b) 113103.
+
+Khalil et al. [2015]
+
+M. Khalil, G. Lacaze, J. C. Oefelein, H. N. Najm,
+
+Uncertainty quantification in LES of a turbulent bluff-body stabilized flame,
+
+Proceedings of the Combustion Institute 35 (2015) 1147–1156.
+
+Raman and Hassanaly [2019]
+
+V. Raman, M. Hassanaly,
+
+Emerging trends in numerical simulations of combustion systems,
+
+Proceedings of the Combustion Institute 37 (2019) 2073–2089.
+
+Stagonas et al. [2011]
+
+D. Stagonas, D. Warbrick, G. Muller, D. Magagna,
+
+Surface tension effects on energy dissipation by small scale, experimental breaking waves,
+
+Coastal Engineering 58 (2011) 826–836.
+
+O’Mahony [1972]
+
+M. O’Mahony,
+
+Purity effects and distilled water taste,
+
+Nature 240 (1972) 489–489.
+
+Oliver et al. [2014]
+
+T. A. Oliver, N. Malaya, R. Ulerich, R. D. Moser,
+
+Estimating uncertainties in statistics computed from direct numerical simulation,
+
+Physics of Fluids 26 (2014).
+
+Hoffman et al. [2014]
+
+M. Hoffman, A. Gelman, et al.,
+
+The No-U-Turn sampler: adaptively setting path lengths in Hamiltonian Monte Carlo,
+
+Journal Machine Learning Research 15 (2014) 1593–1623.
+
+Phan et al. [2019]
+
+D. Phan, N. Pradhan, M. Jankowiak,
+
+Composable effects for flexible and accelerated probabilistic programming in NumPyro,
+
+arXiv preprint arXiv:1912.11554 (2019).
+
+Kvam and Sarkisov [2019]
+
+O. Kvam, L. Sarkisov,
+
+Solubility prediction in mixed solvents: A combined molecular simulation and experimental approach,
+
+Fluid Phase Equilibria 484 (2019) 26–37.
+
+Saltelli [2002]
+
+A. Saltelli,
+
+Making best use of model evaluations to compute sensitivity indices,
+
+Computer physics communications 145 (2002) 280–297.
+
+Appendix A  Convergence of the neural networks
+
+Figure
+
+12
+
+shows the training and validation loss history of the neural network surrogate of the breakup model and of the binary breakup model. Overall, it can be seen that the training and testing loss are nearly converged. Since the testing losses do not gradually increase with the epoch number, the surrogates are unlikely to overfit.
+
+Figure 12 :
+
+Training (
+
+) and testing (
+
+) loss history of the neural network surrogates trained on the Exp. 17 (
+
+) and Exp. 19 (
+
+), for the global breakup model  [ 19 ]  (left) and the binary breakup model  [ 68 ]  (right). Dark lines: gas holdup. Light lines:  \ce CO2 gas mole fraction.
+
+Appendix B  Turbulence boundary conditions
+
+The turbulent boundary conditions for the turbulent kinetic energy
+
+k
+
+𝑘
+
+k  italic_k
+
+and the turbulent energy dissipation rate
+
+ε
+
+𝜀
+
+\varepsilon  italic_ε
+
+were artificially increased in the present work (Sec.
+
+3.3  , Sec.
+
+3.4
+
+and Sec.
+
+4  ) for stability reasons. The chosen turbulent inlet boundary conditions are reported in Tab.
+
+3  , along with theoretical values for freestream turbulence, assuming 5% turbulence intensity in the liquid phase and the gas phase.
+
+Exp. 17
+
+Exp. 19
+
+Gas
+
+Liquid
+
+Gas
+
+Liquid
+
+This work
+
+3.7e-5
+
+0.01
+
+3.7e-5
+
+0.01
+
+Turbulence intensity 5%
+
+4.4e-6
+
+8.3e-6
+
+8.0e-6
+
+8.3e-6
+
+(a)
+
+Turbulent kinetic energy boundary conditions in
+
+m  2
+
+.
+
+s
+
+−  2
+
+formulae-sequence
+
+superscript  𝑚  2
+
+superscript  𝑠
+
+2
+
+m^{2}.s^{-2}  italic_m start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT . italic_s start_POSTSUPERSCRIPT - 2 end_POSTSUPERSCRIPT
+
+.
+
+Exp. 17
+
+Exp. 19
+
+Gas
+
+Liquid
+
+Gas
+
+Liquid
+
+This work
+
+1.5e-4
+
+1.5e-4
+
+1.5e-4
+
+1.5e-4
+
+Turbulence intensity 5%
+
+1.44e-7
+
+3.75e-7
+
+3.6e-7
+
+3.75e-7
+
+(b)
+
+Turbulent kinetic energy dissipation rate boundary conditions in
+
+m  2
+
+.
+
+s
+
+−  3
+
+formulae-sequence
+
+superscript  𝑚  2
+
+superscript  𝑠
+
+3
+
+m^{2}.s^{-3}  italic_m start_POSTSUPERSCRIPT 2 end_POSTSUPERSCRIPT . italic_s start_POSTSUPERSCRIPT - 3 end_POSTSUPERSCRIPT
+
+.
+
+Table 3 :
+
+Comparison of turbulent inlet boundary conditions between the cases simulated and a case assuming 5% turbulence intensity.
+
+The same numerical simulations as the coarse grid case in Sec.
+
+3.4
+
+were performed with freestream turbulence boundary conditions, assuming 5% turbulence intensity. The results are shown in Fig.
+
+13
+
+for gas holdup only for concision. It can be seen that using the non-artificially increased turbulent boundary conditions leads to spurious oscillations for the global breakup model. However, the results are almost unchanged for the binary breakup case. In Fig.
+
+13
+
+(right) it is clear that the turbulent kinetic energy in the liquid phase rapidly deviates from the freestream boundary conditions because of the walls, and reaches levels higher than the artificially increased turbulent kinetic energy boundary conditions. Therefore, although the inlet boundary conditions chosen are inaccurate, they are unlikely to affect the results reported (aside from providing increased stability).
+
+Figure 13 :
+
+Left: Height conditional average of gas holdup for experiments (
+
+)  [ 22 ] , results using artificially high turbulent inlet boundary conditions (
+
+), results using freestream turbulence inlet boundary conditions with 5% turbulence intensity (
+
+) for Exp. 17 (blue) and Exp. 19 (red). Right: contour of the liquid turbulent kinetic energy for Exp. 17 using freestream turbulence inlet boundary conditions with 5% turbulence intensity and the non-modified binary breakup model  [ 68 ] . The flow goes from left to right.
+
+Appendix C
+
+Validation of Algo.
+
+1
+
+and Algo.
+
+2
+
+In this section, we demonstrate a straightforward calibration procedure to validate the ability of Algo.
+
+1
+
+and Algo.
+
+2
+
+in accounting for uncertainty due to missing physics.
+
+C.1
+
+Simplified bubble size distribution (BSD) dynamics model
+
+In this example, we model the dynamics of a bubble size distribution (BSD) within a frozen flow field, i.e., changes in BSD do not influence the fluid flow variables. Each bubble is represented by a particle, which can either merge with another particle (coalescence) or break into multiple particles (breakup). This approach differs from the one used in the main manuscript, where bubble size classes evolve in phase space. The particle-based modeling demonstrated here can be easily extended to a class-based approach by considering a single particle as a group of bubbles. This example is intended solely for illustrative purposes.
+
+The dynamics are simulated with a timestepping method until a total simulation time is reached. At every timestep, the number of breakup and coalescence events is determined by the breakup and coalescence rates. For each breakup and coalescence event, a random bubble (for breakup) or set of bubbles (for coalescence) is selected to undergo coalescence or breakup. Here, the breakup and coalescence rates are assumed independent of the bubble diameters. While simple, this implementation can result in a breakup or coalescence runaway, especially when breakup and coalescence rates do not balance each other out. In case of breakup runaway, the number of bubbles grows monotonically, while in coalescence runaway, the number of bubbles decreases monotonically until the simulation ends. The runaway condition is detected as follows: if the number of bubbles falls below 10% of the initial count (coalescence runaway) or exceeds 10 times the initial count (breakup runaway), runaway is declared, and no BSD is recorded.
+
+At every breakup or coalescence event, “
+
+N
+
+𝑁
+
+N  italic_N
+
+-ary” breakup and coalescence occur. If
+
+N  =  2
+
+𝑁  2
+
+N=2  italic_N = 2
+
+, then a binary breakup and binary coalescence are modeled.
+
+For all the cases, the domain initially contains
+
+2  ,  000
+
+2  000
+
+2,000  2 , 000
+
+bubbles, all with a diameter equal to
+
+1
+
+1
+
+1  1
+
+mm. The timestep is
+
+Δ  ⁢  t
+
+=  0.01
+
+Δ  𝑡
+
+0.01
+
+\Delta t=0.01  roman_Δ italic_t = 0.01
+
+s and the total simulation time is
+
+150
+
+150
+
+150  150
+
+s.
+
+For each simulation, the BSD is recorded after a statistically stationary solution for the mean bubble diameter is achieved. The statistically stationary state is detected when the window average bubble diameter with a window size of 100 timesteps varies by less than
+
+10
+
+10
+
+10  10
+
+nm. This computational implementation is available in the companion repository.
+
+3
+
+3
+
+3
+
+https://github.com/NREL/BioReactorDesign/tree/v0.0.16/tutorial_cases/calibration/bsd/make_dataset
+
+C.2
+
+Calibration
+
+Two target BSDs are considered: 1) a BSD obtained with a ternary breakup (
+
+N  =  3
+
+𝑁  3
+
+N=3  italic_N = 3
+
+) and coalescence, with rates 0.5 Hz; 2) A BSD obtained with a binary breakup (
+
+N  =  2
+
+𝑁  2
+
+N=2  italic_N = 2
+
+) and coalescence, with a breakup rate
+
+1.6
+
+1.6
+
+1.6  1.6
+
+Hz and a coalescence rate
+
+2.0
+
+2.0
+
+2.0  2.0
+
+Hz.
+
+The numerical model considers binary breakup and coalescence with adjustable breakup and coalescence rates. To avoid breakup or coalescence runaway, the breakup rate is always set close to the coalescence rate. Specifically, the coalescence rate is set in the interval
+
+C  ⁢  r
+
+∈
+
+[  0.02  ,  2  ]
+
+⁢  H  ⁢  z
+
+𝐶  𝑟
+
+0.02  2
+
+𝐻  𝑧
+
+Cr\in[0.02,2]Hz  italic_C italic_r ∈ [ 0.02 , 2 ] italic_H italic_z
+
+. A breakup rate factor is defined as
+
+B  ⁢  f
+
+∈
+
+[  0.8  ,  1.1  ]
+
+𝐵  𝑓
+
+0.8  1.1
+
+Bf\in[0.8,1.1]  italic_B italic_f ∈ [ 0.8 , 1.1 ]
+
+and the breakup rate is related to the coalescence rate as
+
+B  ⁢  r
+
+=
+
+B  ⁢  f  ⁢  C  ⁢  r
+
+𝐵  𝑟
+
+𝐵  𝑓  𝐶  𝑟
+
+Br=BfCr  italic_B italic_r = italic_B italic_f italic_C italic_r
+
+. This ensures that the breakup rates and coalescence rates are close to one another.
+
+Figure
+
+14
+
+shows the forward simulations used to construct a dataset for training the surrogate model. The figure also differentiates between stable and runaway simulations. Note that simulations with large or small
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+values lead to runaway events.
+
+Figure 14 :
+
+Scatter plot of the simulations run to train a surrogate model of the BSD, including successful (
+
+) and runaway simulations (
+
+).
+
+Figure
+
+15
+
+compares the target data with the simulated data. It is clear that for ternary breakup, the training data generated missed a significant amount of physics, while for binary breakup, the training data aligns more closely to the target. This example illustrates a scenario where a numerical model’s predictions are inconsistent with observations, possibly due to the simulation’s inability to model a specific physical phenomenon. The rest of this section, verifies that Algo.
+
+1
+
+and Algo.
+
+2
+
+predict that ternary breakup and coalescence models requires a larger missing physics uncertainty compared to the binary breakup and coalescence models.
+
+Figure 15 :
+
+Forward model prediction of BSD colored by
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+(left) and
+
+C  ⁢  r
+
+𝐶  𝑟
+
+Cr  italic_C italic_r
+
+(right) for the ternary breakup and coalescence target (top) and the binary breakup and coalescence target (bottom).
+
+Using 400 BSD numerically generated (shown in Fig.
+
+14  ), a neural network surrogate model is constructed similar to Fig.
+
+6(a)
+
+with 3 inputs (
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+,
+
+C  ⁢  r
+
+𝐶  𝑟
+
+Cr  italic_C italic_r
+
+, and the bubble diameter), with 4 hidden layers of size
+
+{  20  ,  20  ,  20  ,  10  }
+
+20  20  20  10
+
+\{20,20,20,10\}  { 20 , 20 , 20 , 10 }
+
+, a batch size of
+
+128
+
+128
+
+128  128
+
+,
+
+6000
+
+6000
+
+6000  6000
+
+epochs and a learning rate of
+
+2  ×
+
+10
+
+−  4
+
+2
+
+superscript  10
+
+4
+
+2\times 10^{-4}  2 × 10 start_POSTSUPERSCRIPT - 4 end_POSTSUPERSCRIPT
+
+. The surrogate model is subsequently used to calibrate the
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+and
+
+C  ⁢  r
+
+𝐶  𝑟
+
+Cr  italic_C italic_r
+
+.
+
+The prior PDFs of
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+and
+
+C  ⁢  r
+
+𝐶  𝑟
+
+Cr  italic_C italic_r
+
+are uniformly distributed as
+
+𝒰  ⁢
+
+(  0.8  ,  1.1  )
+
+𝒰
+
+0.8  1.1
+
+\mathcal{U}(0.8,1.1)  caligraphic_U ( 0.8 , 1.1 )
+
+and
+
+𝒰  ⁢
+
+(  0.02  ,  2  )
+
+𝒰
+
+0.02  2
+
+\mathcal{U}(0.02,2)  caligraphic_U ( 0.02 , 2 )
+
+respectively. For Algo.
+
+1  , the prior distribution of the missing physics uncertainty is uniformly distributed as
+
+𝒰  ⁢
+
+(  0.001  ,  0.1  )
+
+𝒰
+
+0.001  0.1
+
+\mathcal{U}(0.001,0.1)  caligraphic_U ( 0.001 , 0.1 )
+
+. Similar to Sec.
+
+4.5.1  , the calibration is made using
+
+10  ,  000
+
+10  000
+
+10,000  10 , 000
+
+warmup samples and
+
+2  ,  000
+
+2  000
+
+2,000  2 , 000
+
+posterior samples using Hamiltonian Monte-Carlo (HMC)  [ 83 ,  84 ] . The propagated uncertainty of the calibrated parameters (akin to Fig.
+
+7  ) is shown in Fig.
+
+16  .
+
+Figure 16 :
+
+Mean (
+
+) and 95% confidence interval (
+
+) of the normal distribution model. Predictions are overlayed with target observations (
+
+) and the corresponding missing physics and noise uncertainty (
+
+). Top: results of Algo.
+
+1  . Bottom: results of Algo.
+
+2  . Left: binary breakup and coalescence target. Right: ternary breakup and coalescence target.
+
+Note that the noise in the target data is similar between both targets since it is only due to the statistical uncertainty. Figure
+
+16
+
+shows that Algo.
+
+1
+
+and Algo.
+
+2
+
+predict a significantly lower missing physics uncertainty for the second target (binary breakup and coalescence) than for the first target (ternary breakup and coalescence). Similar to Tab.
+
+2  , Algo.
+
+2
+
+tends to lead to higher likelihood uncertainties. The calibrated parameters are shown in Fig.
+
+17  , showing that calibration results are consistent between Algo.
+
+1
+
+and Algo.
+
+2  .
+
+Figure 17 :
+
+PDF of the calibrated
+
+B  ⁢  f
+
+𝐵  𝑓
+
+Bf  italic_B italic_f
+
+and
+
+C  ⁢  r
+
+𝐶  𝑟
+
+Cr  italic_C italic_r
+
+parameters. Predictions are overlayed with true values for the binary breakup and coalescence target (
+
+). Top: results of Algo.
+
+1  . Bottom: results of Algo.
+
+2  . Left: binary breakup and coalescence target. Right: ternary breakup and coalescence target.
+
+Appendix D
+
+Effect of calibration on the BSD
+
+Although the bubble size itself is not a variable that is used as a calibration target, the effect of the calibration on the BSD can be evaluated. In Fig.
+
+18  , the BSD is plotted at
+
+z  =  1
+
+𝑧  1
+
+z=1  italic_z = 1
+
+m for experiment 17 simulated with the global breakup model. It is clear that in the base model, bubbles rapidly coalesce and saturate the highest bin size modeled for the BSD, while the issue is less potent in the calibrated model. This is a direct effect of the larger breakup rate in the calibrated case.
+
+Even in the calibrated cases, the definition of the bounds of the bubble size affected the BSD. Given that the calibration results already suggest a larger breakup rate, removing this effect might even amplify the magnitude of the efficiency factor correction, and might help bridge the gap to the stirred-tank reactor BSD measurements (Fig.
+
+11  ). This investigation is left for future work.
+
+Figure 18 :
+
+Bubble size distribution at
+
+z  =  1
+
+𝑧  1
+
+z=1  italic_z = 1
+
+m for experiment 17 and the global breakup model  [ 19 ]  of the base model (
+
+) and the optimized model (
+
+).
+
+Appendix E
+
+Calibrated parameter sensitivity
+
+The posterior distributions of calibrated parameters (Sec.
+
+4.5.1  ) suggest that it is not possible to conclude about the value of surface tension based on the experimental dataset. On the one hand, if surface tension is inaccurate, the calibration procedure cannot identify it. On the other hand, if the objective is to capture gas hold up and  \ce CO2 mole fraction, any surface tension guess is reasonable (within the support of the prior distribution).
+
+To confirm that surface tension is less impactful than the other calibrated parameters, a sensitivity analysis was conducted by computing the total Sobol indices for gas holdup and  \ce CO2 mole fraction. The Sobol indices are computed using
+
+2  16
+
+superscript  2  16
+
+2^{16}  2 start_POSTSUPERSCRIPT 16 end_POSTSUPERSCRIPT
+
+evaluations of the trained surrogate model for 100 different heights (
+
+z
+
+𝑧
+
+z  italic_z
+
+) sampled uniformly from the lowest to the highest height available in the dataset  [ 86 ] . Figure
+
+19
+
+shows the average total Sobol indices across all heights, for all three calibrated parameters, and all four experimental datasets. It is clear that in all cases, gas holdup and  \ce CO2 mole fraction are less sensitive to surface tension than breakup and coalescence efficiency factors.
+
+Figure 19 :
+
+Total Sobol indices averaged over 100 height values for all four experimental datasets. Error bar denote standard deviation of total Sobol indices across different heights in the reactor. Left: global breakup model  [ 19 ] . Right: binary breakup model  [ 68 ] .
+
+Generated  on Wed Jan 22 01:28:44 2025 by
+
+L a T e
+
+XML

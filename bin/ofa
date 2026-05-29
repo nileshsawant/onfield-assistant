@@ -1,0 +1,26 @@
+#!/bin/bash
+# ofa — OpenFOAM Assistant CLI wrapper
+
+OFA_ROOT="${OFA_ROOT:-/nopt/nrel/apps/cpu_stack/software/openfoam/assistant}"
+
+# If not inside a SLURM allocation, request a GPU node automatically
+if [ -z "$SLURM_JOB_ID" ]; then
+    ACCOUNT="${OFA_ACCOUNT:-$(sacctmgr show user "$USER" format=defaultaccount -n -P 2>/dev/null | head -1)}"
+    if [ -z "$ACCOUNT" ]; then
+        echo "ERROR: Could not determine your SLURM account." >&2
+        echo "       Set OFA_ACCOUNT=<account> and retry." >&2
+        exit 1
+    fi
+    PARTITION="${OFA_PARTITION:-debug}"
+    WALLTIME="${OFA_WALLTIME:-00:30:00}"
+    echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
+    exec srun -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks=1 \
+              --mem=80G --gres=gpu:1 -p "$PARTITION" --pty "$0" "$@"
+fi
+
+# Running on compute node — set up environment
+export OLLAMA_MODELS="${OLLAMA_MODELS:-${OFA_ROOT}/models}"
+export OFA_VECTORDB="${OFA_VECTORDB:-${OFA_ROOT}/vectordb}"
+export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
+
+exec "${OFA_ROOT}/env/bin/python3" "${OFA_ROOT}/src/ofa_main.py" "$@"

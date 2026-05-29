@@ -1,0 +1,1425 @@
+clotFoam: An Open-Source Framework to Simulate Blood Clot
+Formation Under Arterial Flow
+David Montgomerya, Federico Municchib, Karin Leiderman c,d
+aDepartment of Applied Mathematics and Statistics, Colorado School of Mines, 1500 Illinois St, Golden,
+CO 80401, United States of America
+bDepartment of Mechanical Engineering, Colorado School of Mines, 1500 Illinois St, Golden, CO 80401,
+United States of America
+cDepartment of Mathematics, University of North Carolina at Chapel Hill, 216 Lenoir Dr, Chapel Hill, NC
+27599, United States of America
+dComputational Medicine Program, University of North Carolina at Chapel Hill, 216 Lenoir Dr, Chapel
+Hill, NC 27599, United States of America
+Abstract
+Blood clotting involves the coupled processes of platelet aggregation and coagulation. Simu-
+lating clotting under flow in complex geometries is challenging due to multiple temporal and
+spatial scales and high computational cost. clotFoam is an open-source software developed
+in OpenFOAM that employs a continuum model of platelet advection, diffusion, and ag-
+gregation in a dynamic fluid environment and a simplified coagulation model with proteins
+that advect, diffuse, and react within the fluid and with wall-bound species through reactive
+boundary conditions. Our framework provides the foundation on which one can build more
+complex models and perform reliable simulations in almost any computational domain.
+Keywords: Blood clotting, Platelet aggregation, Coagulation, Hemostasis, Multiscale
+modeling, OpenFOAM
+Revised preprint submitted to SoftwareX June 26, 2023.
+arXiv:2304.09180v3  [physics.flu-dyn]  1 Aug 2023
+
+Current code version
+Current code version 1.0
+Permanent link to code/repository
+used for this code version
+https://github.com/
+d-montgomery/clotFoam
+Code Ocean compute capsule
+Legal Code License GNU GPL V3
+Code versioning system used git
+Software code languages, tools, and
+services used
+C++, C, MPI, GNU Make
+Compilation requirements, operat-
+ing environments & dependencies
+OpenFOAM-v9
+If available Link to developer docu-
+mentation/manual
+Support email for questions dmontgomery@mines.edu
+Table 1: Code metadata.
+1. Motivation and significance
+Blood clotting is the body’s response to prevent bleeding from an injured blood vessel.
+The clotting process involves two main components: platelet aggregation and coagulation.
+Platelet aggregation is a primarily physical process where platelets adhere to the injured
+vessel wall, and become activated by receptors that interact with proteins embedded in the
+wall. Activated platelets release agonists, such as adenosine diphosphate (ADP), which can
+activate and recruits more platelets to the injury where they begin to form a platelet plug.
+Coagulation is a biochemical process involving dozens of enzymatic reactions that occur in
+the fluid, on activated platelet surfaces, and on injured portions of the vessel wall. Coagu-
+lation features the interplay of positive and negative feedback loops that work collectively
+to encourage thrombus growth in a self-regulating manner. The reactions culminate in the
+generation of the enzyme thrombin on activated platelet surfaces, which is a strong platelet
+activation agonist, a key player in positive feedback, and converts fibrinogen into fibrin,
+which polymerizes and forms a stabilizing fibrin gel on the platelet plug. Platelets play a
+critical role in coagulation, as thrombin generation and inhibition is strongly regulated by
+their activated surfaces [1, 2, 3, 4]. Thrombin generation is often used as a clinical indi-
+cator of healthy clotting, as without thrombin, a clot is typically leaky and unstable. The
+interested reader can find more information about the blood clotting process and previously
+developed mathematical models in a number of reviews published elsewhere [5, 6, 7, 8, 9].
+Spatio-temporal continuum models that employ computational fluid dynamics (CFD)
+have gained widespread usage to study blood clotting in devices [10], in common microfluidic
+assays [11, 12], in aneurysms [13] and bleeding [14, 15], and to understand the effects of flow
+and transport on the clotting process overall [3, 16, 17, 12]. A significant proportion of
+spatial-temporal models of clotting have been implemented using in-house codes [3, 16, 15],
+commercial tools with high licensing costs [11], or are not publicly available [10, 18, 13, 12],
+posing a challenge for researchers with limited resources. There is growing interest in open
+2
+
+source and freely available software tools such as OpenFOAM [19]. This platform provides a
+versatile object-oriented toolkit for developing and constructing CFD software, featuring a
+diverse range of solvers and discretization schemes for general grids and parallel computing.
+A few in-house codes of clotting models are freely available [20, 21], but are quite model-
+specific and not necessarily made for other researchers to easily build upon. In this work we
+present clotFoam, a cell-centered finite volume solver that provides a flexible framework for
+simulating and easily extending a reduced model of blood clotting under flow. The software
+was developed with OpenFOAM libraries and can be perceived as an extension of the tran-
+sient fluid solver icoFoam, which utilizes the PISO algorithm [22] for decoupling pressure
+from the fluid velocity. clotFoam incorporates several additions, including a Darcy term in
+the fluid equations, five advection-diffusion-reaction (ADR) equations that describe platelet
+aggregation and the release of ADP from platelet stores upon their activation, as well as
+twelve ADR equations that represent a reduced model of platelet surface-mediated coagula-
+tion. The coupling of reactions among the platelet and biochemical species is managed via
+object-oriented programming and a modified Runga-Kutta method, employing both field and
+patch field operations for the computation of reactions within the fluid and on the surface
+of the vessel wall. The following sections of this manuscript will detail the mathematical
+model employed by clotFoam, and provide a comprehensive description of the software. Two
+examples of the application of clotFoam in 2-D thrombosis and 3-D hemostasis simulations
+are presented. Finally, we discuss the potential implications and benefits of the clotFoam
+solver for the broader modeling and simulation community.
+2. Model description
+The clotFoam software is based on our previous model that used a continuum description
+of fluid, platelets, and platelet aggregation under flow [3]. The model describes blood as an
+incompressible Newtonian fluid that is governed by the Navier-Stokes-Brinkman equations:
+ρ ∂⃗u
+∂t + ρ(⃗u · ∇)⃗u = −∇p + µ∇2⃗u − µα(θB)⃗u, (1)
+∇ · ⃗u = 0, (2)
+where ⃗u(⃗x, t) is the fluid velocity, p( ⃗x, t) is pressure, ρ is the fluid density, and µ is the
+dynamic viscosity. The Darcy term, −α(θB)⃗u, represents a frictional resistance to the fluid
+caused by a growing mass of bound platelets. The variable θB is the ratio of the sum
+of bound platelets to the maximum packing limit Pmax. The permeability of the mass of
+bound platelets, α(θB), decreases as θB increases, as it satisfies the Carman-Kozeny relation
+α(θB) = CCK (0.6θB)2/(1 − 0.6θB)3, where CCK = 106mm−2.
+Platelets are modeled as number densities (number per volume), eliminating the need for
+tracking individual platelets throughout the simulation. The dynamics of platelet aggrega-
+tion are described generally by the following hindered ADR equation:
+∂P k
+∂t = −∇ · {W (θT )(⃗uP k − DP ∇P k)} + Sk (3)
+where P k(⃗x, t) is the kth platelet species and Sk is a source/sink term that accounts for the
+transitions between different states of the platelet species. The full system of equations in
+3
+
+clotFoam is in Appendix A. To ensure that the number of platelets at a location ⃗x does
+not exceed a maximum packing limit, Pmax, the platelet size is considered using three phe-
+nomolgical functions: the hindered transport function W (θT ), the adhesion region kadh(⃗x),
+and the binding affinity function g(η). A detailed description of these functions can also be
+found in Appendix A.
+The rates of activation of mobile-unactivated platelets by chemical agonists ADP and
+thrombin ( E2) are assumed to satisfy Hill functions of the form A(c) = kpla
+c
+c
+c∗+c. ADP is
+secreted by newly activated platelets over a period of 1-5 seconds after activation. The molar
+concentration of ADP satisfies:
+∂[ADP]
+∂t = −∇ ·
+n
+⃗u[ADP] − DADP∇[ADP]
+o
++ σrelease, (4)
+where DADP is the diffusion coefficient, and the source term is defined as:
+σrelease(⃗x, t) =
+Z ∞
+0
+ˆAR(τ) ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, t − τ)dτ. (5)
+ˆA is the total concentration of ADP released by an activated platelet, and ˆAR(τ) is the rate
+of release of ADP τ seconds after activation. The rate function, R(τ), utilized by clotFoam is
+similar to the one in our previous work [3], but here uses a bell curve centered at 3 seconds,
+R(τ) = 1√π exp(−(τ − 3)2), and is normalized such that
+R ∞
+0 R(τ) dτ = 1.
+The reduced coagulation model consists of various biochemical species in molar con-
+centrations and categorized as fluid-phase, platelet-bound, or subendothelium-bound. In
+an effort to enhance the adaptability of clotFoam, the number of biochemical species has
+been reduced from 50 [3, 16] to 12. This model is an extension of a previously published
+ODE model [1] that includes positive feedback and enzyme inhibition, two features necessary
+to capture the bursting thrombin behavior observed in coagulation. We extended the ODE
+model to a PDE model where reactions occur on two surfaces (subendothelium and activated
+platelets) instead of one, and the species are subjected to flow. The model is detailed in our
+Appendix B, and a schematic is presented in Figure 1. The reduced model is summarized
+as follows where S denotes a substrate or zymogen, and E denotes an enzyme:
+1. Fluid-phase substrate, S1, comes into contact with enzyme, E0, bound to the suben-
+dothelium. E0 converts the substrate to an enzyme, E1.
+2. E1 binds to the activated platelet surface and becomes the bound species, Eb
+1.
+3. Additional fluid-phase substrates, S2, bind to the platelet surface and become Sb
+2.
+Upon activation by Eb
+1, the platelet-bound substrates, Sb
+2, are converted into a second
+platelet-bound enzyme, Eb
+2, which we consider to be similar to thrombin.
+4. Eb
+2 activates platelet-bound substrates, forming more enzymes in a positive feedback
+loop.
+5. E2 activates mobile unactivated platelets.
+4
+
+Figure 1: Schematic representation of the reduced model of thrombin generation with positive feedback. The
+light blue circles represent a substrate, yellow circles denote enzymes, and the red circles represent binding
+sites on the platelet surface. Dotted lines indicate transport by the fluid, while the solid lines represent
+binding interactions. Note: Platelets have diameters near 3 µm, while endothelial cells are typically 50-70
+µm in length and 0.1-10 µm in thickness [23].
+3. Software description
+clotFoam is an open-source software distributed under the GNU General Public License,
+compiled using the OpenFOAM-v9 libraries. The software can be compiled on any system
+where the OpenFOAM-v9 libraries are installed, and full installation instructions are pro-
+vided in the repository. The code is written in C++ and can be adapted to simulate clotting
+in a wide variety of domains with few limitations to the mesh. The use of object-oriented
+programming enables the management of platelets and biochemical species as objects, which
+simplifies the implementation of more complex coagulation and clotting models. The repos-
+itory contains two illustrative examples, with the expectation that its range will expand
+through community contributions and author updates as the framework develops further.
+clotFoam is fully parallelizable for high performance computing (HPC) using the message
+passing interface (MPI) framework. The solution algorithm employed by clotFoam is illus-
+trated in Figure 2 and is described in more detail in the following subsections.
+5
+
+Figure 2: Flow chart of platelet-mediated coagulation solver within OpenFOAM.
+3.1. Mesh requirements
+To properly define the injury region, the mesh needs to satisfy two requirements. First,
+the reactive boundary conditions and subendothelium-bound species are defined exclusively
+on a patch known as “ injuryWalls”. This patch is constructed to be the wall of an injury
+block within the domain using the blockMesh tool, as depicted in Figure 3. Alternatively,
+users can use the topoSet tool to define the injuryWalls patch. Second, the mesh at the
+injury site must feature cell widths, heights, and depths no greater than a platelet diameter
+6
+
+Pdiam, which has a default value of 3 µm. This requirement is a consequence of how the
+adhesion region Hadh(⃗x) is defined.
+Figure 3: Example of thrombus growth in a corresponding domain defined with blockMesh using three blocks
+and 16 vertices. The injuryWalls patch is defined by vertices {1, 9, 10, 2 }, which is used by clotFoam to
+determine the location of the reactive boundary conditions in the coagulation model.
+3.2. Numerical methods
+The fluids solver in clotFoam is built upon OpenFOAM’s transient fluid solver icoFoam,
+which implements the PISO algorithm as a predictor and corrector method. In each time
+step, the momentum equation is solved once, followed by multiple pressure and velocity
+corrections. During the discretization of the Navier-Stokes-Brinkman equations (1), the
+Darcy term is treated implicitly as a source term. This treatment involves utilizing the
+bound platelet fraction, θB, from the previous time step. By incorporating the bound platelet
+fraction in this manner, we not only enhance the stability of the fluids solver but also
+ensure that the pressure corrections in the PISO algorithm are influenced by the presence
+of the porous media. Consequently, we are able to accurately capture the influence of the
+porous media on the fluid flow, resulting in simulations that exhibit improved reliability and
+robustness. Further details regarding other discretization schemes employed in this work can
+be found in Appendix D.
+The model accounts for the transport of both platelet and biochemical species with
+equations that incorporate advection, diffusion, and reactions (ADR) with other species.
+The reactions occur on a smaller time scale than the transport processes, specifically, the
+software’s default reaction time-step is half of the transport time-step. As such, the software
+employs a fractional-step method to decouple the transport from the reaction terms in the
+equations. Thus, the reaction equations are solved multiple times during each fluid time-step.
+The general ADR equation for each species is:
+∂Ci
+∂t = −∇ · (⃗vCi − Dc∇Ci) + Ri(C1, C2, ..., Cn), (6)
+where Ci is the ith species with i = 1, . . . , n, ⃗v is a fluid velocity (not necessarily ⃗u from (1)),
+Dc is the diffusion coefficient, and Ri is a reaction term that can depend on multiple species.
+7
+
+A two-step fractional-step method is used to march equation (6) forward in time for each
+time step:
+1. Solve the transport equation with a temporal step size ∆ t:
+∂Ci
+∂t = −∇ · (⃗vCi − Dc∇Ci). (7)
+2. Update the solution by solving the coupled reaction equations M rxn times with a
+temporal step size h = ∆t/Mrxn:
+∂Ci
+∂t = Ri(C1, C2, . . . , Cn). (8)
+The transport equations are discretized using the finite volume method (FVM) as discussed in
+Appendix Appendix D, while the reaction equations are solved using a coupled fourth-order
+Runge-Kutta (RK4) method. The parameter M rxn determines how many times the reaction
+equations are solved per fluid time-step, and is specified in the
+$FOAM CASE/constant/inputParameters file. The default value is M rxn = 2, however,
+it should be noted that this parameter is dependent on the specific problem and may need
+to be adjusted for flows with higher wall-shear rates.
+In the mobile platelet equations described in Appendix A, the flux vector ⃗j = ⃗uP −
+DP ∇P is scaled by a hindered transport function W (θT ) to limit the transport of platelets
+near the growing thrombus. Prior to FVM discretization of the advective and diffusive
+fluxes, the total platelet fraction θT must be interpolated to the cell faces. The choice
+of interpolation method is determined by the mechanism of transport. By implementing a
+combination of interpolation schemes, the flux of platelets into a spatial location is effectively
+constrained, ensuring that the maximum value of the sum of all platelet species at a spatial
+location remains below or equal to a maximum packing densityPmax. To interpolate the total
+platelet fraction for the advective flux, W (θT )⃗uP , a downwind scheme is used with respect
+to the fluid velocity ⃗u. This is because the fluid velocity is assumed to only be hindered by
+a thrombus that is downstream. Conversely, for the diffusive flux, W (θT )DP ∇P , the total
+platelet fraction is interpolated using a localMax scheme, as the diffusion rate within the
+thrombus is expected to be smaller than the rate outside of the thrombus.
+The ADP equation (4) is not solved using the fractional-step method, because the source
+term is updated infrequently. When platelets become bound, they release ADP into the
+fluid for up to 6 seconds. The secretion of ADP is modeled by the source term, σrelease, as
+defined in equation (5), and can be restricted to the interval τ ∈ [0, 6] due to the bell-shaped
+distribution of R(τ). However, the computation of σrelease is memory intensive as the number
+of newly bound platelets ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, tn − τ) must be stored in memory for up to 6
+seconds. To reduce computational cost, a coarse discretization of τ is employed to calculate
+σrelease. The number of newly bound platelets are computed and stored at a user-specified
+interval ∆τ. The discretization of σrelease at time t = tn is then implemented using the
+8
+
+trapezoid rule:
+σrelease(⃗x, tn) =
+Z τf
+0
+ˆAR(t′) ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, tn − t′) dt′,
+=
+Z tn
+tn−τf
+ˆAR(tn − τ) ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, τ) dτ, (by substituting τ = tn − t′)
+≈
+Nτ −1X
+k=0
+ˆA ∆τ
+2
+
+R(tn − τk) ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, τk) + R(tn − τk+1) ∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, τk+1)
+
+,
+(9)
+where τf and ∆τ are defined as sigma Tf and sigma dt respectively in the inputParameters
+dictionary. Lastly, the number of newly bound platelets is approximated as:
+∂
+∂t
+ 
+P b,a + P se,a
+(⃗x, tn) ≈ Pmax
+θB
+n − θB
+n−1
+tn − tn−1
+. (10)
+3.3. Managing platelet and biochemical species with polymorphism
+Models of blood clotting typically involve multiple platelet and biochemical species. For
+instance, the Leiderman-Fogelson model [3] consists of four platelet species and 50 biochem-
+ical species. To address this complexity, clotFoam has been developed to accommodate
+models with any number of platelet and biochemical species. These models are imple-
+mented following a polymorphic approach, with an abstract base class called Species from
+which four classes are derived to align with the species defined in the mathematical model:
+Species platelet, Species seBound, Species fluidPhase, Species pltBound. The in-
+heritance relationship of these classes is depicted in Figure 4.
+Figure 4: Graph of the Species class and derived classes Species platelet, Species seBound,
+Species fluidPhase, Species pltBound. All derived classes inherit the public member variables and
+public member functions defined in the Species class.
+9
+
+The Species object consists of four pointer lists to facilitate the management of the sub-
+species fields, including field values (solutions), previous field values (solutions from inter-
+mediate time steps used in the fractional-step method and RK4 solver), k values (computed
+for the RK4 solver), and the argument of the k values (inputs for the k values in the RK4
+solver). The public member functions of the derived classes enable the setting of pointers
+to other Species objects and define the reaction functions specific to their corresponding
+subspecies. The function updateKs computes and retains the reaction term, Ri, for each
+subspecies, utilizing input parameters passed from the RK4 method. The initialization of
+every derived Species object occurs within the createFields.H file, and the pointers are
+set in setSpeciesPointers.H.
+3.4. Adapting the framework for different clotting models
+clotFoam was developed with the aim of promoting scientific research and reproducibility
+in the field of hemostasis, thrombosis, and clotting disorders. Thus, we illustrate the proce-
+dure for introducing a new species into the software. Consider the addition of a fluid-phase
+species I, that inhibits thrombin indefinitely. This reaction can be written as:
+I + E2
+kI
+− →E2,inh, (11)
+where kI is the association rate of inhibitor and enzyme, and E2,inh is the resulting inhibited
+thrombin. Although the addition of two new species, I and E2,inh, is necessary for incor-
+porating the desired reaction into the software, we will focus our discussion on the steps
+involved in including just the inhibitor species as it applies to any additional species. The
+new reaction term that is added to the ADR equation for I is:
+reaction rate: − kIIE2, (12)
+which fits the form of equation (6), with a reaction term defined by the right-hand side. The
+following sequential steps outline the procedure for adding I to the software:
+1. Within the case directory $FOAM CASE:
+(a) In the 0 directory:
+i. Create a new field, such as fluidPhase I.
+(b) In the constant/inputParameters file:
+i. Update the number of fluid-phase species, num fluidPhase.
+ii. Incorporate the parameter kI using appropriate units.
+2. Within the clotFoam software:
+(a) In the chemConstants.H file:
+i. Read in the parameter kI defined in the inputParameters dictionary.
+(b) In the Species fluidPhase.H class file:
+i. Update the reaction function updateKs to include
+k[4] = -kI*I*E2 ,
+where I is a reference to the input necessary for the RK4 solver,
+const volScalarField& I = input[4] ,
+10
+
+defined at the beginning of the updateKs function.
+ii. If necessary, update the pointers in the constructor and in the setPtrs func-
+tion (not required for this example).
+(c) In the createFields.H file:
+i. Add the fluidPhase I field to the 4 th index of the PtrList called
+fluidPhase.field.
+(d) In the setSpeciesPointers.H file:
+i. If required, update the fluidPhase.setPtrs argument corresponding to step
+2(b)ii.
+4. Illustrative Examples
+Here, we present two illustrative examples for which the code and instructions are in-
+cluded in the repository. These examples showcase the capabilities of the clotFoam solver in
+simulating blood clotting phenomena. The first example is a 2D thrombosis case based on
+previous results published by our group [3, 16]. The second example is a 3D simulation of
+hemostasis that replicates the microfluidic device described in our previous study by Schoe-
+man et al. [14]. Additional examples of convergence and validation can be found in the
+supplementary material.
+4.1. Thrombosis in a rectangular channel
+To verify the reliability of clotFoam in modeling clotting phenomena, we compare its
+results with those in our previous work [3, 16] and simulate clotting in a 240 µm long by 60
+µm high rectangular channel with an approximately 90 µm long adhesive and reactive patch
+centered on the bottom wall. The domain is discretized using a uniform mesh of (128 ×32)
+cells, which is divided into three blocks as depicted in Figure 3 . It should be noted that
+the coagulation reactions used in clotFoam are a simplified version of those used in our
+previous work, and therefore, the outcomes are not expected to be identical. Nevertheless,
+we demonstrate that clotFoam produces similar concentrations of bound thrombin, clot sizes
+and densities, all on the same timescale as in our previous studies [3, 16]. This is illustrated
+in Figure 5, where we show spatial distributions of substrates, enzymes, and clots formed
+after 200, 400, and 600 seconds of clotting activity.
+11
+
+Figure 5: Close-up of 140 µm long by 35 µm high region around the thrombus to view various species (rows)
+at times 200, 400 and 600 seconds in the left, middle and right columns, respectively. The first 3 rows show
+spatial concentrations (in nM) of E1 and S2 and the total thrombin concentration ( E2 + Eb
+2), which was
+calculated in ParaView during post-processing. The bottom row shows the resulting thrombus growth via
+the bound platelet fraction in a dynamic fluid environment where the fluid velocity field is depicted by the
+white arrows.
+4.2. Hemostasis in a microfluidic device
+To demonstrate the versatility of clotFoam in simulating clotting in various two and
+three dimentional domains, we have included a case that replicates the H-shaped microfluidic
+device used in Schoeman et al. [14] to model hemostasis. In their experiments, whole blood
+is introduced into the right “blood channel,” while a buffer fluid is introduced into the left
+vertical channel. The pressure difference between the channels causes blood to flow through
+the horizontal “injury channel,” which is coated with tissue factor and collagen proteins
+that initialize coagulation and platelet adhesion/aggregation respectively. Clots build up
+in the injury channel without restricting blood flow in the blood channel. Figure 6 shows
+snapshots of the 3D domain at four different times during the clotting process. Due to
+difficulties visualing the entire clot in the injury channel, we have displayed slices through
+the injury channel to highlight the spatial growth of the clot at various points down the
+injury channel. The rectangular plots to the left of each 3D domain are an enlarged view
+of the slice at the location indicated by the black arrow and show the clot distribution and
+its dynamics over time. The thrombus growth patterns observed in the experimental results
+presented by Schoeman et al. [14] show thrombus formation primarily at the front (right) of
+the injury channel while the thrombus generated by clotFoam, shown in Figure 6, shows the
+buildup of thrombus closer to the back (left) of the injury channel. We hypothesize that this
+discrepancy may be attributed to the absence of shear dependence in the current platelet
+aggregation model, and this aspect will be investigated as part of our future work.
+12
+
+Figure 6: Snapshots of a clotFoam simulation of hemostasis in an H-shaped microfluidic device for time 400,
+800, 1200, 1600 seconds. The simulation shows mobile platelets entering the right vertical channel and being
+transported by the fluid (indicated by arrows) through the horizontal injury channel. As they pass through
+the injury, they start to aggregate and form a platelet plug, which is visualized via the bound platelet fraction
+θB in the five slices within the injury channel.
+5. Impact and conclusions
+Computational models that simulate clotting phenomena have provided a significant
+step toward a better understanding of hemostasis, thrombosis, and clotting disorders. In
+this work, we have presented clotFoam, an open-source software for simulating clotting using
+the computational fluid dynamics framework OpenFOAM. To demonstrate the reliability
+of clotFoam, we compared its outcomes with our previous computational work studying
+thrombosis in rectangular channels [3, 16, 14, 15]. Our results show that clotFoam produces
+a similar clot structure and thrombin concentrations, thereby verifying its implementation
+of a reduced coagulation and platelet aggregation model. Furthermore, we demonstrated the
+versatility of clotFoam by simulating clotting in an H-shaped microfluidic device, which was
+used in experiments for modeling hemostasis. While the simulations did not replicate the
+experiments exactly, they illustrated the potential of clotFoam for investigating clotting in
+various microfluidic geometries.
+In conclusion, clotFoam offers a reliable and flexible platform for simulating clotting
+phenomena. With the ability to manipulate the platelet and coagulation cascade models,
+researchers can use clotFoam to investigate various aspects of thrombus formation and design
+microfluidic devices for studying hemostasis. The open-source nature of clotFoam also allows
+for community-driven development and improvement of the software, making it an accessible
+tool for researchers in the field.
+13
+
+Conflict of Interest
+No conflict of interest exists: We wish to confirm that there are no known conflicts of
+interest associated with this publication and there has been no significant financial support
+for this work that could have influenced its outcome.
+Acknowledgements
+We would like to thank our collaborators for their support and guidance: Aaron Fogelson,
+Suzanne Sindi, Keith Neeves, Dougald Monroe, and Michael Stobb. This work was, in part,
+supported by the National Institutes of Health (R01 HL151984), and the National Science
+Foundation CAREER program (DMS-1848221).
+Appendix A. Platelet Aggregation Model
+From our previous work, the number densities of the four platelet species are denoted by
+P m,u, P m,a, P b,a, P b,se, where the superscripts represent mobile unactivated, mobile acti-
+vated, platelet-bound activated, and subendothelium-bound activated respectively. Platelet
+aggregation is described by the following system of ADR equations:
+∂P m,u
+∂t = − ∇ · {W (θT )(⃗uP m,u − DP ∇P m,u)}| {z }
+Transport by advection and ”diffusion”
+(A.1)
+− kadhHadh(⃗x)(Pmax − P b,se)P m,u
+| {z }
+Adhesion to subendothelium
+− {A1([ADP]) + A2(E2)}P m,u
+| {z }
+Activation by ADP or thrombin
+,
+∂P m,a
+∂t = −∇ · {W (θT )(⃗uP m,a − DP ∇P m,a)} − kadh(⃗x)(Pmax − P b,se)P m,a (A.2)
++ {A1([ADP]) + A2(E2)}P m,u − kcohg(η)PmaxP m,a
+| {z }
+Cohesion to bound platelets
+,
+∂P b,a
+∂t = −kadhHadh(⃗x)(Pmax − P b,se)P b,a + kcohg(η)PmaxP m,a, (A.3)
+∂P b,se
+∂t = kadhHadh(⃗x)(Pmax − P b,se)(P m,u + P m,a + P b,a). (A.4)
+The hindered transport function is a monotonically decreasing function defined as W (θT ) =
+tanh
+ 
+π(1 − θT )
+
+, where θT is the ratio of the sum of all platelet species toPmax. The function
+assumes that the transport of mobile platelets is only slightly hindered until θT approaches
+approximately 0.5, after which the transport of mobile platelets is drastically reduced. The
+adhesion function Hadh(⃗x) is chosen to be unity or zero, and defines the region where mobile
+platelets can stick to specified walls on the domain boundary.
+Platelet-platelet cohesion is modeled through the parameters kcoh and the binding-affinity
+function g(η), where the latter depends on a non-dimensional virtual substance η that is
+14
+
+produced by bound platelets. In clotFoam, the virtual substance is modeled by diffusing the
+bound platelet fraction a distance of Lη over an interval of ∆t through the use of a discrete
+diffusion equation:
+η − η0
+∆t = Dη∇2η, (A.5)
+where η0 is the current known bound platelet fraction, η0 = θB
+n . The diffusion constant is
+defined as Dη =
+L2
+η
+4∆t, and therefore (A.5) is implemented as:
+η − Lη
+2
+4 ∇2η = θB
+n . (A.6)
+The definition of η presented above departs somewhat from the corresponding quantity in our
+previous work, and is intended to rectify the overly diffusive approach used in our previous
+work [3, 16, 15]. The binding affinity function is defined as:
+g(η) = g0 (η − ηt)3
+η3
+∗ + (η − ηt)3 , (A.7)
+where ηt is a threshold value for which there is no binding, η∗ + ηt indicates the value of η
+for which g(η) changes rapidly, and g0 = η3
+∗+(1−ηt)3
+(1−ηt)3 so that g(1) = 1.
+Appendix B. Coagulation model
+The reduced coagulation network is modeled by the following set of enzymatic reactions:
+S1 + E0
+k+
+C0
+− −⇀↽− −
+k−
+C0
+C0
+kcat
+C0
+− − →E0 + E1 (B.1)
+S1 + P1
+k+
+S1
+− −⇀↽− −
+k−
+S1
+Sb
+1 (B.2)
+E1 + P1
+k+
+E1
+− −⇀↽− −
+k−
+E1
+Eb
+1 (B.3)
+S2 + P2
+k+
+S2
+− −⇀↽− −
+k−
+S2
+Sb
+2 (B.4)
+E2 + P2
+k+
+E2
+− −⇀↽− −
+k−
+E2
+Eb
+2 (B.5)
+Sb
+2 + Eb
+1
+k+
+C1
+− −⇀↽− −
+k−
+C1
+C1
+kcat
+C1
+− − →Eb
+1 + Eb
+2 (B.6)
+Sb
+1 + Eb
+2
+k+
+C2
+− −⇀↽− −
+k−
+C2
+C2
+kcat
+C2
+− − →Eb
+1 + Eb
+2 (B.7)
+15
+
+Using the law of mass action, a system of twelve differential equations is derived to govern
+the reactions of the twelve biochemical species present in the coagulation cascade. These
+equations are categorized as fluid-phase, platelet-bound, and subendothelium-bound for or-
+ganizational purposes. All concentrations of the biochemical species are measured in units
+of nmol/mm3, and platelet densities are converted to concentrations using Avogadro’s con-
+stant NA = 6.02214076 × 1014 nmol−1, where NA is the number of molecules in one mole of
+a substance.
+Fluid-phase:
+∂S1
+∂t = −∇ · (⃗uS1 − D∇S1) (B.8)
+− k+
+S1
+n
+N1
+NA
+(P b,a + P se,a) − (Sb
+1 + Eb
+1 + C1 + C2)
+o
+S1 + k−
+S1Sb
+1,
+with − D ˆ n· ∇S1
+
+∂Ωinj
+= −k+
+C0S1E0 + k−
+C0C0,
+∂S2
+∂t = −∇ · (⃗uS2 − D∇S2) (B.9)
+− k+
+S2
+n
+N2
+NA
+(P b,a + P se,a) − (Sb
+2 + Eb
+2 + C1 + C2)
+o
+S2 + k−
+S2Sb
+2,
+∂E1
+∂t = −∇ · (⃗uE1 − D∇E1) (B.10)
+− k+
+E1
+n
+N1
+NA
+(P b,a + P se,a) − (Sb
+1 + Eb
+1 + C1 + C2)
+o
+E1 + k−
+E1Eb
+1,
+with − D ˆ n· ∇E1
+
+∂Ωinj
+= kcat
+C0 C0,
+∂E2
+∂t = −∇ · (⃗uE2 − D∇E2) (B.11)
+− k+
+E2
+n
+N2
+NA
+(P b,a + P se,a) − (Sb
+2 + Eb
+2 + C1 + C2)
+o
+E2 + k−
+E2Eb
+2.
+16
+
+Platelet-bound:
+∂S b
+1
+∂t = k+
+S1
+n
+N1
+NA
+(P b,a + P se,a) − (Sb
+1 + Eb
+1 + C1 + C2)
+o
+S1 − k−
+S1Sb
+1
+| {z }
+Binding and unbinding on platelet surface
+(B.12)
+− k+
+C2Sb
+1Eb
+2 + k−
+C2C2,
+∂S b
+2
+∂t = k+
+S2
+n
+N2
+NA
+(P b,a + P se,a)
+| {z }
+Total concentration
+of binding sites
+− (Sb
+2 + Eb
+2 + C1 + C2)| {z }
+Occupied
+binding sites
+o
+S2 − k−
+S2Sb
+2 (B.13)
+− k+
+C1Sb
+2Eb
+1 + k−
+C1C1,
+∂E b
+1
+∂t = k+
+E1
+n
+N1
+NA
+(P b,a + P se,a) − (Sb
+1 + Eb
+1 + C1 + C2)
+o
+E1 − k−
+E1Eb
+1 (B.14)
+− k+
+C1Sb
+2Eb
+1 + (k−
+C1 + kcat
+C1 )C1 + kcat
+C2 C2
+| {z }
+Positive
+feedback
+,
+∂E b
+2
+∂t = k+
+E2
+n
+N2
+NA
+(P b,a + P se,a) − (Sb
+2 + Eb
+2 + C1 + C2)
+o
+E2 − k−
+E2Eb
+2 (B.15)
+− k+
+C2Sb
+1Eb
+2 + (k−
+C2 + kcat
+C2 )C2 + kcat
+C1 C1
+| {z }
+Positive
+feedback
+,
+∂C1
+∂t = k+
+C1Sb
+2Eb
+1 − (k−
+C1 + kcat
+C1 )C1, (B.16)
+∂C2
+∂t = k+
+C2Sb
+1Eb
+2 − (k−
+C2 + kcat
+C2 )C2. (B.17)
+Subendothelium-bound:
+∂E0
+∂t = −k+
+C0S1E0 + (k−
+C0 + kcat
+C0 )C0, on ∂Ωinj, (B.18)
+∂C0
+∂t = k+
+C0S1E0 − (k−
+C0 + kcat
+C0 )C0, on ∂Ωinj. (B.19)
+Appendix C. Boundary conditions
+The boundary conditions for most variables remain consistent across different geometries.
+The variables that experience changes in their boundary conditions when the geometry is
+altered are those introduced at the domain inlet, such as the fluid velocity ⃗u, the mobile
+unactivated platelets P m,u, and the kinematic pressure, ˜ p = p/ρ, at the outlet. The specific
+conditions for these variables are detailed in the corresponding subsections specific to each
+domain. For all other variables, the following boundary conditions are applied:
+17
+
+Variable(s) inlet outlet fixedWalls injuryWalls
+⃗u see below
+∂⃗u
+∂ ˆ n= 0
+zeroGradient
+⃗u = 0
+noSlip
+⃗u = 0
+noSlip
+˜ p
+∂˜ p
+∂ ˆ n= 0
+zeroGradient
+˜ p = pout
+fixedValue
+∂˜ p
+∂ ˆ n= 0
+zeroGradient
+∂˜ p
+∂ ˆ n= 0
+zeroGradient
+P m,u see below
+codedFixedValue
+∂P m,u
+∂ ˆ n = 0
+zeroGradient
+∂P m,u
+∂ ˆ n = 0
+zeroGradient
+∂P m,u
+∂ ˆ n = 0
+zeroGradient
+P m,a
+P b,a
+P b,se
+∂P k
+∂ ˆ n= 0
+zeroGradient
+∂P k
+∂ ˆ n= 0
+zeroGradient
+∂P k
+∂ ˆ n= 0
+zeroGradient
+∂P k
+∂ ˆ n= 0
+zeroGradient
+S1
+S1 =
+  normal
+concentration
+
+fixedValue
+∂S1
+∂ ˆ n= 0
+zeroGradient
+∂S1
+∂ ˆ n= 0
+zeroGradient
+−D ∂S1
+∂ ˆ n= −k+
+C0 S1 + k−
+C0 C0
+codedMixed
+E1
+∂E1
+∂ ˆ n= 0
+zeroGradient
+∂E1
+∂ ˆ n= 0
+zeroGradient
+∂E1
+∂ ˆ n= 0
+zeroGradient
+−D ∂E1
+∂ ˆ n= kcat
+C0 C0
+codedMixed
+S2
+S2 =
+  normal
+concentration
+
+fixedValue
+∂S2
+∂ ˆ n= 0
+zeroGradient
+∂S2
+∂ ˆ n= 0
+zeroGradient
+∂S2
+∂ ˆ n= 0
+zeroGradient
+E2
+∂E2
+∂ ˆ n= 0
+zeroGradient
+∂E2
+∂ ˆ n= 0
+zeroGradient
+∂E2
+∂ ˆ n= 0
+zeroGradient
+∂E2
+∂ ˆ n= 0
+zeroGradient
+Sb
+1
+Sb
+2
+Eb
+1
+Eb
+2
+C1
+C2
+∂C k
+∂ ˆ n= 0
+zeroGradient
+∂C k
+∂ ˆ n= 0
+zeroGradient
+∂C k
+∂ ˆ n= 0
+zeroGradient
+∂C k
+∂ ˆ n= 0
+zeroGradient
+E0
+C0
+∂C k
+∂ ˆ n= 0
+zeroGradient
+∂C k
+∂ ˆ n= 0
+zeroGradient
+∂C k
+∂ ˆ n= 0
+zeroGradient
+See equations (B.18) and (B.19)
+solved in odeSolver.H
+ADP
+∂[ADP]
+∂ ˆ n = 0
+zeroGradient
+∂[ADP]
+∂ ˆ n = 0
+zeroGradient
+∂[ADP]
+∂ ˆ n = 0
+zeroGradient
+∂[ADP]
+∂ ˆ n = 0
+zeroGradient
+Table C.2: Boundary conditions for each variable in the simulation. The table specifies the mathematical
+boundary condition and the corresponding implementation in OpenFOAM for each boundary. Some variables
+with the same boundary conditions have been grouped together for brevity.
+Appendix C.1. Boundary conditions for thrombosis in a rectangular channel
+The velocity profile for ⃗u = [u v]T is prescribed using the following function, with a shear
+rate of ˙γ = 1000 s−1 and radius r = 30 µm:
+u(y) = − ˙γ
+2r(y − r)2 + 1
+2 ˙γr. (C.1)
+This parabolic profile can be implemented in OpenFOAM using the codedFixedValue
+boundary condition
+The mobile-unactivated platelets P m,u exhibit margination behavior at the inlet, where
+the concentration near the wall is higher compared to the center of the vessel. To capture this
+phenomenon, we employ a shape function based on the inlet profile proposed by Eckstein and
+Belgacem [24]. The inlet profile for mobile-unactivated platelets entering a 2D computational
+18
+
+domain Ω = [x0, x max] × [y0, y max] is described by:
+P m,u(x0, y, t) = P0 c(y), (C.2)
+where P0 is the normal density of platelets. The shape function c(y) is defined as:
+c(y) = C0
+h
+1 + KR(y, r)m−1(1 − R(y, r))n−1
+i
+. (C.3)
+with C0 being a normalizing parameter, K determining the relative amplitude of the shape,
+and m, n ∈ N. The function R(y, r) is given by:
+R(y, r) = |y − r|
+r , (C.4)
+where the vessel radius is r = (ymax − y0)/2. The exponents are set as m = 19 and n = 2
+to produce the effect of a near-wall peak added to a uniform density P0. The normalization
+parameter is defined as:
+1
+C0
+= 1
+2r
+Z ymax
+y0
+h
+1 + KR(y, r)m−1(1 − R(y, r))n−1
+i
+dy (C.5)
+Figure C.7 shows the specific inlet profile used in the thrombosis example in Section 4.1,
+where r = 30 µm and K = 330.
+Figure C.7: Inlet profile for the mobile-unactivated platelets in a vessel with r = 30 µm. The peak-to-centre
+ratios is set to approximately 7.5 using an amplitude parameter of K = 330.
+Appendix C.2. Boundary conditions for hemostasis in a microfluidic device
+The velocity profile ⃗u = [u v w ]T is prescribed using the flowRateInletVelocity bound-
+ary condition, with volumetric flow rates Qleft and Qright at the upper left and upper right
+inlets, respectively. The kinematic pressure at the lower outlets is denoted by ˜ pleft and ˜ pright.
+The specific values for the flow rates and kinematic pressure, adapted from Schoeman et al.
+[14], are provided in the table below:
+19
+
+Left inlet ( Qleft) 1 .17 × 10−2 mm3/s
+Right inlet (Qright) 9 .32 × 10−2 mm3/s
+Left outlet (˜ pleft) 1 .11 × 106 mm2/s2
+Right outlet (˜ pright) 1 .78 × 106 mm2/s2
+Table C.3: Fluid velocity and kinematic pressure boundary conditions.
+For the mobile-unactivated platelets, the shape function in equation (C.2) is adapted for
+a 3D channel, Ω = [x0, x max] ×[y0, y max] ×[z0, z max]. The normalization constant C0 is then
+calculated in two dimensions. The shape function c(x, z) is defined by:
+c(x, z) = C0
+h
+1 + KxR(x, rx)m−1(1 − R(x, rx))n−1 + KzR(z, rz)m−1(1 − R(z, rz))n−1
+i
+(C.6)
+In the 3D hemostasis example, the amplitude parameters are set to Kx = Kz = 547 to
+create a peak-to-center ratio of approximately 11.9. The exponents are set to m = 19 and
+n = 2.
+Appendix D. Discretization Schemes
+The discretization schemes employed in this work are summarized in Table D.4. To limit
+spurious oscillations caused by steep gradients at the thrombus edges, the van Leer flux
+limiter [25] is applied in the advective terms for platelets and biochemical species. In Section
+3.2, we provided a detailed discussion on the choice of interpolation scheme for the hindered
+transport function W (θT ), which plays a crucial role in the simulation. In the table below,
+Theta Tfa and Theta Tfd represent the face values of θT used for hindered advection and
+hindered diffusion, respectively. Both simulations employ a variable time step ∆ t that is set
+to ensure the Courant number, maxCo, does not exceed 0.75. For more practical examples
+and further information, please refer to the tutorials directory within theclotFoam repository
+on GitHub.
+ddtSchemes default CrankNicolson 0.9;
+ddt(phi) CrankNicolson 0.9;
+gradSchemes default Gauss linear;
+grad(p) Gauss linear;
+divSchemes
+default none;
+div(phi,U) Gauss linear;
+div(phiPlt,Plt) Gauss limitedVanLeer 0.0 $Pmax;
+div(phi,chems) Gauss vanLeer;
+laplacianSchemes default Gauss linear orthogonal;
+interpolationSchemes
+default linear
+interpolate(Theta Tfa) downwind phi;
+interpolate(Theta Tfd) localMax;
+snGradSchemes default orthogonal;
+Table D.4: Discretization schemes for orthogonal meshes in clotFoam.
+20
+
+Appendix E. Parameter Values
+All of the parameters are from various sources as described in Leiderman & Fogelson [3].
+Fluid density (ρ) 1.0 ×10−3 g/mm3
+Dynamic viscosity (µ) 2.62507 ×10−3 g/mm/s
+Kinematic viscosity (ν) 2.62507 mm 2/s
+Carman-Kozeny constant (CCK ) 1.0 ×106 mm−2
+Table E.5: Fluid equation parameters.
+Platelets (DP ) 2 .5 × 10−5 mm2/s
+ADP (DADP) 5 × 10−4 mm2/s
+All other chemical species ( D) 5 × 10−5 mm2/s
+Table E.6: Diffusion coefficients by species.
+Platelet diameter ( Pdiam) 3.0 ×10−3 mm
+Maximum packing density (Pmax) 6.67 ×107 platelets/mm3
+Normal density of platelets ( P0) 2.5 ×105 platelets/mm3
+Adhesion rate ( kadh) 3.3212 ×10−8 mm3/s
+Cohesion rate ( kcoh × Pmax) 1.0 ×104 s−1
+Threshold for binding affinity ( ηt) 1.0 ×10−1
+Rapid change in binding affinity ( η∗ + ηt) 0 .5 − ηt
+Length of diffusion for the virtual substance ( Lη) 2 .0 × Pdiam
+Rate of activation by ADP ( kpla
+adp) 0.34 s −1
+Rate of activation by thrombin ( kpla
+e2 ) 0.5 s −1
+Critical concentration of ADP ([ADP] ∗) 2.0 ×10−3 nmol of ADP per mm 3
+Critical concentration of thrombin ( e∗
+2) 1.0 ×10−6 nmol of e2 per mm3
+Total ADP released ( ˆA) 2 .0 × 10−8 nmol of ADP per platelet
+Total time of ADP secretion ( τF ) 6 s
+Step size for calculating ADP secretion (∆ τ) 0.25 s
+Table E.7: Platelet equation parameters.
+21
+
+Chemical Concentration Concentration Binding Sites
+(clotFOAM)
+E0 (TF:VIIa) 1 .5 × 10−7 nmol/mm2 15 fmol/cm2
+E1 (Xa) N1 = 2700
+E2 (Thrombin) N2 = 2000
+S1 (X) 1 .7 × 10−4 nmol/mm3 0.17 µM N1 = 2700
+S2 (II) 1 .4 × 10−3 nmol/mm3 1.4 µM N2 = 2000
+Table E.8: Normal concentrations and surface binding site numbers.
+Reaction Complex Product mm 3nmol−1s−1 M−1 s−1 s−1 s−1
+Activation (of-, by-) (clotFOAM)
+(S1, E0) C0 E1 k+
+C0 = 8.95 × 103 k+
+C0 = 8.95 × 106 k−
+C0 = 1.0 kcat
+C0 = 1.15
+(Sb
+2, Eb
+1) C1 Eb
+2 k+
+C1 = 1.03 × 105 k+
+C1 = 1.03 × 108 k−
+C1 = 1.0 kcat
+C1 = 30.0
+(Sb
+1, Eb
+2) C2 Eb
+1 k+
+C2 = 1.73 × 104 k+
+C2 = 1.73 × 107 k−
+C2 = 1.0 kcat
+C2 = 0.23
+Table E.9: Reactions on subendothelium and platelet surface.
+Reaction Reactants Product mm 3nmol−1s−1 M−1 s−1 s−1
+(clotFOAM)
+S1 (V) S1, P1 Sb
+1 k+
+S1 = 5.7 × 104 k+
+S1 = 5.7 × 107 k−
+S1 = 0.17
+E1 (Xa) E1, P1 Eb
+1 k+
+E1 = 1.0 × 104 k+
+E1 = 1.0 × 107 k−
+E1 = 2.5 × 10−2
+S2 (II) S2, P2 Sb
+2 k+
+S2 = 1.0 × 104 k+
+S2 = 1.0 × 107 k−
+S2 = 5.9
+E2 (IIa) E2, P2 Eb
+2 k+
+E2 = 1.0 × 104 k+
+E2 = 1.0 × 107 k−
+E2 = 5.9
+Table E.10: Binding on platelet surface
+22
+
+Supporting Information
+Mesh generation for 3D hemostasis example
+To define the mesh in OpenFOAM, we utilize 3 blocks as seen in Figure E.8. The creation
+of holes in the vertical channels at the interface with the injury channel is accomplished
+using the mergePatchPairs function. The dimensions of the H-domain, which serve as
+the computational domain, are provided in Table E.11, following the description given in
+Schoeman et al. [14]. The mesh is defined so that the cells in the injury channel have a
+uniform spacing ∆x = ∆y = ∆z =2.5 µm. The mesh outside of the injury channel is graded
+for computational efficiency. The resulting mesh, as shown in Figure E.8, consists of 37,248
+finite volume cells. The specific grading parameters used to generate the mesh can be found
+in the file tutorials/Hjunction3D/system/blockMeshDict in the clotFoam repository on
+GitHub. These parameters were calculated using the free blockMesh grading tool [26].
+Width of vertical channel ( wchan) 100 µm
+Height of vertical channel ( hchan) 50 µm
+Length of vertical channel ( ℓchan) 150 µm
+Width of injury channel ( winj) 50 µm
+Height of injury channel ( hinj) 20 µm
+Length of injury channel ( ℓinj) 150 µm
+Table E.11: Dimensions of the computational domain of the H-shaped microfluidic device.
+Figure E.8: Meshing the H-shaped microfluid device.
+Mesh convergence study
+To evaluate the accuracy and convergence of the clotFoam solver, we performed a mesh
+convergence study in a rectangular domain measuring 120 µm in length, 30 µm in height,
+23
+
+and with an injury length of 45 µm. The objective of this study was to assess the error by
+comparing the solution between a fine mesh and a coarse mesh. We utilized five different mesh
+discretizations, with uniform cell heights and widths ( h) of 3, 1.5, 0.75, 0.375, and 0.1875
+µm. In this study, the finest mesh was denoted as hfine = 0.1875 µm, and its corresponding
+solution was represented by ψfine. To facilitate the comparison of solutions across different
+mesh resolutions, we employed theResample with Dataset filter in ParaView to interpolate
+the coarse meshes onto the finest mesh. To ensure numerical stability, the time step was
+selected as a function of h in a way that the maximum Courant number (C0) did not exceed
+0.75 for each mesh. The Courant number is defined as C0 = ∆t∥⃗u∥
+h , where ∆ t represents the
+time step and ∥⃗u∥ is the magnitude of the velocity field.
+The relative error for each solution ψhk with mesh hk is calculated using the following
+formula:
+E(ψhk) = ∥ψfine − ψhk∥ℓ2
+∥ψfine∥ℓ2
+, (E.1)
+where the ℓ2 norm is defined for a solution vector ⃗x ∈ Rn as:
+∥⃗x∥ℓ2 =
+vuut
+nX
+i=1
+x2
+i , (E.2)
+The convergence rate, denoted by r, was approximated by fitting a line to the error vectors
+on a log-log scale using least squares.
+In Figure E.9, we present the errors at time t = 5 seconds for four different species that
+represent various components of the clotting model:
+1. S1 is a fluid-phase biochemical species that enters the domain with a fixed concentration
+and reacts on subendothelium with E0 to produce the enzyme E1.
+2. E1 is a fluid-phase species that enters the domain through a reactive boundary condi-
+tion on the subendothelium.
+3. P m,u is fluid-phase platelet species that enters the domain with a marginated profile
+and experiences hindered transport in the presence of a growing thrombus. This species
+has reaction terms that depend on the adhesion region and biochemical agonists such
+as ADP and thrombin.
+4. E2 + Eb
+2 represents the total thrombin concentration and serves as a surrogate measure
+of overall clot formation. E2 is a fluid-phase species, while Eb
+2 is platelet-bound.
+The error plot in Figure E.9 demonstrates that the fluid-phase biochemical species con-
+verge with second-order accuracy, while the platelet-related species exhibit a super-linear
+convergence rate.
+24
+
+Figure E.9: Mesh convergence study in a rectangular domain. Errors are calculated at t = 5 seconds with
+respect to a fine mesh solution ψfine (h = 0.1875 µm), which serves as a reference solution. The approximate
+convergence rate r is displayed in the legend for each species.
+Effect of mesh topology
+To investigate the impact of mesh topology on thrombus formation, we generated an
+unstructured mesh using the open-source software Gmsh, as shown in Figure E.10. Our
+preliminary findings suggest that the specific mesh topology has a limited effect on the
+overall growth of the thrombus. However, we observed variations in clot density, with less
+dense regions occurring in areas where the mesh topology is more skewed. It is important
+to note that these observations are based on a single test with an unconventional mesh,
+and further investigations incorporating carefully selected discretization schemes may help
+mitigate this issue.
+To assess the influence of mesh topology on thrombus growth, we conducted a compara-
+tive study using two different mesh configurations within a rectangular domain, as depicted
+in Figure E.10. The left column represents simulations conducted using a structured mesh,
+while the right column corresponds to simulations conducted using an unstructured mesh.
+Our comparison revealed similar patterns of thrombus growth in both simulations. We
+quantitatively evaluated the differences in thrombi by calculating the integral of the bound
+platelet fraction over the domain and normalizing it by its maximum value, resulting in the
+“normalized amount of bound platelets.” The bottom plots in Figure E.10 demonstrate that
+the error in the normalized amount of bound platelets is less than 7% between the structured
+and unstructured mesh configurations after 600 seconds of simulation.
+25
+
+Figure E.10: Comparison of the effect of mesh topology on thrombus growth for a rectangular domain
+measuring 240 µm by 60µm. The top row depicts a structured (uniform) mesh on the left and an unstructured
+mesh on the right. The second row provides a close-up view of the bound platelet fraction in a 120 µm long
+by 30 µm high region surrounding the thrombus after 600 s of simulation. The bottom row quantifies the
+discrepancy between the simulations by integrating the bound platelet fraction over the entire domain and
+normalizing it by the maximum value of that quantity.
+Quantitative validation
+To quantitatively validate the clotFoam solver, we conducted comparative studies with
+the works of Leiderman and Fogelson [3] and Schoeman et al. [14]. It is important to
+acknowledge that the clotting model implemented in clotFoam is a significantly reduced
+version of the Leiderman and Fogelson model. This reduction was intended to provide
+researchers with a flexible framework that can be adapted to suit their specific research needs
+and objectives. As a result, direct comparisons between these models can be challenging due
+to inherent differences in their formulations. However, considering the results obtained from
+these comparative studies, along with the mesh convergence analysis depicted in Figure E.9,
+it becomes evident that clotFoam demonstrates reliability in simulating thrombus growth
+under arterial flow conditions.
+Comparison with Leiderman and Fogelson 2011
+In the first comparative study, we compared thrombus growth from the clotFoam solver
+to Figure 8 in Leiderman and Fogelson [3]. We simulated thrombus growth under three shear
+rates (500, 1000, and 1500 s −1) with four different inlet platelet profiles ( P0, P1, P2, P3 as
+defined in Figure 3 of Leiderman and Fogelson) that have increasing margination ratios. To
+quantify the differences, we computed the ’area’ in which the bound platelet concentration
+26
+
+exceeded 10%, 50%, and 90% of Pmax, respectively. The first percentage provides a measure
+of the overall thrombus size, while the latter two percentages provide information about the
+bound platelet density distribution within the thrombus. These ’areas’ were computed in
+ParaView by counting the grid cells in which the various platelet concentration levels were
+exceeded, and are presented in Figure E.11.
+Figure E.11: Quantitative analysis of clot ’area’ for comparison with Fig. 8 in Leiderman & Fogelson [3].
+The top row (a-c) presents results obtained using a uniform platelet profile. The middle row (d-f) shows
+results obtained using a fixed nonuniform platelet profile P1, as defined in Fig. 3 of Leiderman & Fogelson
+[3]. The bottom row (g–i) displays results obtained using platelet profiles P1, P2, and P3 for wall shear rates
+of 500, 1000, and 1500 s −1, respectively. In all cases, the dotted line, dashed line, and solid line represent
+wall shear rates of 500, 1000, and 1500 s −1, respectively.
+Similar to the plots in Leiderman and Fogelson [3], we observed the appearance of a
+temporary plateau at an area of 100 grid cells. This corresponds to the region where the
+adhesion rate function kadhHadh(x) is non-zero. However, for the highest concentration of
+bound platelets, when the bound platelets concentration exceeded 90% of Pmax, we observed
+a plateau at an area of 50 grid cells. This indicates that only half of the adhesion region
+exceeds a density of 90% of Pmax. This behavior can be seen in Figure 5 of our manuscript,
+where the adhesion region at the bottom of the thrombus has a less dense concentration
+compared to the rest of the clot. Given the reduced nature of the clotFoam model, it is
+27
+
+not surprising that our results for the timing of plateaus, overall clot growth, and shear rate
+dynamics differ from those published by Leiderman and Fogelson. However, we do observe
+similar characteristics of thrombus growth, with the curves in Figure E.11 following the same
+general trajectories as those reported by Leiderman and Fogelson.
+Comparsion with Schoeman et al. 2016
+In the second comparative study, we conducted an assessment of thrombus formation
+over time by comparing our results with Figure 5 of Schoeman et al. [14]. Our primary ob-
+jective with the illustrative example of hemostasis in a microfluidic device using theclotFoam
+software was to demonstrate its capability in simulating clot formation within such a device.
+However, it is important to acknowledge that the platelet model employed by clotFoam does
+not incorporate crucial factors like von Willebrand factor (vWF) or shear dependence in the
+platelet aggregation process, which are known to play significant roles in high shear settings,
+such as those encountered in the H-shaped microfluidic device described by Schoeman et al.
+Despite the limitations of the platelet aggregation model in clotFoam, Figure E.12 illus-
+trates characteristic platelet accumulation in the injury channel for whole blood on collagen
+and tissue factor (TF). The plot shows that as time progresses, the platelet accumulation in-
+creases until the injury channel reaches full occlusion at approximately 30 minutes, resulting
+in a plateau in the amount of bound platelets. This behavior is similar to what is observed in
+the Schoeman et al. paper, although the time scales differ. These findings demonstrate that
+the base clotting model in clotFoam is capable of simulating hemostasis in a microfluidic
+device. Researchers can easily modify the model to incorporate the effects of shear, von
+Willebrand factor (vWF), thromboxane A2, fibrin, and other relevant biochemical species
+involved in the coagulation process. The primary objective of developing clotFoam was to
+provide researchers with a versatile framework that can be easily customized and adapted
+to different clotting models. This flexibility allows for further exploration and customization
+to meet the specific research requirements of various studies in the field of hemostasis and
+thrombosis.
+Figure E.12: Characteristic platelet accumulation in the injury channel for whole blood on collagen-TF. The
+plot shows the progressive accumulation of platelets over time until the injury channel reaches occlusion at
+approximately 30 minutes.
+28
+
+References
+[1] A. L. Fogelson, A. L. Kuharsky, Membrane binding-site density can modulate activation
+thresholds in enzyme systems, Journal of Theoretical Biology 193 (1) (1998) 1–18. doi:
+10.1006/jtbi.1998.0670.
+[2] A. L. Kuharsky, A. L. Fogelson, Surface-Mediated Control of Blood Coagulation: The
+Role of Binding Site Densities and Platelet Deposition, Biophysical Journal 80 (3) (2001)
+1050–1074. doi:10.1016/S0006-3495(01)76085-7.
+[3] K. Leiderman, A. L. Fogelson, Grow with the flow: a spatial–temporal model of platelet
+deposition and blood coagulation under flow, Mathematical medicine and biology: a
+journal of the IMA 28 (1) (2011) 47–84. doi:10.1093/imammb/dqq005.
+[4] K. Miyazawa, A. L. Fogelson, K. Leiderman, Inhibition of platelet-surface-bound pro-
+teins during coagulation under flow i: Antithrombin and heparin, Biophysical journal
+122 (1) (2023) 230–240. doi:10.1016/j.bpj.2022.11.023.
+[5] K. B. Neeves, K. Leiderman, Mathematical models of hemostasis, Trauma induced
+coagulopathy (2016) 567–584doi:10.1007/978-3-319-28308-1\_35 .
+[6] K. Leiderman, B. Bannish, M. Kelley, A. Palmisano, Mathematical models of thrombus
+formation and fibrinolysis, in: Cardiovascular thrombus: from pathology and clini-
+cal presentation to imaging, pharmacotherapy and interventions, Academic Press San
+Diego, 2018, pp. 67–82. doi:10.1016/B978-0-12-812615-8.00005-3 .
+[7] S. L. Diamond, Systems biology of coagulation, Journal of Thrombosis and Haemostasis
+11 (2013) 224–232. doi:10.1111/jth.12220.
+[8] S. Yesudasan, R. D. Averett, Recent advances in computational modeling of fibrin clot
+formation: A review, Computational biology and chemistry 83 (2019) 107148. doi:
+10.1016/j.compbiolchem.2019.107148.
+[9] M. Anand, M. Panteleev, F. Ataullakhanov, Computational models of hemostasis:
+Degrees of complexity, Applications in Engineering Science 10 (2022) 100103. doi:
+10.1016/j.apples.2022.100103.
+[10] J. O. Taylor, R. S. Meyer, S. Deutsch, K. B. Manning, Development of a computational
+model for macroscopic predictions of device-induced thrombosis, Biomechanics and
+modeling in mechanobiology 15 (2016) 1713–1731. doi:10.1007/s10237-016-0793-2 .
+[11] V. Govindarajan, S. Zhu, R. Li, Y. Lu, S. L. Diamond, J. Reifman, A. Y. Mitrophanov,
+Impact of tissue factor localization on blood clot structure and resistance under venous
+shear, Biophysical journal 114 (4) (2018) 978–991. doi:10.1016/j.bpj.2017.12.034.
+[12] R. M´ endez Rojano, M. Zhussupbekov, J. F. Antaki, D. Lucor, Uncertainty quantification
+of a thrombosis model considering the clotting assay pfa-100 ®, International Journal
+for Numerical Methods in Biomedical Engineering 38 (5) (2022) e3595. doi:doi.org/
+10.1002/cnm.3595.
+29
+
+[13] A. Bouchnita, A. V. Belyaev, V. Volpert, Multiphase continuum modeling of thrombosis
+in aneurysms and recirculation zones, Physics of Fluids 33 (9) (2021) 093314. doi:
+10.1063/5.0057393.
+[14] R. M. Schoeman, K. Rana, N. Danes, M. Lehmann, J. A. Di Paola, A. L. Fogelson,
+K. Leiderman, K. B. Neeves, A microfluidic model of hemostasis sensitive to platelet
+function and coagulation, Cellular and molecular bioengineering 10 (2017) 3–15. doi:
+10.1007/s12195-016-0469-0 .
+[15] N. A. Danes, K. Leiderman, A density-dependent fem-fct algorithm with application to
+modeling platelet aggregation, International journal for numerical methods in biomedi-
+cal engineering 35 (9) (2019) e3212. doi:10.1002/cnm.3212.
+[16] K. Leiderman, A. L. Fogelson, The influence of hindered transport on the development
+of platelet thrombi under flow, Bulletin of mathematical biology 75 (2013) 1255–1283.
+doi:10.1007/s11538-012-9784-3 .
+[17] M. Rezaeimoghaddam, F. N. van de Vosse, Continuum modeling of thrombus formation
+and growth under different shear rates, Journal of Biomechanics 132 (2022) 110915.
+doi:10.1016/j.jbiomech.2021.110915.
+[18] W.-T. Wu, M. A. Jamiolkowski, W. R. Wagner, N. Aubry, M. Massoudi, J. F. Antaki,
+Multi-constituent simulation of thrombus deposition, Scientific reports 7 (1) (2017) 1–
+16. doi:10.1038/srep42720.
+[19] C. Greenshields, OpenFOAM v9 User Guide, The OpenFOAM Foundation, London,
+UK, 2021.
+[20] K. N. Shankar, Y. Zhang, T. Sinno, S. L. Diamond, A three-dimensional multiscale
+model for the prediction of thrombus growth under flow with single-platelet resolution,
+PLOS Computational Biology 18 (1) (2022) e1009850. doi:10.1371/journal.pcbi.
+1009850.
+[21] R. M´ endez Rojano, A. Lai, M. Zhussupbekov, G. W. Burgreen, K. Cook, J. F. Antaki,
+A fibrin enhanced thrombosis model for medical devices operating at low shear regimes
+or large surface areas, PLOS Computational Biology 18 (10) (2022) e1010277. doi:
+10.1371/journal.pcbi.1010277.
+[22] R. I. Issa, Solution of the implicitly discretised fluid flow equations by operator-splitting,
+Journal of computational physics 62 (1) (1986) 40–65. doi:10.1016/0021-9991(86)
+90099-9.
+[23] M. F´ el´ etou, The endothelium, part i: Multiple functions of the endothelial cells –
+focus on endothelium-derived vasoactive mediators, Colloquium Series on Integrated
+Systems Physiology: From Molecule to Function 3 (4) (2011) 1–306. doi:10.4199/
+c00031ed1v01y201105isp019.
+30
+
+[24] E. C. Eckstein, F. Belgacem, Model of platelet transport in flowing blood with drift and
+diffusion terms, Biophysical journal 60 (1) (1991) 53–69.doi:10.1016/S0006-3495(91)
+82030-6.
+[25] B. van Leer, Towards the ultimate conservative difference scheme. ii. monotonicity and
+conservation combined in a second-order scheme, Journal of Computational Physics
+14 (4) (1974) 361–370. doi:10.1016/0021-9991(74)90019-9.
+[26] Scripts/blockmesh grading calculation, https://openfoamwiki.net/index.php/
+Scripts/blockMesh_grading_calculation (2020).
+31

@@ -1,0 +1,644 @@
+Mathematical modelling and numerical simulation of
+reverse-osmosis desalination
+Nicodemo Di Pasquale ∗1, Mayo Akele2, Federico Municchi3, John King 2, and Matteo
+Icardi2
+1Department of Chemical Engineering, Brunel University London, Uxbridge, UB8 3PH,
+United Kingdom
+2Department of Mathematics, University of Nottingham, Nottingham, NG7 2RD, United
+Kingdom
+3Department of Mechanical Engineering, Colorado School of Mines, Golden, CO 80401, US
+January 31, 2023
+Special issue on Process Intensiﬁcation
+Abstract
+The reverse osmosis membrane module is an integral element of a desalination system as it determines the
+overall performance of the desalination plant. The fraction of clean water that can be recovered via this
+process is often limited by salt precipitation which plays a critical role in its sustainability. In this work, we
+present a model to study the complex interplay between ﬂow, transport and precipitation processes in reverse
+osmosis membranes, which together inﬂuence recovery and in turn process sustainability. A reactive porous
+interface model describes the membrane with a dynamic evolving porosity and permeability to capture the
+scaling and clogging of the membrane. An open-source ﬁnite-volume numerical solver is implemented within
+the OpenFOAM®library and numerical tests are presented here showing the eﬀect of the various parameters
+of the model and the robustness of the model to describe a wide range of operating conditions.
+1 Introduction
+The demand of freshwater has steadily increased over the last forty decades at a global level, mainly because
+of the increase in population and improving living standards which are leading to an expansion of irrigated
+agriculture and its human consumption. In turn, the increase in consumption is straining the freshwater
+sources in their ability to supply the growing demand of water worldwide with almost two third of the
+total world population experiencing severe water scarcity during at least a part of the year (Mekonnen and
+Hoekstra, 2016; Jones et al., 2019). The current freshwater sources are already overexploited, and even if
+better management is still needed to reduce the misuse of such resources (e.g., wastewater treatments or
+waste reduction) (Najid et al., 2022), these solutions cannot still be enough to meet the future demand of
+freshwater. The ongoing climate change is expected to reduce the availability of freshwater because of the
+receding of glaciers with a subsequent important reduction of the ﬂow in important rivers such as the Mekong
+Yellow, or Gange (Shannon et al., 2008).
+∗Corresponding author: nicodemo.dipasquale@brunel.ac.uk
+1
+arXiv:2301.13160v1  [math.NA]  16 Jan 2023
+
+Almost 98% of the total liquid water on the Earth is not available for the direct use or consumption, as
+it form the total water present in seas and oceans. However, this last fact also means that if the exceedingly
+high saline content in seawater can be reduced or removed, we will have access to the largest source of
+freshwater sources, with which the required amount of freshwater could be delivered without straining the
+natural occurring resources (Jones et al., 2019). Therefore, there is a strong push into developing more eﬃ-
+cient technologies for the desalination of seawater. Among the currently available technologies are thermal
+desalination and membrane processes (Fritzmann et al., 2007; Subramani and Jacangelo, 2015). In thermal
+desalination, seawater is brought to evaporation through multi-eﬀect distillation or multi-stage ﬂash distilla-
+tion (Al-hotmani et al., 2021), and the resulting vapor is subsequently condensed. In membrane technologies,
+a semi-permeable membrane is employed to separate (or ﬁltrate) the solution of salt and water.
+Reverse Osmosis (RO), is a widely employed membrane technology for treating seawater and wastewater
+with salinity up to 70 g/l (Hickenbottom and Cath, 2014) which, due to its relative simplicity and widespread
+diﬀusion has been among the main topics of research in membrane ﬁltration (Wardeh and Morvan, 2008;
+Luo et al., 2019). One of the main challenges in RO is concentration polarisation (Kim and Hoek, 2005),
+which is the presence, over the membrane, of a solute-rich boundary layer. Concentration polarisation can
+lead to solute precipitation and fouling, signiﬁcantly reducing the local permeability of the membrane with
+adverse eﬀects on the permeation ﬂux. When the solution contains inorganic salts (such as sodium chloride
+NaCl or calcium sulfate CaSO 4 ), the resulting accumulation of crystals on the membrane is also called
+scaling. There is extensive experimental evidence indicating that scaling reduces the membrane performance
+over time (Hu et al., 2014) and therefore, scaling phenomena should play a major role in the mathematical
+modelling of RO systems.
+Computational Fluid Dynamics (CFD) represents a powerful to analyse concentration polarisation and
+scaling, with the earliest attempts dating back to more than two decades ago (Hansen et al., 1998). The
+membrane is usually included as a boundary condition where the ﬂux of the solute is assumed equal to zero
+(complete retention). Previous studies have considered dependence on the solute concentration of properties
+such as the osmotic pressure (Hansen et al., 1998), viscosity, density and diﬀusion coeﬃcient (Geraldes et al.,
+2001; Wiley and Fletcher, 2002) to include eﬀects of concentration polarisation on the membrane(Wiley and
+Fletcher, 2002; Johnston et al., 2022). In particular, CFD simulations for membranes have been employed to
+analise diﬀerent geometrical conﬁgurations, such as the spacer-ﬁlled channels. These include solid elements
+in the feeding ﬂow to increase the shear stress on the surface of the membrane, which in turn increases
+the local mixing and mass transfer across the membrane (Shakaib et al., 2007; Fletcher and Wiley, 2004;
+Fimbres-Weihs and Wiley, 2010; Ghidossi et al., 2006; Lau et al., 2009; Santos et al., 2007; Koutsou et al.,
+2009; Ranade and Kumar, 2006).
+However, the eﬀects of scaling have not been directly included in CFD simulations. In this work, we
+propose a mathematical model and a CFD solver for the analysis of the performances of a RO membrane
+in which we included the possibility for the solute in the feed ﬂow to react (precipitate) on the membrane
+and therefore aﬀecting the membrane permeability. The paper is organised as follows. We describe the
+mathematical framework for the analysis of the membrane, highlighting how the chemical reactions can be
+accounted for in the model. We then discuss the implementation of our model into the widely used open
+source ﬁnite volume library OpenFOAM®and we show some results for some typical situations, showing the
+applicability of the whole framework. We then draw some conclusions and we outline the possible extension
+of the model.
+2 Model
+In this work, we approximate a rectangular 3D membrane module as a 2D channel illustrated in ﬁg. 1. This
+is a common practice employed in other recent CFD studies (Johnston et al., 2022). While the conﬁguration
+we considered can be easily extended to more complex geometries, the focus here is to develop a complete
+mathematical model for the polarization and scaling of the membrane by giving a proof of concept for a
+general-purpose numerical solver. Our main goal is to show the mechanisms governing the evolution of the
+solute at the membrane interface, and a 2D channel geometry allows us to focus on this task.
+2
+
+Figure 1: 2-dimensional domain considered in this work
+Let us therefore assume a rectangular domain Ω ≡ (0,L )× (0,H ) with boundary Γ = ∂Ω subdivided in
+three diﬀerent regions:
+Γm = (0,L )×{ 0} (membrane)
+Γin ={0}× (0,H ) (inlet)
+Γout ={L}× (0,H ) (outlet) (1)
+where Γm represents the membrane boundary, Γ in is the inlet boundary and Γ out is the outlet boundary.
+With Γw we represent the remaining part of the boundary constituted by solid boundaries so that Γ w =
+Γ\ (Γin∪ Γout∪ Γm), as shown in ﬁg. 1. In this study, the permeate ﬂow is not explicitly modelled, therefore
+the membrane represents a boundary condition for the problem.
+The analysis of the ﬁltration process requires the simultaneous solution of the ﬂow ﬁeld coupled with the
+transport of dissolved chemical species, which can involve one or more chemical reactions. Such chemical
+reactions can lead to solute precipitation, modifying the permeability and porosity of the membrane, thus
+causing a variation in the osmotic pressure and the ﬁnal yield of the permeate. We summarised the diﬀerent
+mechanism and their interdependence in ﬁg. 2.
+Our mathematical model is composed of three diﬀerent and intertwined parts that need to be simulta-
+neously considered to obtain the overall behaviour of the membrane which we are now going to describe in
+detail.
+2.1 Flow modelling
+The mixture is described as an incompressible Newtonian ﬂuid described by the Navier-Stokes equations:
+∇· u = 0 in Ω ,t> 0 (2a)
+ρ
+[∂u
+∂t + (u·∇ u)
+]
+=−∇p +µ∇2u in Ω ,t> 0 (2b)
+3
+
+Figure 2: Sketch of the diﬀerent mechanisms and models considered in this work.
+where ρ is the density of the ﬂuid u is the velocity vector with components ( u,v )T , p is the ﬂuid pressure
+and µ is the dynamic viscosity, ∇ is the gradient operator. We impose the following boundary and initial
+conditions on the system shown in eq. (2) for the velocity and pressure:
+u = 0 in Ω ,t = 0 (3a)
+u = 0, p =Pin on Γ in (3b)
+∇u· n = 0, p =Pout on Γ out (3c)
+u = 0 on Γ w (3d)
+Finally, the membrane is modelled as a dynamic Dirichlet condition for the velocity v orthogonal to the
+membrane is obtained from the Darcy law as:
+u = 0, v =−k(∆p− ∆π)
+ℓµ on Γ m (4)
+where µ is the ﬂuid viscosity, ℓ is the membrane thickness, k is the membrane permeability, ∆p =pm−pp
+is the pressure diﬀerence between the feed side of the membrane, pm, calculated at the membrane boundary
+Γm and the permeate side of the membrane, pp, whereas ∆π is the osmotic pressure gradient. This last
+equation shows that the ﬂux through the membrane is proportional to the diﬀerence between the applied
+and osmotic pressure diﬀerentials.
+The pressure gradient ∆ p = pm−pp is the diﬀerence between the pressure on the feed side of the
+membrane pm calculated at the membrane boundary Γ m, and the permeate side of the membrane pp. The
+osmotic pressure diﬀerence is deﬁned as follows:
+∆π =π−πp =π(φ1,...,φ N)−π(φp
+1,...,φ p
+N) (5)
+where the feed osmotic pressure π is a function of the N ions concentrations, φi, i = 1,...,n , whereas the
+permeate osmotic pressure φp is function of the N ions concentrations in the permeate, φp
+i , i = 1,...,n .
+As common in membrane applications (Linares et al., 2014) the osmotic pressure is computed using the
+Van’t Hoﬀ model (Van’t Hoﬀ, 1888):
+π(φ1,...,φ n) =RTϕ
+N∑
+i
+φi (6)
+whereϕ is the osmotic coeﬃcient, R is the gas constant and T is the temperature we can rewrite eq. (5) as:
+∆π =RTϕ
+N∑
+i
+(φ−φp
+i ) =RTϕ
+N∑
+i
+rφ
+iφi (7)
+4
+
+where we used the deﬁnition of membrane rejection of the species i,
+rφ
+i = 1− φp
+i
+φi
+, i = 1,...,N. (8)
+The Van’t Hoﬀ equation assumes a linear relation between concentration and osmotic pressure and is more
+accurate for low concentration of solutes. Diﬀerent formulations were proposed to take into account the non-
+linear behaviour of solutions, which consider the activity of the solvent (Khraisheh et al., 2019), calculated
+using the Pitzer equation for the electrolyte solutions (Pitzer, 1973). As a proof of concept, we will consider
+here the simpliﬁed model since the most complex behaviour can be straightforwardly added to the model
+and the CFD code we will present in the next section. The membrane rejection of the species i expresses
+the amount of solute rejected by the membrane (and therefore not present in the permeate) as a fraction of
+the initial quantity. In this work, we assume rφ
+i = 1 for every ion species, which corresponds to complete
+rejections of the ions at the membrane. In this case, the concentration on the permeate side and the permeate
+osmotic pressure, πp, are both equal to 0 and therefore:
+∆π =RTϕ
+N∑
+i
+φi. (9)
+In the literature, the two most popular models proposed to describe the solute-solvent solute transport
+through the membrane are the solution-diﬀusion model (Merten, 1963; Lonsdale et al., 1965; Wijmans and
+Baker, 1995) and the Spiegler-Kedem model Spiegler and Kedem. The former expresses the ﬂow through
+the membrane ˙Jv as:
+˙Jv =A(∆p− ∆π) (10)
+noting that in our notation v =
+˙Jv
+A(Γm) where Sm is the membrane surface; while for the latter we have
+˙Jv = 1
+Rmµ(∆p−σ∆π) (11)
+with the same identiﬁcation for ˙Jv (i.e., v =
+˙Jv
+A(Γm)) where Rm is the membrane resistance and σ is the
+reﬂection coeﬃcients which measure the impermeability of the membrane to the solutes. σ = 1 indicates a
+membrane completely impermeable to solutes and will be the one considered for this work.
+Notice that in eq. (4) we use the Darcy law to rewrite the so-called water permeability of the membrane
+A which appear in the equation in terms of the permeability and thickness of the membrane and the viscosity
+of water as A = Smk
+ℓµ . Using the same reasoning for eq. (11) we obtain that Rm = ℓ
+Smk, that is to say, the
+membrane resistance is inversely proportional to the permeability. The identiﬁcation of the Darcy-related
+terms with the water permeability A or membrane resistance has two main advantages. Firstly, we can
+connect our analysis with the membranes available commercially which are described in terms of water
+permeability or membrane resistance. This last fact allows us to choose the range of the parameters we are
+considering which are appropriate for the description of real membranes. Secondly, using the Darcy derived
+version of the equation for the ﬂow through the membrane allows us to include more detailed mechanisms in
+the model which can take into account more complex phenomena, such as chemical reactions and depositions
+of solids on the membrane as we will show in more details in the next sections. One of the ways considered
+in the literature to include fouling and polarisation of the membrane is to deﬁne such contribution as
+additional resistance terms to be added to Rm in eq. (11) (see e.g., (Silva et al., 2011; Lee and Clark, 1998;
+Yeh, 2002)). These additional terms must be derived from experiments or empirical correlations. In contrast,
+our formulation leverages the well-established theory of porous media to include such eﬀects directly in the
+determination of the permeability k.
+The performance of the membrane can be evaluated by using the recoveryr, deﬁned as the ratio between
+the permeate ﬂow rate, ˙Qp, and the feed ﬂow rate, ˙Qf:
+r =
+˙Qp
+˙Qf
+= vAp
+UinAin
+= vL
+uH (12)
+5
+
+where we used the deﬁnition of ﬂow rate through a surface, AU/ℓt, to calculate the ﬂux through the in-
+let (subscript in) and the membrane (subscript m) and then we replaced the area in eq. (12) with their
+geometrical expression related to the domain we are considering: Ain =H×Z, Ap =L×Z.
+2.2 Solute Transport
+In membrane processes, ﬂow and solute transport are tightly coupled through the boundary condition on
+the membrane given by equation eq. (4). The transport equation for the concentration φi of the i−th ion
+species in the bulk liquid is given by:
+∂φi
+∂t +∇· (uiφi) =∇· (D∇φi) +ξi
+B in Ω ,t> 0 (13a)
+φi = 0 in Ω ,t = 0 (13b)
+φi =φin on Γ in (13c)
+∇φi = 0 on Γ out∪ Γw (13d)
+˙Ji =vφi−Di
+∂φi
+∂y =ξi
+M +ξi
+P on Γ m (13e)
+where ui is the velocity of the i-th chemical species, Di is its diﬀusion coeﬃcient, ξ is a rate term that
+represents diﬀerent mechanisms of depletion of the solute, identiﬁed by the subscripts B for the chemical
+reaction in the bulk, M, for chemical reaction at the membrane, and P for the fraction of the solute that
+crosses the membrane. The amount of the speciesi at the membrane, can either precipitate on the membrane
+following a chemical reaction or go through the membrane in the permeate. The sum of these two mechanisms
+must equal the ﬂux of the i-th chemical species at the membrane ˙Ji. We can therefore assume that each of
+these mechanisms corresponds to a fraction of ˙J, and hence that ˙J =κMξM +κPξP . The coeﬃcients κ have
+the property that:
+κM +κP = 1 (14)
+If only superﬁcial reaction is present, then κR = 1 and κP = 0, while in the case there is no superﬁcial
+reaction and the solute crosses the membrane then κP = 1 and κR = 0.
+In this work we will make the following assumptions on the behaviour of the system: 1.) The precipitation
+reaction is irreversible and only occurs on the membrane surface, (i.e., ξB = 0) 2.) The transport processes
+are similar for the all the salt ions and the diﬀusion coeﬃcients are independent of concentration, 3 .) The
+salt ions have the same velocity as the ﬂuid (i.e., ui = u for everyi), 4.) The porous medium is homogeneous,
+5.) there are only surface reactions at the membrane (i.e., κR = 1).
+2.3 Chemical kinetics
+Following the principles of mass action, the dynamic behaviour of chemical systems with n components
+involved in m reactions, can be described by a set of ﬁrst order diﬀerential equations with time as the
+independent variable:
+dφ1
+dt =f1(φ1,φ 2,...,φ n,t )
+dφ2
+dt =f2(φ1,φ 2,...,φ n,t )
+...
+dφn
+dt =fn(φ1,φ 2,...,φ n,t )
+(15)
+6
+
+where φi(t), i = 1,...,n denotes the volume molar concentration of chemical species Xi at time t. The
+dynamics of the reaction network can be conveniently written in matrix form using the formalism developed
+in (Chellaboina et al., 2009):
+dφi
+dt =ξi
+R = (A−B)TKφA(t), φi(0) =φ0,i, t≥ 0 (16)
+where K = diag(K1,..., Km) is the diagonal matrix which contains as elements the reaction kinetics Kj,
+j = 1,...,m and φ0 is the initial concentration. A and B are the m×n matrices having in each entry the
+stochiometric coeﬃcients of the reactants and products respectively and φA(t) is the matrix obtained by
+replacing each element of A with φalp
+i where akj is the element of A in the l-th row and p-th line. The ﬁrst
+term in the boundary conditions in eq. (13e) takes the form
+ξi
+R =
+[
+(A−B)TKφA(t)
+]⏐⏐
+iℓ (17)
+where the notation [·]|i stands for the i-th component of its (n× 1 vector) argument.
+For a generic ﬁrst order reaction X1 +X2→X3 with kinetic constant K, we have therefore
+dφ1
+dt =−Kφ1φ2
+dφ2
+dt =−Kφ1φ2
+dφ3
+dt =Kφ1φ2
+(18)
+and
+ξ1
+R =−Kφ1φ2ℓ
+ξ2
+R =−Kφ1φ2ℓ
+ξ3
+R =Kφ1φ2ℓ
+(19)
+An example of a reaction of this type important in membrane operation is the formation of calcium carbonate,
+through the reaction (Warsinger et al., 2015):
+Ca2
++ + 2 HCO3
+−−−→CaCO3 + CO2 + H2O (20)
+In fact, the scaling caused by the precipitation of calcium carbonate limits the operating condition of desali-
+nation systems for brackish, groundwater, and seawater (Waly et al., 2009).
+One eﬀect to be considered when a chemical reaction is involved is that the reaction between salt ions and
+subsequent precipitation of minerals, often alters the membrane properties, such as porosity and permeability.
+As crystals grow, it is expected that the permeability k, in equation (see eq. (4)) and the porosity, ϵ, will
+decrease, reducing the liquid ﬂow through the membrane (Steefel et al., 2005). To account for the modiﬁcation
+of the porosity and permeability as a result of mineral precipitation, we employ the Kozeny-Carman model
+(Hommel et al., 2018). This model allows us to quantify the porosity-permeability relations and estimate
+the resulting changes.
+According to the Kozeny-Carman model, the change in permeability is calculated by relating the current
+permeability,k, based on the current porosity ϵ, to the initial permeability k0 corresponding to the initial
+porosity ϵ0 Hommel et al. (2018). These equations consequently follow the form below
+k
+k0
+= f(ϵ)
+f(ϵ0). (21)
+7
+
+Thus we can describe the permeability evolution using the following power law (Hommel et al., 2018)
+k
+k0
+= (1−ϵ0)2
+(1−ϵ)2
+(ϵ
+ϵ0
+)3
+, (22)
+wherek is the current permeability,ϵ is the current porosity,k0 is the initial permeability andϵ0 is the initial
+porosity. The rate at which porosity reduction occurs is given by (Huo et al., 2019; Noiriel et al., 2004):
+ϵ =ϵo− Vs
+ℓ
+t∫
+t0
+∑
+j
+ξj
+Rdt, (23)
+where ϵo denotes the initial porosity at t0, Vs is the molar volume of solid precipitate in m 3/mol and r(t) is
+the rate of precipitation in mol·m−2· s−1 and the index j runs over all the possible reactions in the system.
+For the ﬁrst order reaction we are considering here the eq. (23) simplify as:
+ϵ =ϵo− Vs
+ℓ
+t∫
+t0
+(Kφ1φ2) dt . (24)
+We should again observe the inter-dependencies and feedback mechanisms between ﬂuid ﬂow, transport
+and reaction. Namely, in eq. (24) we see the precipitation reaction leads to a change in porosity which in
+turn aﬀects the permeability in equation eq. (22). The change in permeability impacts the ﬂow via the ﬂuid
+velocity in eq. (4). This, in turn, alters the solute concentration distribution via eq. (13a), which ultimately
+impacts the rate of precipitation again via eq. (13e). Moreover, from eq. (24) we can observe that the
+variation of the porosity is proportional to the kinetic reaction constant. This last fact, in turn, simpliﬁes
+the predictions for the clogging of the membrane based on the reactions in the systems. We can expect that
+if there are two chemical reactions in our systems, the ﬁrst one 10 times slower than the second, then the
+clogging caused by the products of the second reaction will take 10 times the time needed by the products of
+the ﬁrst reaction to produce the same amount of clogging. One of the strengths of our models is that allow
+these kinds of qualitative analyses even without actually solving the equations.
+3 Numerical discretisation
+The equations presented in section 2 are solved using the open-source ﬁnite volume OpenFOAM 8.0 library
+and the code is available open-source (Icardi, 2022). In order to solve the equation of motion alongside the
+reaction at the membrane we developed a new solver for OpenFOAM called binaryReactionFoam which is
+based on two widely used solvers, pimpleFoam and scalarTransportFoam· The former is a transient solver for
+incompressible ﬂows based on the PIMPLE algorithm while the latter is a concentration transport solver using
+a user-speciﬁed velocity ﬁeld. The solver also includes the possibility of modelling solid precipitation in the
+ﬂuid and a multiphase ﬂow model for the solid particles. The most important element in the computational
+framework, however is represented by the new boundary conditions implemented to model the membrane.
+The membraneVelocity boundary conditions impose the ﬂuid velocity based on the ﬂuid pressure, the permeate
+pressure, and the membrane properties. These are updated in time by linking this boundary condition to
+the one for the scalar concentration, named binaryReaction, which solves for the solid precipitation at the
+boundary and therefore updates the membrane permeability. The equations and boundary conditions are
+coupled iteratively through Picard (ﬁxed point) iteration (through the PIMPLE iterations) until convergence,
+making the whole model fully implicit.
+We simulate a two-dimensional rectangular channel with height h = 0.003 m and length of L = 0.02 m
+discretised on a mesh composed by 600×200 cells. The following discretisation schemes (we direct the reader
+to the OpenFOAM user guide (Ope, 2019) for a detailed description of each scheme) are used to discretise
+the equations:
+8
+
+• advective ﬂuxes ( divSchemes Gauss vanLeer ) are computed at the faces and the variables interpolated
+with a Total Variation Diminishing scheme;
+• gradient terms (gradSchemes Gauss linear ) are approximated with central diﬀerencing;
+• surface normal gradients for diﬀusive ﬂuxes (snGradSchemes orthogonal) are approximated with central
+diﬀerencing (the grid is in fact orthogonal and does not need any correction to ensure second order
+accuracy);
+• time derivatives ( ddTSchemes backward ) are approximated with third order implicit backward Euler
+scheme,
+We speciﬁed a fully developed velocity proﬁle at the inlet:
+u(0) = 6uav
+y
+h
+(
+1− y
+h
+)
+(25)
+where uav is the average velocity along the channel. By specifying the velocity proﬁle at the inlet we need
+only to specify the pressure at the outlet (the value of which is given in table 1). The pressure of the permeate
+through the membrane is assumed constant along the length of the membrane and put equal to zero. For
+longer membranes, this assumption is no longer valid and the permeate ﬂow needs to be modeled explicitly
+(with 1D or 2D models). This will be the subject of future extensions of our framework.
+The initial value of the permeability we consider in the calculations isk = 10−16 m2. Using the expression
+for the water permeability obtained from eq. (4) and eq. (10): A = Smk
+ℓµ , and the viscosity of water at room
+temperatureµ = 10−3 Pa s, and the surface of the membrane,Sm = 2·10−6 m2 for the channel conﬁguration
+and ℓ = 10 −7m , we obtain a value of A = 2· 10−12 m (Pa s) −1. This value is in line with the values
+reported for commercial membranes, which are in the range 10 −14 to 10−10 (Pa s)−1 (Ruiz-Garc´ ıa and de la
+Nuez Pestana, 2019; Lee et al., 1981; Draˇ zevi´ c et al., 2014).
+Our model is able to include the scaling of the membrane given by the chemical reaction, which can
+modify the membrane permeability through the precipitation of a solid phase obtained as a product of the
+reaction. In this work we considered a range of kinetic reactions, going from very slow to fast reactions,
+i.e. with a value of the kinetic constant spanning four orders of magnitude, from 10 −10 to 10 −1 m3/mol.
+We considered such a large range of kinetics since our main goal is not to focus on a speciﬁc system (and
+reaction) but to give a general description that can be applied to diﬀerent speciﬁc situations.
+4 Results
+In this work, we employ a ﬁxed ﬂow proﬁle at the inlet, which when considering the properties in table 1,
+gives a Reynolds number equal to 300. Therefore, the system operates in a fully developed laminar ﬂow
+regime. The ﬁrst property that can be derived from this model is the polarisation of the membrane, which
+represents the accumulation of the solute at the interface of the membrane on the feed side. This is an
+undesired eﬀect since it increases the osmotic pressure reducing the extraction of the permeate per unit of
+energy consumed in the process. We report the variation of the concentration proﬁle in the domain in ﬁg. 3
+for the lowest and highest chemical kinetic rate considered. We can observe in ﬁg. 3 that the concentration
+at the membrane is diﬀerent from the one in the bulk region in both cases. However, while the case with
+K = 10 −15 m3/mol shows a higher concentration with respect to the bulk (see ﬁg. 3a), the case with the
+highest value of the kinetic rate (K = 10−1 m3/mol, see ﬁg. 3b) shows a concentration smaller than the one
+in the bulk.
+The latter observations show that the possible behaviour of the solution near the membrane strongly
+depends on the reaction kinetics. In the ﬁrst case (the one represented in ﬁg. 3a corresponding to the lowest
+kinetic rate considered K = 10 −15 m3/mol), we can observe the “standard” eﬀect of the polarisation of
+the membrane. During the ﬁltration process, there is an accumulation of the solutes molecule on the feed
+side of the membrane, which results in a higher concentration of the solution at the membrane itself. On
+9
+
+Symbol deﬁnition/value units
+k 10 − 16 m 2
+ϵ 0.7 -
+φa, 0 35 g/m 3
+φb, 0 φa, 0 g/m 3
+uin,av 0.1 m/s
+D 0.003 m
+ℓ 0.0001 m
+Vs 27 · 10 − 6 m 3 /mol
+uav 0.1 m/s
+K { 10 − 10, 10 − 5, 10 − 2, 10 − 1} m 3 /mol
+ρ 1000 kg/m 3
+pout 1000 kPa
+pperm 0 kPa
+µ 10 − 3 Pa s
+Table 1: Summary of the numerical inputs for the physical quantities used in the simulations. Note that
+the units of the kinetic constantK depend on the fact that we considered a binary reaction, whereas for the
+permeability k and porosity ϵ we are considering the initial value (i.e., the value at t = 0 h.
+10
+
+(a) K = 10 −10 m3/mol
+ (b) K = 10 −1 m3/mol
+Figure 3: Contour plot of the concentration within the channel given in units of the initial concentration
+˜φa =φaφin,0. On the left: results reported for the lowest kinetic constant. On the right, results are reported
+for the highest kinetic constant. Note that the starting point of the legend is not zero and is diﬀerent between
+the pictures to make the results more clear.
+the opposite side, when the reaction rate is almost negligible (as for the case of K = 10 −15 m3/mol), the
+solutes are now consumed by the reaction and they accumulate at the membrane interface, leading to the
+concentration proﬁle observed in ﬁg. 3a. In the latter case, the solute is now consumed almost instantly at the
+membrane interface. This result in a transport (convection and diﬀusion) limited proﬁle of the concentration
+near the interface.
+The two opposite eﬀects just described for the proﬁle of the concentration at the membrane interface give
+an interesting eﬀect on the evolution of the porosity and permeability proﬁles across the membrane. As the
+reaction proceeds, a new solid phase is formed which precipitates on the membrane modifying its structure
+and therefore its ﬂuid dynamical behaviour. In particular, the solid phase generated during the reaction
+clogs the pores of the membrane, resulting in a variation of the porosity of the membrane with time. On top
+of this, since the concentration along the membrane (in the x-direction) decreases, we can expect a decrease
+in the overall reaction rate (which is proportional to the concentration) and therefore a diﬀerence in the
+permeability and porosity over the membrane. When we instead observe polarisation (i.e., in the case of the
+lowest reaction rate) the concentration near the membrane increases with the distance along the membrane
+direction.
+Therefore, we can expect that the reaction velocity (which depend on K and the concentration), at a
+ﬁxed time, will increase along the membrane interface for the case with polarisation (low kinetic reaction)
+and decrease along the membrane for high value of the kinetic reaction rate. We will show quantitatively
+these eﬀects in the next section.
+The description of the properties of the membrane (i.e., porosity, permeability, velocity through the
+membrane) can be given in terms of global quantities, that is to say quantities averaged over all the membrane
+length, which therefore becomes a function of time only. We will start our analysis by giving an account of
+these global properties.
+In ﬁg. 4 we report the variation of the average of the porosity across the membrane as function of time.
+For the lowest kinetic reaction time considered there is no appreciable variation of the porosity after more
+than one day of operations. By increasing the kinetic reaction rate we can start to observe some deviations.
+In particular, for the highest value of the reaction rate the porosity decays to 60% of its original value after
+only one day of operation. This latter kind of results can be useful in determining the operation time that
+we can expect from a membrane given a certain composition of the feed.
+The law of variation of the permeability with the reaction depends on the variation of the porosity, and
+in fact we can expect a similar behaviour. We reported the results for k in ﬁg. 5, where we can see that there
+is an order of magnitude diﬀerence between the initial value of the permeability at time t = 0 and after 28
+h of operations.
+The average velocity through the membrane obtained with the conditions speciﬁed is 1.8 µs, which
+decreases with the decrease of the permeability of the membrane up to 0.13 µs for the lowest value of k
+and ϵ shown in ﬁgs. 4 and 5. In order to maintain the ﬂow across the membrane in the given conditions of
+cross-ﬂow in the channel and for the permeability and porosity given, we have to apply a pressure of approx
+1800 kPa, which is needed to overcome an osmotic pressure of 1000 kPa, which reduces to 978 kPa in the
+11
+
+Figure 4: Plot of the porosity versus time for all the systems considered, K is in mol/m 3.
+Figure 5: Plot of the permeability as a function of time for all the systems considered K is in mol/m 3.
+12
+
+case of the highest reaction rate. The diﬀerence in the osmotic pressure for the case K = 10−1 depends on
+the fact that for this case the concentration at the membrane is lower than the bulk (and lower than the
+case with polarisation) because of the very fast reaction (see ﬁg. 3b).
+Despite the fact the osmotic pressure is smaller for the fastest reaction case, this case remains the worse
+in terms of permeate extraction, because the fast scaling of the membrane reduces quickly the porosity until
+the ﬂux stops completely, i.e., we reach a value of v = 0.13µs when we consider a fast reaction rate, against
+a value one order of magnitude higher for the case of the lowest reaction rate where we do not observe the
+scaling in the simulated time.
+4.1 Local proﬁles
+Local proﬁles at the membrane are analysed for the same range of parameters. Since the smaller value of
+the kinetic constant (K = 10 −15, 10−10 m 3/mol) gives the same behaviour in the time scale considered,
+we are showing only results for K≥ 10−5 m3/mol. We summarise our ﬁnding in ﬁg. 6 where we reported
+the component v of the velocity of the ﬂuid (i.e., the velocity through the membrane) and the porosity are
+reported.
+According to our analysis in the preceding sections, the ﬂux along the membrane depends on diﬀerent
+contributions. The ﬁrst is the frictional pressure drop along the channel, which can cause considerable diﬀer-
+ences in the transmembrane pressure. Secondly, we have the polarisation eﬀects, which increase the osmotic
+pressure (as it is proportional to the concentration diﬀerence across the two sides of the membrane), and
+ﬁnally, the scaling, which changes the permeability of the membrane itself. While the ﬁrst contribution can
+be mitigated by a better design of the membrane modules (Krawczyk and J¨ onsson, 2014), the contributions
+of the last two eﬀects are diﬃcult to quantify a priori , as it can be seen from ﬁg. 6a. While the frictional
+pressure drop along the channel acts in all the systems in the same way (we are considering the same ge-
+ometry and the same initial conditions for the ﬂow), that is not true for the polarisation and scaling eﬀects.
+In particular, the systems with a lower concentration suﬀer from polarisation at the membrane, as shown in
+the previous section, which increases the osmotic pressure. The system with higher reaction kinetics instead,
+does not suﬀer from the polarisation of the membrane (and in fact, the osmotic pressure is lower than the
+case at lower reaction rates, see the previous section). However, the scaling of the membrane, combined
+with the pressure drop in the channel is now dominating, resulting in an overall smaller ﬂux (see blue curves
+against red and black curves in ﬁg. 6a).
+In the variation of the porosity proﬁles in the membrane, we can observe the qualitative analysis we
+discussed in the previous section. For the larger kinetic rates, the transport-limited boundary layer on the
+membrane is reducing the reaction rate along the membrane. This, in turn, gives a porosity that increases
+along the membrane, with a value of ϵ at the outlet of the membrane, after 28 hours, 3% larger than the
+value at the inlet (see dot-dashed blue curve in ﬁg. 6b). For the lowest reaction rates instead, we obtain
+the opposite behaviour: the polarisation increases the overall velocity along the membrane, which result in
+a reduction of the porosity along the x-direction, even though the low velocity of the reactions results in a
+very small variation (see the red continuous curve in ﬁg. 6b). Near the outlet of the membrane, the porosity
+increases, as a result of the reduction of the polarisation at this point of the domain.
+13
+
+(a) v
+ (b) porosity
+Figure 6: Velocity through the membrane and porosity proﬁle along the membrane at diﬀerent times for
+diﬀerent value of the kinetic reaction values. The continuous lines are the results at 6 h, the dashed lines at
+12 h and the dot-dashed lines at 28 h. K is in mol/m 3.
+5 Conclusions
+In this work, we presented a comprehensive computational model to describe the solute dynamics ed evolution
+near a membrane for desalination processes. In particular, we included a model to treat the scaling of the
+membrane as solid precipitated following a (general) chemical reaction. We connected the accumulation of
+solids at the membrane with porosity and permeability as described by the Darcy theory of porous media.
+Following this approach, we were able to give a full explicit model to derive the dynamical evolution of the
+ﬁltration process by specifying a few initial parameters (e.g., the property of the solution and the kinetics
+of the reaction).
+The membrane is described as a dynamic boundary condition for the ﬂuid mechanics and solute transport
+equations, which are coupled together through the osmotic pressure term, and therefore the ﬂow through
+the membrane. We implemented our model in the widely used software package for CFD calculations
+OpenFOAM®, and performed simulations for a selected range of operating conditions. Results show how
+this model can be used to predict the decay in the ﬂux through the membrane due to the accumulation of
+the precipitated solid originating from the chemical reaction.
+The formulation presented here has two main advantages which make it ﬂexible and powerful in treat-
+ing polarization. First, the proposed formulation can address all the interconnections between the diﬀerent
+mechanisms (ﬂuid dynamics, solute evolution, chemical reaction, scaling, and fouling) which aﬀect the mem-
+brane performance. The second advantage is that the model can be easily extended to include more complex
+geometries, or models for the osmotic pressure (such as the Pitzer model (Pitzer, 1973; Khraisheh et al.,
+2019)), ﬂuid ﬂow conditions in the system, as well as more complex reactions paths.
+References
+M. M. Mekonnen and A. Y. Hoekstra, Science advances 2, e1500323 (2016).
+E. Jones, M. Qadir, M. T. van Vliet, V. Smakhtin, and S.-m. Kang, Science of the Total Environment 657,
+1343 (2019).
+N. Najid, J. N. Hakizimana, S. Kouzbour, B. Gourich, A. Ruiz-Garc´ ıa, C. Vial, Y. Stiriba, and R. Semiat,
+Computers & Chemical Engineering p. 107794 (2022).
+14
+
+M. A. Shannon, P. W. Bohn, M. Elimelech, J. G. Georgiadis, B. J. Mari˜ nas, and A. M. Mayes, Nature 452,
+301 (2008).
+C. Fritzmann, J. L´’owenberg, T. Wintgens, and T. Melin, Desalination 216, 1 (2007).
+A. Subramani and J. G. Jacangelo, Water research 75, 164 (2015).
+O. Al-hotmani, M. A. Al-Obaidi, Y. M. John, R. Patel, F. Manenti, and I. M. Mujtaba, Computers &
+Chemical Engineering 148, 107261 (2021).
+K. L. Hickenbottom and T. Y. Cath, Journal of Membrane Science 454, 426 (2014).
+S. Wardeh and H. Morvan, Chemical Engineering Research and Design 86, 1107 (2008).
+H. Luo, K. Chang, K. Bahati, and G. M. Geise, Environmental Science & Technology Letters 6, 462 (2019).
+S. Kim and E. M. Hoek, Desalination 186, 111 (2005).
+Z. Hu, A. Antony, G. Leslie, and P. Le-Clech, Journal of membrane science 453, 320 (2014).
+M. Hansen, V. A. Barker, and O. Hassager, Chemical engineering science 53, 3099 (1998).
+V. Geraldes, V. Semi˜ ao, and M. N. De Pinho, Journal of Membrane Science 191, 109 (2001).
+D. E. Wiley and D. F. Fletcher, Desalination 145, 183 (2002).
+J. Johnston, J. Lou, and N. Tilton, Computers & Fluids 232, 105189 (2022).
+M. Shakaib, S. M. F. Hasani, and M. Mahmood, Journal of Membrane Science 297, 74 (2007).
+D. Fletcher and D. Wiley, Journal of membrane science 245, 175 (2004).
+G. A. Fimbres-Weihs and D. E. Wiley, Chemical Engineering and Processing: Process Intensiﬁcation 49,
+759 (2010).
+R. Ghidossi, D. Veyret, and P. Moulin, Chemical Engineering and Processing: Process Intensiﬁcation 45,
+437 (2006).
+K. Lau, M. A. Bakar, A. Ahmad, and T. Murugesan, Journal of Membrane Science 343, 16 (2009).
+J. L. C. Santos, V. Geraldes, S. Velizarov, and J. G. Crespo, Journal of Membrane Science 305, 103 (2007).
+C. P. Koutsou, S. G. Yiantsios, and A. J. Karabelas, Journal of Membrane Science 326, 234 (2009).
+V. V. Ranade and A. Kumar, Journal of Membrane Science 271, 1 (2006).
+R. V. Linares, Z. Li, S. Sarp, S. S. Bucs, G. Amy, and J. S. Vrouwenvelder, Water research 66, 122 (2014).
+J. Van’t Hoﬀ, The London, Edinburgh, and Dublin Philosophical Magazine and Journal of Science 26, 81
+(1888).
+M. Khraisheh, N. Dawas, M. Nasser, M. Al-Marri, M. A. Hussien, S. Adham, and G. McKay, Environmental
+technology (2019).
+K. S. Pitzer, The Journal of Physical Chemistry 77, 268 (1973).
+U. Merten, Industrial & Engineering Chemistry Fundamentals 2, 229 (1963).
+H. K. Lonsdale, U. Merten, and R. L. Riley, Journal of applied polymer science 9, 1341 (1965).
+J. G. Wijmans and R. W. Baker, Journal of membrane science 107, 1 (1995).
+15
+
+K. Spiegler and O. Kedem, Desalination 1, 311 (1966).
+J. M. Silva, V. G. Ferreira, and S. R. Fontes, Applied mathematics and computation 217, 7955 (2011).
+Y. Lee and M. M. Clark, Journal of Membrane Science 149, 181 (1998).
+H. Yeh, Desalination 145, 153 (2002).
+V. Chellaboina, S. P. Bhat, W. M. Haddad, and D. S. Bernstein, IEEE Control Systems Magazine 29, 60
+(2009).
+D. M. Warsinger, J. Swaminathan, E. Guillen-Burrieza, H. A. Arafat, et al., Desalination 356, 294 (2015).
+T. Waly, M. D. Kennedy, G. J. Witkamp, G. Amy, and J. C. Schippers, Desalination and water treatment
+5, 146 (2009).
+C. I. Steefel, D. J. DePaolo, and P. C. Lichtner, Earth and Planetary Science Letters 240, 539 (2005).
+J. Hommel, E. Coltman, and H. Class, Transport in Porous Media 124, 589 (2018).
+J.-x. Huo, F.-h. Ma, and X.-l. Ji, Water Science and Engineering 12, 155 (2019).
+C. Noiriel, P. Gouze, and D. Bernard, Geophysical research letters 31 (2004).
+M. Icardi, membraneFoam v1.0 (2022), URL https://doi.org/10.5281/zenodo.7477180.
+OpenFOAM: The Open Source CFD Toolbox , The OpenFOAM Foundation, https://openfoam.org/, v1906
+ed. (2019).
+A. Ruiz-Garc´ ıa and I. de la Nuez Pestana, Water11, 152 (2019).
+K. Lee, R. Baker, and H. Lonsdale, Journal of membrane science 8, 141 (1981).
+E. Draˇ zevi´ c, K. Koˇ suti´ c, and V. Freger, Water research49, 444 (2014).
+H. Krawczyk and A.-S. J¨ onsson, Chemical Engineering Research and Design92, 174 (2014).
+16

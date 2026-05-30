@@ -18,7 +18,10 @@ OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
 OLLAMA_HOST = "http://127.0.0.1:11434"
 MODEL = "gemma4:26b"
-SYSTEM_PROMPT_PATH = os.path.join(OFA_ROOT, "system_prompt.txt")
+PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
+OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
+HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
+PLAN_PROMPT_PATH = os.path.join(PROMPTS_DIR, "plan.txt")
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 
 _embed_model = None       # loaded once at startup
@@ -98,7 +101,7 @@ def extract_and_save_prefs(response_text: str):
 
 
 def load_system_prompt():
-    with open(SYSTEM_PROMPT_PATH) as f:
+    with open(OPENFOAM_PROMPT_PATH) as f:
         prompt = f.read().strip()
     prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
     if os.path.exists(prefs_file):
@@ -412,8 +415,8 @@ def retrieve_context(query: str, top_k: int = 10) -> str:
 def chat_stream(messages: list, **option_overrides):
     """Stream a chat response from Ollama."""
     opts = {
-        "repeat_penalty": 1.1,
-        "temperature": 0.5,
+        "repeat_penalty": 1.0,
+        "temperature": 0.6,
         "num_predict": 8192,
         "num_ctx": 16384,
     }
@@ -454,14 +457,8 @@ def plan_file_list(query: str, rag_context: str, system_prompt: str) -> list[str
     Returns a list of file paths (e.g. ["system/controlDict", "0/U", ...])
     or None if parsing fails (caller should fall back to single-shot).
     """
-    plan_prompt = (
-        "List ALL OpenFOAM files that need to be created for this request.\n"
-        "CRITICAL: Return ONLY a valid JSON array of relative file paths in the order they should be generated\n"
-        "(foundational files first, e.g. blockMeshDict/controlDict before fvSchemes/fvSolution/boundary fields).\n"
-        "Example: [\"system/blockMeshDict\", \"system/controlDict\", \"constant/transportProperties\",\n"
-        "\"system/fvSchemes\", \"system/fvSolution\", \"0/U\", \"0/p\"]\n\n"
-        f"Request: {query}"
-    )
+    with open(PLAN_PROMPT_PATH) as f:
+        plan_prompt = f.read().replace("{query}", query)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": (
@@ -708,7 +705,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             continue
 
         # Retrieve RAG context
-        context = retrieve_hpc_context(user_input) if hpc_mode else retrieve_context(user_input)
+        greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
+        is_greeting = user_input.strip().lower() in greetings
+        if is_greeting:
+            context = ""
+        else:
+            context = retrieve_hpc_context(user_input) if hpc_mode else retrieve_context(user_input)
         if context:
             augmented_input = (
                 f"Here are relevant OpenFOAM example files for reference:\n\n"
@@ -730,6 +732,10 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         messages.append({"role": "assistant", "content": last_response})
         save_session(messages)
         extract_and_save_prefs(last_response)
+        cmd_out = check_and_execute_bash(last_response)
+        if cmd_out:
+            messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\n(Please note the above command output for context)"})
+            save_session(messages)
 
         # Auto-save if --save was specified
         if save_dir:
@@ -833,7 +839,8 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
 
 
 
-HPC_SYSTEM_PROMPT = "You are an NREL Kestrel HPC Support Assistant. Answer ANY of the user's questions about the cluster, software (like PyTorch/TensorFlow), Slurm, or environment using the provided context blocks. Do NOT ignore the context if it answers the question. Do NOT generate OpenFOAM files unless explicitly asked."
+with open(HPC_PROMPT_PATH) as f:
+    HPC_SYSTEM_PROMPT = f.read().strip()
 
 
 _bm25_hpc = None
@@ -853,7 +860,7 @@ def _get_hpc_bm25():
             _bm25_hpc = False # mark as missing
     return _bm25_hpc, _hpc_all_docs
 
-def retrieve_hpc_context(query: str, top_k: int = 40) -> str:
+def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
     _init_rag()
     if _hpc_docs_collection is None:
         return ""
@@ -913,9 +920,59 @@ def retrieve_hpc_context(query: str, top_k: int = 40) -> str:
         print(f"Warning: HPC RAG retrieval failed: {e}", file=sys.stderr)
         return fetch_url_context(query)
 
+
+def check_and_execute_bash(response_text):
+    import re, subprocess
+    blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
+    if not blocks:
+        return None
+    
+    all_outputs = []
+    for cmd in blocks:
+        cmd = cmd.strip()
+        if not cmd:
+            continue
+        dangerous = False
+        lower_cmd = cmd.lower()
+        if any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"]):
+            dangerous = True
+        
+        print(f"\n[System Command Suggested]")
+        print(f"[93m> {cmd}[0m")
+        if dangerous:
+            print("[91mWARNING: This command looks potentially destructive![0m")
+        
+        ans = input("Execute this command? [y/N]: ").strip().lower()
+        if ans in ('y', 'yes'):
+            print("-" * 60)
+            try:
+                res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+                out_str = f"$ {cmd}\n"
+                if res.stdout:
+                    out_str += res.stdout
+                    print(res.stdout, end="")
+                if res.stderr:
+                    out_str += res.stderr
+                    import sys
+                    print(res.stderr, file=sys.stderr, end="")
+                all_outputs.append(out_str)
+            except Exception as e:
+                err_msg = f"Error executing command: {e}"
+                print(err_msg)
+                all_outputs.append(err_msg)
+            print("-" * 60)
+    
+    if all_outputs:
+        return "\n".join(all_outputs)
+    return None
+
+
 def hpc_single_query(query: str, resume: bool = False):
-    context = retrieve_hpc_context(query)
-    augmented = f"{context}\n\nUser Query: {query}" if context else query
+    greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
+    is_greeting = query.strip().lower() in greetings
+    context = retrieve_hpc_context(query) if not is_greeting else ""
+
+    augmented = f"Context Information:\n---\n{context}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
@@ -931,6 +988,10 @@ def hpc_single_query(query: str, resume: bool = False):
     print("\n")
     messages.append({"role": "assistant", "content": response})
     save_session(messages)
+    cmd_out = check_and_execute_bash(response)
+    if cmd_out:
+        messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\n(Please note the above command output for context)"})
+        save_session(messages)
     return
 
 def main():

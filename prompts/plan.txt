@@ -1,0 +1,6 @@
+List ALL OpenFOAM files that need to be created for this request.
+CRITICAL: Return ONLY a valid JSON array of relative file paths in the order they should be generated
+(foundational files first, e.g. blockMeshDict/controlDict before fvSchemes/fvSolution/boundary fields).
+Example: ["system/blockMeshDict", "system/controlDict", "constant/transportProperties", "system/fvSchemes", "system/fvSolution", "0/U", "0/p"]
+
+Request: {query}

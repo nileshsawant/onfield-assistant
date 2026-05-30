@@ -723,19 +723,24 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         messages.append({"role": "user", "content": augmented_input})
 
         # Stream response
-        last_response = ""
-        for chunk in chat_stream(messages):
-            print(chunk, end="", flush=True)
-            last_response += chunk
-        print()
+        while True:
+            last_response = ""
+            for chunk in chat_stream(messages):
+                print(chunk, end="", flush=True)
+                last_response += chunk
+            print()
 
-        messages.append({"role": "assistant", "content": last_response})
-        save_session(messages)
-        extract_and_save_prefs(last_response)
-        cmd_out = check_and_execute_bash(last_response)
-        if cmd_out:
-            messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\n(Please note the above command output for context)"})
+            messages.append({"role": "assistant", "content": last_response})
             save_session(messages)
+            extract_and_save_prefs(last_response)
+            
+            cmd_out = check_and_execute_bash(last_response)
+            if cmd_out:
+                messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\nPlease continue to assist the user using this information."})
+                save_session(messages)
+                print("\n[AI is analyzing the output...]", flush=True)
+            else:
+                break
 
         # Auto-save if --save was specified
         if save_dir:
@@ -923,12 +928,59 @@ def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
 
 def check_and_execute_bash(response_text):
     import re, subprocess
-    blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
-    if not blocks:
+    bash_blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
+    search_blocks = re.findall(r"```(?:search)\n(.*?)\n```", response_text, re.DOTALL)
+
+    if not bash_blocks and not search_blocks:
         return None
     
     all_outputs = []
-    for cmd in blocks:
+
+    # Process search blocks
+    for q in search_blocks:
+        q = q.strip()
+        if not q:
+            continue
+        print(f"\n[Internet Search Suggested]")
+        print(f"Query: {q}")
+        ans = input("Execute this search? [y/N]: ").strip().lower()
+        if ans in ('y', 'yes'):
+            print("-" * 60)
+
+            try:
+                from ddgs import DDGS
+                results = DDGS().text(q, max_results=3)
+                out_str = f"Search Results for '{q}':\n"
+                if results:
+                    for i, r in enumerate(results):
+                        out_str += f"{i+1}. {r['title']} ({r['href']})\n{r['body']}\n\n"
+                    # Auto-fetch the first result for better context
+                    first_url = results[0]['href']
+                    print(f"Fetching content from top result: {first_url}")
+                    try:
+                        import httpx
+                        from lxml import html
+                        resp = httpx.get(first_url, timeout=5.0)
+                        tree = html.fromstring(resp.content)
+                        elements = tree.xpath('//p//text() | //pre//text() | //code//text() | //li//text()')
+                        cleaned = " ".join([t.strip() for t in elements if t.strip()])
+                        if cleaned:
+                            out_str += f"\n--- First Link Content Extract ---\n{cleaned[:2000]}\n----------------------------------\n"
+                    except Exception as e:
+                        pass
+                else:
+                    out_str += "No results found.\n"
+                print(out_str)
+                all_outputs.append(out_str)
+            except Exception as e:
+
+                err_msg = f"Error executing search: {e}"
+                print(err_msg)
+                all_outputs.append(err_msg)
+            print("-" * 60)
+
+    # Process bash blocks
+    for cmd in bash_blocks:
         cmd = cmd.strip()
         if not cmd:
             continue
@@ -938,9 +990,9 @@ def check_and_execute_bash(response_text):
             dangerous = True
         
         print(f"\n[System Command Suggested]")
-        print(f"[93m> {cmd}[0m")
+        print(f"> {cmd}")
         if dangerous:
-            print("[91mWARNING: This command looks potentially destructive![0m")
+            print("WARNING: This command looks potentially destructive!")
         
         ans = input("Execute this command? [y/N]: ").strip().lower()
         if ans in ('y', 'yes'):

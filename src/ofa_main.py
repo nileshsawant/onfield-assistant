@@ -427,8 +427,8 @@ def retrieve_context(query: str, top_k: int = 10) -> str:
 def chat_stream(messages: list, **option_overrides):
     """Stream a chat response from Ollama."""
     opts = {
-        "repeat_penalty": 1.0,
-        "temperature": 0.6,
+        "repeat_penalty": 1.15,
+        "temperature": 0.1,
         "num_predict": 32768,
         "num_ctx": 65536,
     }

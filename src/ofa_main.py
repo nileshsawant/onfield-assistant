@@ -195,7 +195,7 @@ _of13_src_collection = None
 
 
 
-def fetch_url_context(query: str, max_chars: int = 8000) -> str:
+def fetch_url_context(query: str, max_chars: int = 64000) -> str:
     """Extract URLs from query, fetch their content, and return as context."""
     urls = re.findall(r'https?://\S+', query)
     if not urls:
@@ -429,8 +429,8 @@ def chat_stream(messages: list, **option_overrides):
     opts = {
         "repeat_penalty": 1.0,
         "temperature": 0.6,
-        "num_predict": 8192,
-        "num_ctx": 16384,
+        "num_predict": 32768,
+        "num_ctx": 65536,
     }
     opts.update(option_overrides)
     payload = {
@@ -749,8 +749,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             cmd_out = check_and_execute_bash(last_response)
             if cmd_out:
                 # If command output is extremely large, truncate it to prevent LLM context collapse
-                if len(cmd_out) > 8000:
-                    truncated = cmd_out[:4000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-4000:]
+                if len(cmd_out) > 96000:
+                    truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
                 else:
                     truncated = cmd_out
                 messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})
@@ -990,7 +990,7 @@ def check_and_execute_bash(response_text):
                         # Fallback for empty results
                         if not cleaned:
                             cleaned = "Unable to read dynamic webpage content cleanly, consider using a different tool or command."
-                        out_str += f"\n--- First Link Content Extract ---\n{cleaned[:2500]}\n----------------------------------\n"
+                        out_str += f"\n--- First Link Content Extract ---\n{cleaned[:16000]}\n----------------------------------\n"
                     except Exception as e:
                         out_str += f"\n--- First Link Fetch Failed ---\n{str(e)}\n----------------------------------\n"
                         pass
@@ -1070,8 +1070,8 @@ def hpc_single_query(query: str, resume: bool = False):
         
         cmd_out = check_and_execute_bash(response)
         if cmd_out:
-            if len(cmd_out) > 8000:
-                truncated = cmd_out[:4000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-4000:]
+            if len(cmd_out) > 96000:
+                truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
             else:
                 truncated = cmd_out
             messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})

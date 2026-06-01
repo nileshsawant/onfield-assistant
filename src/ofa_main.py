@@ -169,7 +169,19 @@ def _init_rag():
         os.path.join(OFA_ROOT, "embedding_model"),
         device="cpu",
     )
-    client = chromadb.PersistentClient(path=VECTORDB_PATH)
+    import subprocess
+    import shutil
+    user = os.environ.get("USER", "default")
+    local_db = f"/scratch/{user}/.ofa_vectordb"
+    
+    # Sync the master vector database to the user's scratch to avoid readonly SQLite lock errors
+    try:
+        subprocess.run(["rsync", "-a", "--delete", f"{VECTORDB_PATH}/", f"{local_db}/"], check=False)
+    except Exception as e:
+        print(f"Warning: Failed to sync vector db locally: {e}", file=sys.stderr)
+        local_db = VECTORDB_PATH
+        
+    client = chromadb.PersistentClient(path=local_db)
     _chroma_collection = client.get_collection("openfoam")
     try:
         _hpc_docs_collection = client.get_collection("hpc_docs")

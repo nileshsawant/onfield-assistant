@@ -748,7 +748,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             
             cmd_out = check_and_execute_bash(last_response)
             if cmd_out:
-                messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\nPlease continue to assist the user using this information."})
+                # If command output is extremely large, truncate it to prevent LLM context collapse
+                if len(cmd_out) > 8000:
+                    truncated = cmd_out[:4000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-4000:]
+                else:
+                    truncated = cmd_out
+                messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})
                 save_session(messages)
                 print("\n[AI is analyzing the output...]", flush=True)
             else:
@@ -972,13 +977,22 @@ def check_and_execute_bash(response_text):
                     try:
                         import httpx
                         from lxml import html
-                        resp = httpx.get(first_url, timeout=5.0)
+                        # Use a realistic User-Agent to avoid soft bans
+                        resp = httpx.get(first_url, timeout=5.0, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
                         tree = html.fromstring(resp.content)
-                        elements = tree.xpath('//p//text() | //pre//text() | //code//text() | //li//text()')
-                        cleaned = " ".join([t.strip() for t in elements if t.strip()])
-                        if cleaned:
-                            out_str += f"\n--- First Link Content Extract ---\n{cleaned[:2000]}\n----------------------------------\n"
+                        # Remove script, style, header, footer elements before parsing
+                        for bad in tree.xpath('//script|//style|//header|//footer|//nav|//aside'):
+                            bad.getparent().remove(bad)
+                        
+                        elements = tree.xpath('//text()')
+                        cleaned = " ".join([t.strip() for t in elements if t.strip() and len(t.strip()) > 3])
+                        
+                        # Fallback for empty results
+                        if not cleaned:
+                            cleaned = "Unable to read dynamic webpage content cleanly, consider using a different tool or command."
+                        out_str += f"\n--- First Link Content Extract ---\n{cleaned[:2500]}\n----------------------------------\n"
                     except Exception as e:
+                        out_str += f"\n--- First Link Fetch Failed ---\n{str(e)}\n----------------------------------\n"
                         pass
                 else:
                     out_str += "No results found.\n"
@@ -1045,17 +1059,27 @@ def hpc_single_query(query: str, resume: bool = False):
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
-    response = ""
-    for chunk in chat_stream(messages):
-        print(chunk, end="", flush=True)
-        response += chunk
-    print("\n")
-    messages.append({"role": "assistant", "content": response})
-    save_session(messages)
-    cmd_out = check_and_execute_bash(response)
-    if cmd_out:
-        messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{cmd_out}\n```\n(Please note the above command output for context)"})
+    while True:
+        response = ""
+        for chunk in chat_stream(messages):
+            print(chunk, end="", flush=True)
+            response += chunk
+        print("\n")
+        messages.append({"role": "assistant", "content": response})
         save_session(messages)
+        
+        cmd_out = check_and_execute_bash(response)
+        if cmd_out:
+            if len(cmd_out) > 8000:
+                truncated = cmd_out[:4000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-4000:]
+            else:
+                truncated = cmd_out
+            messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})
+            save_session(messages)
+            print("\n[AI is analyzing the output...]", flush=True)
+        else:
+            break
+            
     return
 
 def main():

@@ -1010,6 +1010,8 @@ def check_and_execute_bash(response_text):
         cmd = cmd.strip()
         if not cmd:
             continue
+        # Skip executing file contents that look like scripts
+        if cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd:
         dangerous = False
         lower_cmd = cmd.lower()
         if any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"]):

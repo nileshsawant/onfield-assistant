@@ -686,7 +686,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     else:
         messages = [{"role": "system", "content": system_prompt}]
 
-    print("OpenFOAM Assistant - 3 Primary Modes:")
+    print("NREL HPC & OpenFOAM AI Assistant - 3 Primary Modes:")
     print("  1. Dictionary Generator (Default) - Generates & runs cases")
     print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
     print("  3. C++ Source Explorer (Use 'c++'/'source' in prompt)")

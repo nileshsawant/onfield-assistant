@@ -722,7 +722,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         if is_greeting:
             context = ""
         else:
-            context = retrieve_hpc_context(user_input) if hpc_mode else retrieve_context(user_input)
+            context = retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)
         if context:
             augmented_input = (
                 f"Here are relevant OpenFOAM example files for reference:\n\n"

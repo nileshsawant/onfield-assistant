@@ -666,7 +666,7 @@ def save_case(response_text: str, output_dir: str):
         print(f"  Written: {fpath}", file=sys.stderr)
 
 
-def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False):
+def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False):
     """Run interactive chat loop."""
     try:
         import readline
@@ -678,7 +678,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = HPC_SYSTEM_PROMPT if hpc_mode else load_system_prompt()
+    system_prompt = CODE_SYSTEM_PROMPT if code_mode else (HPC_SYSTEM_PROMPT if hpc_mode else load_system_prompt())
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -689,7 +689,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     print("NLR HPC & OpenFOAM AI Assistant - 3 Primary Modes:")
     print("  1. Dictionary Generator (Default) - Generates & runs cases")
     print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
-    print("  3. C++ Source Explorer (Available but unlisted)")
+    print("  3. C++ Source Explorer (Available but unlisted)\n  4. Coding Assistant (--code) - Read/Write/Execute codebase tools")
     print("\nFeatures:\n  - Session Resume (--resume)\n  - History saved to /scratch")
     print("\nType 'quit' to exit, 'save <dir>' to save last response (OpenFOAM mode only).")
     print("-" * 60)
@@ -864,6 +864,10 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
 with open(HPC_PROMPT_PATH) as f:
     HPC_SYSTEM_PROMPT = f.read().strip()
 
+CODE_PROMPT_PATH = os.path.join(PROMPTS_DIR, "code.txt")
+with open(CODE_PROMPT_PATH) as f:
+    CODE_SYSTEM_PROMPT = f.read().strip()
+
 
 _bm25_hpc = None
 _hpc_all_docs = None
@@ -948,8 +952,10 @@ def check_and_execute_bash(response_text):
     bash_blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
     search_blocks = re.findall(r"```(?:search)\n(.*?)\n```", response_text, re.DOTALL)
     fetch_blocks = re.findall(r"```(?:fetch)\n(.*?)\n```", response_text, re.DOTALL)
+    read_blocks = re.findall(r"```(?:read)\n(.*?)\n```", response_text, re.DOTALL)
+    write_blocks = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
 
-    if not bash_blocks and not search_blocks and not fetch_blocks:
+    if not bash_blocks and not search_blocks and not fetch_blocks and not read_blocks and not write_blocks:
         return None
     
     all_outputs = []
@@ -1017,6 +1023,54 @@ def check_and_execute_bash(response_text):
                 all_outputs.append(err_msg)
             print("-" * 60)
 
+
+    # Process read blocks
+    for file_to_read in read_blocks:
+        file_to_read = file_to_read.strip()
+        if not file_to_read: continue
+        print(f"\n[File Read Suggested]")
+        print(f"File: {file_to_read}")
+        ans = input("Allow reading this file? [Y/n]: ").strip().lower()
+        if ans in ('y', 'yes', ''):
+            print("-" * 60)
+            try:
+                import os
+                if os.path.exists(file_to_read):
+                    with open(file_to_read, 'r') as f:
+                        content = f.read()
+                        out_str = f"\n--- Context from {file_to_read} ---\n{content[:16000]}\n----------------------------------\n"
+                        print(f"Read {len(content)} characters.")
+                else:
+                    out_str = f"\n--- File Read Error ---\nFile not found: {file_to_read}\n----------------------------------\n"
+                    print(out_str)
+            except Exception as e:
+                out_str = f"\n--- File Read Error ---\n{str(e)}\n----------------------------------\n"
+                print(out_str)
+            all_outputs.append(out_str)
+            print("-" * 60)
+
+    # Process write blocks
+    for filepath, content in write_blocks:
+        filepath = filepath.strip()
+        if not filepath: continue
+        print(f"\n[File Write Suggested]")
+        print(f"File: {filepath} ({len(content)} chars)")
+        ans = input("Allow writing this file? [y/N]: ").strip().lower()
+        if ans in ('y', 'yes'):
+            print("-" * 60)
+            try:
+                import os
+                os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+                with open(filepath, 'w') as f:
+                    f.write(content)
+                out_str = f"\n--- File Write Success ---\nSuccessfully wrote to {filepath}\n----------------------------------\n"
+                print(f"Wrote to target file.")
+            except Exception as e:
+                out_str = f"\n--- File Write Error ---\n{str(e)}\n----------------------------------\n"
+                print(out_str)
+            all_outputs.append(out_str)
+            print("-" * 60)
+
     # Process bash blocks
     for cmd in bash_blocks:
         cmd = cmd.strip()
@@ -1060,7 +1114,7 @@ def check_and_execute_bash(response_text):
     return None
 
 
-def hpc_single_query(query: str, resume: bool = False):
+def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False):
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
     context = retrieve_hpc_context(query) if not is_greeting else ""
@@ -1070,7 +1124,7 @@ def hpc_single_query(query: str, resume: bool = False):
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": HPC_SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": CODE_SYSTEM_PROMPT if code_mode else HPC_SYSTEM_PROMPT}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
@@ -1117,6 +1171,10 @@ def main():
         help="Use the Kestrel HPC Documentation assistant instead of OpenFOAM"
     )
     parser.add_argument(
+        "--code", action="store_true",
+        help="General coding assistant mode"
+    )
+    parser.add_argument(
         "--resume", "-r", action="store_true",
         help="Resume previous conversation session"
     )
@@ -1142,12 +1200,15 @@ def main():
         print("RAG ready.", file=sys.stderr)
 
     if args.query:
-        if args.hpc:
+        if args.code:
+            # Reusing hpc logic internally but pointing to code prompt later
+            hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=True)
+        elif args.hpc:
             hpc_single_query(" ".join(args.query), resume=args.resume)
         else:
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
-        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc)
+        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code)
 
 
 if __name__ == "__main__":

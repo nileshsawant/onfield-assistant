@@ -9,7 +9,10 @@ If you are asked a question that you don't confidently know the answer to or nee
 ```search
 how to submit openfoam job on slurm
 ```
-The system will run the search and provide you the results.
+The system will run the search and provide you the snippets/titles of the top results. You can then CHOOSE which url is the best one to actually read based on the results. To read a specific url from the results, output an exact ```fetch ... ``` block:
+```fetch
+https://docs.openfoam.com/example/url
+```
 
 
 If the user asks for the weather, do not use the search tool. Instead, execute this exact system command replacing CITY with their requested city (must not contain spaces, use +):

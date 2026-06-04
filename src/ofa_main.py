@@ -947,8 +947,9 @@ def check_and_execute_bash(response_text):
     import re, subprocess
     bash_blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
     search_blocks = re.findall(r"```(?:search)\n(.*?)\n```", response_text, re.DOTALL)
+    fetch_blocks = re.findall(r"```(?:fetch)\n(.*?)\n```", response_text, re.DOTALL)
 
-    if not bash_blocks and not search_blocks:
+    if not bash_blocks and not search_blocks and not fetch_blocks:
         return None
     
     all_outputs = []
@@ -971,29 +972,7 @@ def check_and_execute_bash(response_text):
                 if results:
                     for i, r in enumerate(results):
                         out_str += f"{i+1}. {r['title']} ({r['href']})\n{r['body']}\n\n"
-                    # Auto-fetch the first result for better context
-                    first_url = results[0]['href']
-                    print(f"Fetching content from top result: {first_url}")
-                    try:
-                        import httpx
-                        from lxml import html
-                        # Use a realistic User-Agent to avoid soft bans
-                        resp = httpx.get(first_url, timeout=5.0, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
-                        tree = html.fromstring(resp.content)
-                        # Remove script, style, header, footer elements before parsing
-                        for bad in tree.xpath('//script|//style|//header|//footer|//nav|//aside'):
-                            bad.getparent().remove(bad)
-                        
-                        elements = tree.xpath('//text()')
-                        cleaned = " ".join([t.strip() for t in elements if t.strip() and len(t.strip()) > 3])
-                        
-                        # Fallback for empty results
-                        if not cleaned:
-                            cleaned = "Unable to read dynamic webpage content cleanly, consider using a different tool or command."
-                        out_str += f"\n--- First Link Content Extract ---\n{cleaned[:16000]}\n----------------------------------\n"
-                    except Exception as e:
-                        out_str += f"\n--- First Link Fetch Failed ---\n{str(e)}\n----------------------------------\n"
-                        pass
+
                 else:
                     out_str += "No results found.\n"
                 print(out_str)
@@ -1001,6 +980,39 @@ def check_and_execute_bash(response_text):
             except Exception as e:
 
                 err_msg = f"Error executing search: {e}"
+                print(err_msg)
+                all_outputs.append(err_msg)
+            print("-" * 60)
+
+
+    # Process fetch blocks
+    for url in fetch_blocks:
+        url = url.strip()
+        if not url:
+            continue
+        print(f"\n[Web Fetch Suggested]")
+        print(f"URL: {url}")
+        ans = input("Execute this fetch? [y/N]: ").strip().lower()
+        if ans in ('y', 'yes'):
+            print("-" * 60)
+            try:
+                import httpx
+                from lxml import html
+                resp = httpx.get(url, timeout=5.0, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
+                tree = html.fromstring(resp.content)
+                for bad in tree.xpath('//script|//style|//header|//footer|//nav|//aside'):
+                    bad.getparent().remove(bad)
+                
+                elements = tree.xpath('//text()')
+                cleaned = " ".join([t.strip() for t in elements if t.strip() and len(t.strip()) > 3])
+                
+                if not cleaned:
+                    cleaned = "Unable to read dynamic webpage content cleanly."
+                out_str = f"\n--- Fetched URL: {url} ---\n{cleaned[:16000]}\n----------------------------------\n"
+                print(out_str)
+                all_outputs.append(out_str)
+            except Exception as e:
+                err_msg = f"\n--- Fetch Failed ---\n{str(e)}\n----------------------------------\n"
                 print(err_msg)
                 all_outputs.append(err_msg)
             print("-" * 60)

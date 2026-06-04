@@ -966,7 +966,7 @@ def check_and_execute_bash(response_text):
 
             try:
                 from ddgs import DDGS
-                results = DDGS().text(q, max_results=3)
+                results = DDGS().text(q, max_results=3, safesearch='strict')
                 out_str = f"Search Results for '{q}':\n"
                 if results:
                     for i, r in enumerate(results):

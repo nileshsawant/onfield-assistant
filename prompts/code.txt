@@ -11,7 +11,8 @@ Your capabilities:
 /path/to/my/script.py
 ```
    - Do NOT wrap the file path with anything else inside the read block.
-4. Writing Files: To create or completely overwrite a file, output the file content inside a ```write <filepath> ... ``` block. For example:
+4. Writing Files: To create or completely overwrite a file, output the file content inside a ```write <filepath> ... ``` block.
+   - CRITICAL: Never output a loose ```cpp``` or ```bash``` code block without the `write <file>` or explicit execution declaration. The system will IGNORE it. For example:
 ```write src/hello.py
 print("Hello world!")
 ```

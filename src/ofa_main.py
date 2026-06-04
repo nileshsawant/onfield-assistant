@@ -996,6 +996,11 @@ def check_and_execute_bash(response_text):
     write_blocks = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
 
     if not bash_blocks and not search_blocks and not fetch_blocks and not read_blocks and not write_blocks:
+        # Check if the AI wrote standard code blocks but forgot to use the tool syntax
+        import re
+        rogue_code = re.findall(r"```(cpp|c\+\+|bash|sh|python|cmake|cmakelists)\n(.*?)\n```", response_text, re.IGNORECASE | re.DOTALL)
+        if rogue_code:
+            print("\n[Warning] The AI generated raw code blocks but did not use the `write <file>` or `bash` tool syntax.\nIt will not execute automatically. You can copy-paste the code manually.")
         return None
     
     all_outputs = []

@@ -924,6 +924,11 @@ def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
         except Exception:
             pass
 
+    # Also grab generic Kestrel HPC docs so it knows about module paths / Slurm
+    hpc_ctx = retrieve_hpc_context(query, top_k=2)
+    if hpc_ctx:
+        context_parts.append(hpc_ctx)
+
     return "\n\n---\n\n".join(context_parts)
 
 def retrieve_hpc_context(query: str, top_k: int = 15) -> str:

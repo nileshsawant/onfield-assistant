@@ -691,7 +691,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
     print("  3. Coding Assistant (--code) - Read/Write/Execute codebase tools")
     print("\nFeatures:\n  - Session Resume (--resume)\n  - History saved to /scratch")
-    print("\nType 'quit' to exit, 'save <dir>' to save last response (OpenFOAM mode only).")
+    print("\nType 'quit' to exit, 'save <dir>' to save last response.")
     print("-" * 60)
 
     last_response = ""

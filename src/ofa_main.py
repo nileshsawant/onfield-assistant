@@ -1095,13 +1095,22 @@ def check_and_execute_bash(response_text):
             try:
                 res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
                 out_str = f"$ {cmd}\n"
+                captured_text = ""
                 if res.stdout:
-                    out_str += res.stdout
-                    print(res.stdout, end="")
+                    captured_text += res.stdout
                 if res.stderr:
-                    out_str += res.stderr
-                    import sys
-                    print(res.stderr, file=sys.stderr, end="")
+                    captured_text += res.stderr
+                
+                # Truncate massive outputs to save context window and avoid hangs
+                lines = captured_text.split('\n')
+                if len(lines) > 200:
+                    truncated = "\n".join(lines[:100]) + "\n... (output truncated, " + str(len(lines) - 200) + " lines omitted) ...\n" + "\n".join(lines[-100:])
+                    out_str += truncated
+                    print(truncated)
+                else:
+                    out_str += captured_text
+                    print(captured_text, end="")
+                    
                 all_outputs.append(out_str)
             except Exception as e:
                 err_msg = f"Error executing command: {e}"

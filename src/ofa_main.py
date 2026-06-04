@@ -28,6 +28,8 @@ _embed_model = None       # loaded once at startup
 _chroma_collection = None  # loaded once at startup
 _hpc_docs_collection = None
 _of13_src_collection = None
+_amrex_src_collection = None
+_marbles_src_collection = None
 
 
 
@@ -160,7 +162,7 @@ def ensure_ollama_running():
 
 def _init_rag():
     """Load the embedding model and ChromaDB collection once."""
-    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection
+    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection
     if _embed_model is not None:
         return
     import chromadb
@@ -191,6 +193,14 @@ def _init_rag():
         _of13_src_collection = client.get_collection("of13_src")
     except Exception:
         _of13_src_collection = None
+    try:
+        _amrex_src_collection = client.get_collection("amrex_src")
+    except Exception:
+        _amrex_src_collection = None
+    try:
+        _marbles_src_collection = client.get_collection("marbles_src")
+    except Exception:
+        _marbles_src_collection = None
 _of13_src_collection = None
 
 
@@ -666,7 +676,7 @@ def save_case(response_text: str, output_dir: str):
         print(f"  Written: {fpath}", file=sys.stderr)
 
 
-def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False):
+def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False):
     """Run interactive chat loop."""
     try:
         import readline
@@ -678,7 +688,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = CODE_SYSTEM_PROMPT if code_mode else (HPC_SYSTEM_PROMPT if hpc_mode else load_system_prompt())
+    system_prompt = AMREX_SYSTEM_PROMPT if amrex_mode else (CODE_SYSTEM_PROMPT if code_mode else (HPC_SYSTEM_PROMPT if hpc_mode else load_system_prompt()))
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -722,7 +732,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         if is_greeting:
             context = ""
         else:
-            context = retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)
+            context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
         if context:
             augmented_input = (
                 f"Here are relevant OpenFOAM example files for reference:\n\n"
@@ -867,6 +877,8 @@ with open(HPC_PROMPT_PATH) as f:
 CODE_PROMPT_PATH = os.path.join(PROMPTS_DIR, "code.txt")
 with open(CODE_PROMPT_PATH) as f:
     CODE_SYSTEM_PROMPT = f.read().strip()
+with open(os.path.join(OFA_ROOT, "prompts", "amrex.txt")) as f:
+    AMREX_SYSTEM_PROMPT = f.read()
 
 
 _bm25_hpc = None
@@ -885,6 +897,34 @@ def _get_hpc_bm25():
         except ImportError:
             _bm25_hpc = False # mark as missing
     return _bm25_hpc, _hpc_all_docs
+
+
+def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
+    _init_rag()
+    query_embedding = _embed_model.encode([query])[0].tolist()
+    context_parts = []
+    
+    # Try Marbles
+    if _marbles_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_marbles_src_collection, coll_name="marbles_src", top_k=top_k)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[MARBLES thermal C++ Source Code - src/{s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+
+    # Try AMReX
+    if _amrex_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_src_collection, coll_name="amrex_src", top_k=top_k)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[AMReX Core Source Code - {s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+
+    return "\n\n---\n\n".join(context_parts)
 
 def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
     _init_rag()
@@ -1123,17 +1163,17 @@ def check_and_execute_bash(response_text):
     return None
 
 
-def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False):
+def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False):
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
-    context = retrieve_hpc_context(query) if not is_greeting else ""
+    context = (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query)) if not is_greeting else ""
 
     augmented = f"Context Information:\n---\n{context}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": CODE_SYSTEM_PROMPT if code_mode else HPC_SYSTEM_PROMPT}]
+        messages = [{"role": "system", "content": AMREX_SYSTEM_PROMPT if amrex_mode else (CODE_SYSTEM_PROMPT if code_mode else HPC_SYSTEM_PROMPT)}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
@@ -1180,6 +1220,10 @@ def main():
         help="Use the Kestrel HPC Documentation assistant instead of OpenFOAM"
     )
     parser.add_argument(
+        "--amrex", action="store_true",
+        help="Use AMReX/MARBLES assistant mode"
+    )
+    parser.add_argument(
         "--code", action="store_true",
         help="General coding assistant mode"
     )
@@ -1209,7 +1253,9 @@ def main():
         print("RAG ready.", file=sys.stderr)
 
     if args.query:
-        if args.code:
+        if args.amrex:
+            hpc_single_query(" ".join(args.query), resume=args.resume, amrex_mode=True)
+        elif args.code:
             # Reusing hpc logic internally but pointing to code prompt later
             hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=True)
         elif args.hpc:
@@ -1217,7 +1263,7 @@ def main():
         else:
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
-        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code)
+        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex)
 
 
 if __name__ == "__main__":

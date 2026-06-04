@@ -689,7 +689,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     print("NLR HPC & OpenFOAM AI Assistant - 3 Primary Modes:")
     print("  1. Dictionary Generator (Default) - Generates & runs cases")
     print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
-    print("  3. C++ Source Explorer (Available but unlisted)\n  4. Coding Assistant (--code) - Read/Write/Execute codebase tools")
+    print("  3. Coding Assistant (--code) - Read/Write/Execute codebase tools")
     print("\nFeatures:\n  - Session Resume (--resume)\n  - History saved to /scratch")
     print("\nType 'quit' to exit, 'save <dir>' to save last response (OpenFOAM mode only).")
     print("-" * 60)

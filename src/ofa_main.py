@@ -17,7 +17,7 @@ import httpx
 OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
 OLLAMA_HOST = "http://127.0.0.1:11434"
-MODEL = "gemma4:26b"
+MODEL = "gemma4:31b"
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
 HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
@@ -1230,6 +1230,10 @@ def check_and_execute_bash(response_text):
                 if len(out_str) > 3000:
                     out_str = out_str[:1500] + "\n...[OUTPUT TRUNCATED]...\n" + out_str[-1500:]
                 all_outputs.append(out_str)
+            except KeyboardInterrupt:
+                err_msg = f"\n[Command execution aborted by user (Ctrl+C)]"
+                print(err_msg)
+                all_outputs.append(err_msg)
             except Exception as e:
                 err_msg = f"Error executing command: {e}"
                 print(err_msg)

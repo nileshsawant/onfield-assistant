@@ -1209,9 +1209,12 @@ def check_and_execute_bash(response_text):
         if "srun " in cmd and "--overlap" not in cmd:
             cmd = cmd.replace("srun ", "srun --overlap ")
             
-        # Skip executing file contents that look like scripts
-        if cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd:
-            continue
+        # Do NOT skip executing file contents just because they contain #!/bin/bash or #SBATCH, unless the ENTIRE block is exclusively commented code.
+        # Cat scripts creating files natively have these strings inside EOF blocks! 
+        lines = cmd.split('\n')
+        if all(line.strip().startswith('#') or not line.strip() for line in lines):
+             # it is literally just a block of comments or an un-executed script file text.
+             continue
         dangerous = False
         lower_cmd = cmd.lower()
         if any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"]):

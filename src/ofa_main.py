@@ -456,26 +456,27 @@ def chat_stream(messages: list, **option_overrides):
         "stream": True,
         "options": opts,
     }
-    with httpx.stream(
-        "POST",
-        f"{OLLAMA_HOST}/api/chat",
-        json=payload,
-        timeout=300.0,
-    ) as resp:
-        for line in resp.iter_lines():
-            if line:
-                data = json.loads(line)
-                if data.get("error"):
-                    print(f"Ollama error: {data['error']}", file=sys.stderr)
-                    break
-                content = data.get("message", {}).get("content", "")
-                if content:
-                    yield content
-                if data.get("done"):
-                    break
-        except KeyboardInterrupt:
-            # Sub-catch inside the stream directly before it tears down httpx
-            return
+    try:
+        with httpx.stream(
+            "POST",
+            f"{OLLAMA_HOST}/api/chat",
+            json=payload,
+            timeout=300.0,
+        ) as resp:
+            for line in resp.iter_lines():
+                if line:
+                    data = json.loads(line)
+                    if data.get("error"):
+                        print(f"Ollama error: {data['error']}", file=sys.stderr)
+                        break
+                    content = data.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+                    if data.get("done"):
+                        break
+    except KeyboardInterrupt:
+        # Sub-catch inside the stream directly before it tears down httpx
+        return
 
 
 def chat_complete(messages: list) -> str:

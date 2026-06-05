@@ -16,7 +16,12 @@ import httpx
 
 OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
-OLLAMA_HOST = "http://127.0.0.1:11434"
+
+# Run each user's Ollama server on a completely isolated port based on their numeric UID to completely eliminate collisions on shared SLURM compute nodes!
+USER_UID = os.getuid()
+OFA_PORT = 10000 + (USER_UID % 50000)
+OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
+
 MODEL = "gemma4:31b"
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
@@ -143,6 +148,7 @@ def ensure_ollama_running():
     # Start Ollama in background
     env = os.environ.copy()
     env["OLLAMA_MODELS"] = os.path.join(OFA_ROOT, "models")
+    env["OLLAMA_HOST"] = f"127.0.0.1:{OFA_PORT}"
     env["LD_LIBRARY_PATH"] = (
         os.path.join(OFA_ROOT, "lib")
         + ":"

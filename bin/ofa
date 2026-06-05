@@ -14,8 +14,9 @@ if [ -z "$SLURM_JOB_ID" ]; then
     PARTITION="${OFA_PARTITION:-debug}"
     WALLTIME="${OFA_WALLTIME:-00:30:00}"
     echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
-    exec srun -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks=1 --cpus-per-task=8 \
-              --mem=80G --gres=gpu:1 -p "$PARTITION" --pty "$0" "$@"
+    exec salloc -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node=32 \
+              --mem=80G --gres=gpu:1 -p "$PARTITION" \
+              srun --nodes=1 --ntasks=1 --pty "$0" "$@"
 fi
 
 # Running on compute node — set up environment

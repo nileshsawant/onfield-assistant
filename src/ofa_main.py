@@ -1199,8 +1199,8 @@ def check_and_execute_bash(response_text):
                 
                 # Truncate massive outputs to save context window and avoid hangs
                 lines = captured_text.split('\n')
-                if len(lines) > 200:
-                    truncated = "\n".join(lines[:100]) + "\n... (output truncated, " + str(len(lines) - 200) + " lines omitted) ...\n" + "\n".join(lines[-100:])
+                if len(lines) > 100:
+                    truncated = "\n".join(lines[:30]) + "\n... (output truncated, " + str(len(lines) - 60) + " lines omitted) ...\n" + "\n".join(lines[-30:])
                     out_str += truncated
                     print(truncated)
                 else:

@@ -20,6 +20,9 @@ if [ -z "$SLURM_JOB_ID" ]; then
 fi
 
 # Running on compute node — set up environment
+# Clean SLURM step variables so underlying 'srun' commands spawned by the AI can create fresh steps
+unset SLURM_STEP_ID SLURM_STEPID SLURM_TASK_PID SLURM_PROCID SLURM_LOCALID SLURM_GTIDS
+
 export OLLAMA_MODELS="${OLLAMA_MODELS:-${OFA_ROOT}/models}"
 export OFA_VECTORDB="${OFA_VECTORDB:-${OFA_ROOT}/vectordb}"
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"

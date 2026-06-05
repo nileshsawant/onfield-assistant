@@ -1209,8 +1209,11 @@ def check_and_execute_bash(response_text):
         if "srun " in cmd and "--overlap" not in cmd:
             cmd = cmd.replace("srun ", "srun --overlap ")
             
-        # Do NOT skip executing file contents just because they contain #!/bin/bash or #SBATCH, unless the ENTIRE block is exclusively commented code.
-        # Cat scripts creating files natively have these strings inside EOF blocks! 
+        # Prevent the AI from executing standalone script files natively in the shell.
+        # If the block starts with #!/bin/bash or contains pure #SBATCH lines, and DOES NOT contain `cat << 'EOF'`, it's just raw script text meant for the user.
+        if (cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd) and "cat <<" not in cmd:
+            continue
+            
         lines = cmd.split('\n')
         if all(line.strip().startswith('#') or not line.strip() for line in lines):
              # it is literally just a block of comments or an un-executed script file text.

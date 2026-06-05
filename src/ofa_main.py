@@ -127,7 +127,16 @@ def ensure_ollama_running():
     try:
         r = httpx.get(f"{OLLAMA_HOST}/api/tags", timeout=2.0)
         if r.status_code == 200:
-            return True
+            # Verify the required model is actually loaded in this daemon
+            tags = r.json().get("models", [])
+            if any(m.get("name") == MODEL for m in tags):
+                return True
+            else:
+                # Daemon is running but doesn't have our model! Probably a stale process using the wrong cache.
+                print("Warning: Stale Ollama daemon detected. Attempting to kill it...", file=sys.stderr)
+                import os, signal
+                os.system("killall -9 ollama 2>/dev/null")
+                time.sleep(1)
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
 

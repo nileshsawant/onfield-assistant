@@ -1206,7 +1206,10 @@ def check_and_execute_bash(response_text):
                 else:
                     out_str += captured_text
                     print(captured_text, end="")
-                    
+                
+                # Hard limit character length to prevent context explosion on monolithic lines
+                if len(out_str) > 3000:
+                    out_str = out_str[:1500] + "\n...[OUTPUT TRUNCATED]...\n" + out_str[-1500:]
                 all_outputs.append(out_str)
             except Exception as e:
                 err_msg = f"Error executing command: {e}"

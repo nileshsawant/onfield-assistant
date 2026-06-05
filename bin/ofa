@@ -26,8 +26,8 @@ for var in $(env | grep -E "^(SLURM_STEP|SLURM_SRUN|PMI|PMIX)_" | cut -d= -f1); 
 done
 unset SLURM_STEPID SLURM_TASK_PID SLURM_PROCID SLURM_LOCALID SLURM_GTIDS SLURM_NODEID SLURM_TASKS_PER_NODE
 
-export OLLAMA_MODELS="${OLLAMA_MODELS:-${OFA_ROOT}/models}"
-export OFA_VECTORDB="${OFA_VECTORDB:-${OFA_ROOT}/vectordb}"
+export OLLAMA_MODELS="${OFA_ROOT}/models"
+export OFA_VECTORDB="${OFA_ROOT}/vectordb"
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
 
 exec "${OFA_ROOT}/env/bin/python3" "${OFA_ROOT}/src/ofa_main.py" "$@"

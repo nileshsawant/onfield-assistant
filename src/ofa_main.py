@@ -133,9 +133,7 @@ def ensure_ollama_running():
 
     # Start Ollama in background
     env = os.environ.copy()
-    env["OLLAMA_MODELS"] = os.environ.get(
-        "OLLAMA_MODELS", os.path.join(OFA_ROOT, "models")
-    )
+    env["OLLAMA_MODELS"] = os.path.join(OFA_ROOT, "models")
     env["LD_LIBRARY_PATH"] = (
         os.path.join(OFA_ROOT, "lib")
         + ":"

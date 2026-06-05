@@ -473,6 +473,9 @@ def chat_stream(messages: list, **option_overrides):
                     yield content
                 if data.get("done"):
                     break
+        except KeyboardInterrupt:
+            # Sub-catch inside the stream directly before it tears down httpx
+            return
 
 
 def chat_complete(messages: list) -> str:
@@ -757,9 +760,13 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         # Stream response
         while True:
             last_response = ""
-            for chunk in chat_stream(messages):
-                print(chunk, end="", flush=True)
-                last_response += chunk
+            try:
+                for chunk in chat_stream(messages):
+                    print(chunk, end="", flush=True)
+                    last_response += chunk
+            except KeyboardInterrupt:
+                print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
+                pass
             print()
 
             messages.append({"role": "assistant", "content": last_response})
@@ -833,9 +840,13 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
             messages = [{"role": "system", "content": system_prompt}]
         messages.append({"role": "user", "content": augmented})
         response = ""
-        for chunk in chat_stream(messages):
-            print(chunk, end="", flush=True)
-            response += chunk
+        try:
+            for chunk in chat_stream(messages):
+                print(chunk, end="", flush=True)
+                response += chunk
+        except KeyboardInterrupt:
+            print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
+            pass
         print()
         if save_dir:
             save_case(response, save_dir)
@@ -1241,9 +1252,13 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
     while True:
         response = ""
-        for chunk in chat_stream(messages):
-            print(chunk, end="", flush=True)
-            response += chunk
+        try:
+            for chunk in chat_stream(messages):
+                print(chunk, end="", flush=True)
+                response += chunk
+        except KeyboardInterrupt:
+            print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
+            pass
         print("\n")
         messages.append({"role": "assistant", "content": response})
         save_session(messages)

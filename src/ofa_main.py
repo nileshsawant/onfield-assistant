@@ -118,10 +118,7 @@ def load_system_prompt(prompt_type="openfoam"):
         with open(prefs_file) as f:
             prefs = f.read().strip()
         if prefs:
-            prompt += "
-
---- USER PREFERENCES ---
-" + prefs
+            prompt += "\n\n--- USER PREFERENCES ---\n" + prefs
     return prompt
 
 

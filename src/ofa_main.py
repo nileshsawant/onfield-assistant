@@ -102,16 +102,26 @@ def extract_and_save_prefs(response_text: str):
 
 
 
-def load_system_prompt():
-    with open(OPENFOAM_PROMPT_PATH) as f:
-        prompt = f.read().strip()
+def load_system_prompt(prompt_type="openfoam"):
+    import os
+    if prompt_type == "code":
+        with open(CODE_PROMPT_PATH) as f: prompt = f.read().strip()
+    elif prompt_type == "hpc":
+        with open(HPC_PROMPT_PATH) as f: prompt = f.read().strip()
+    elif prompt_type == "amrex":
+        with open(os.path.join(OFA_ROOT, "prompts", "amrex.txt")) as f: prompt = f.read().strip()
+    else:
+        with open(OPENFOAM_PROMPT_PATH) as f: prompt = f.read().strip()
+
     prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
     if os.path.exists(prefs_file):
         with open(prefs_file) as f:
             prefs = f.read().strip()
         if prefs:
-            prompt += "\n\nUser Preferences:\n" + prefs
-    prompt += "\n\nIf the user asks you to remember a preference or instruction for future queries, output it exactly inside a block like this:\n=== PREFS ===\n<preference details>\n=== END PREFS ==="
+            prompt += "
+
+--- USER PREFERENCES ---
+" + prefs
     return prompt
 
 
@@ -688,7 +698,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = AMREX_SYSTEM_PROMPT if amrex_mode else (CODE_SYSTEM_PROMPT if code_mode else (HPC_SYSTEM_PROMPT if hpc_mode else load_system_prompt()))
+    system_prompt = load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam")))
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -1222,7 +1232,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": AMREX_SYSTEM_PROMPT if amrex_mode else (CODE_SYSTEM_PROMPT if code_mode else HPC_SYSTEM_PROMPT)}]
+        messages = [{"role": "system", "content": load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc"))}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)

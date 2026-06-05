@@ -1020,9 +1020,9 @@ def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
 def check_and_execute_bash(response_text):
     import re, subprocess
     bash_blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
-    search_blocks = re.findall(r"```(?:search)\n(.*?)\n```", response_text, re.DOTALL)
-    fetch_blocks = re.findall(r"```(?:fetch)\n(.*?)\n```", response_text, re.DOTALL)
-    read_blocks = re.findall(r"```(?:read)\n(.*?)\n```", response_text, re.DOTALL)
+    search_blocks = re.findall(r"```(?:search)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
+    fetch_blocks = re.findall(r"```(?:fetch)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
+    read_blocks = re.findall(r"```(?:read)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
     write_blocks = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
     edit_blocks = re.findall(r"```(?:edit)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
 

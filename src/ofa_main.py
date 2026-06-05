@@ -149,6 +149,7 @@ def ensure_ollama_running():
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        preexec_fn=os.setpgrp # <-- Critical: detach Ollama from Bash process group so Ctrl-C doesn't kill it
     )
     atexit.register(_shutdown_ollama)
 

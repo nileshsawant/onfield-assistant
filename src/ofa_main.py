@@ -135,7 +135,7 @@ def ensure_ollama_running():
                 # Daemon is running but doesn't have our model! Probably a stale process using the wrong cache.
                 print("Warning: Stale Ollama daemon detected. Attempting to kill it...", file=sys.stderr)
                 import os, signal
-                os.system("killall -9 ollama 2>/dev/null")
+                os.system(f"killall -u {os.environ.get('USER')} -9 ollama 2>/dev/null")
                 time.sleep(1)
     except (httpx.ConnectError, httpx.TimeoutException):
         pass

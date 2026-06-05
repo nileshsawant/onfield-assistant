@@ -768,6 +768,9 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             except KeyboardInterrupt:
                 print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
                 pass
+            except httpx.ConnectError:
+                print("\n[Error: Connection to Ollama server lost. The backend may have crashed.]", file=sys.stderr)
+                break
             print()
 
             messages.append({"role": "assistant", "content": last_response})

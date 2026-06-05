@@ -1191,6 +1191,11 @@ def check_and_execute_bash(response_text):
         cmd = cmd.strip()
         if not cmd:
             continue
+            
+        # Automatically inject --overlap into srun commands to prevent SLURM step deadlocks
+        if "srun " in cmd and "--overlap" not in cmd:
+            cmd = cmd.replace("srun ", "srun --overlap ")
+            
         # Skip executing file contents that look like scripts
         if cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd:
             continue

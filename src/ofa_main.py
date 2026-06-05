@@ -716,7 +716,10 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     while True:
         try:
             user_input = input("\n> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except KeyboardInterrupt:
+            print("\n(Ctrl+C pressed. Type 'quit' to exit safely.)", file=sys.stderr)
+            continue
+        except EOFError:
             print("\nGoodbye.")
             break
 
@@ -1297,7 +1300,8 @@ def main():
     args = parser.parse_args()
 
     # Handle Ctrl+C and SIGTERM gracefully (sys.exit triggers atexit handlers)
-    signal.signal(signal.SIGINT, lambda *_: (print("\nGoodbye."), sys.exit(0)))
+    # Use default KeyboardInterrupt handling for SIGINT
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
     ensure_ollama_running()

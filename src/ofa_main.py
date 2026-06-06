@@ -758,21 +758,41 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 print("No response to save yet.")
             continue
 
-        # Retrieve RAG context
-        greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
-        is_greeting = user_input.strip().lower() in greetings
-        if is_greeting:
-            context = ""
+        if user_input.startswith("$"):
+            cmd = user_input[1:].strip()
+            print(f"[Executing Local Command: {cmd}]")
+            import subprocess
+            try:
+                res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+                cmd_out = ""
+                if res.stdout: cmd_out += res.stdout
+                if res.stderr: cmd_out += res.stderr
+                if not cmd_out.strip(): cmd_out = "(No output)\n"
+                
+                if len(cmd_out) > 96000:
+                    cmd_out = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
+            except Exception as e:
+                cmd_out = f"Error executing command: {e}"
+                
+            print(cmd_out)
+            augmented_input = f"I manually executed the following command:\n```bash\n{cmd}\n```\nHere is the output:\n```text\n{cmd_out}\n```\nPlease analyze this output or continue your previous thoughts incorporating this context."
+
         else:
-            context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
-        if context:
-            augmented_input = (
-                f"Here are relevant OpenFOAM example files for reference:\n\n"
-                f"{context}\n\n---\n\n"
-                f"User request: {user_input}"
-            )
-        else:
-            augmented_input = user_input
+            # Retrieve RAG context
+            greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
+            is_greeting = user_input.strip().lower() in greetings
+            if is_greeting:
+                context = ""
+            else:
+                context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
+            if context:
+                augmented_input = (
+                    f"Here are relevant OpenFOAM example files for reference:\n\n"
+                    f"{context}\n\n---\n\n"
+                    f"User request: {user_input}"
+                )
+            else:
+                augmented_input = user_input
 
         messages.append({"role": "user", "content": augmented_input})
 

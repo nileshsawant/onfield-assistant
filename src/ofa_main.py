@@ -109,6 +109,12 @@ def extract_and_save_prefs(response_text: str):
 
 def load_system_prompt(prompt_type="openfoam"):
     import os
+    
+    common_path = os.path.join(OFA_ROOT, "prompts", "common.txt")
+    common_prompt = ""
+    if os.path.exists(common_path):
+        with open(common_path) as f: common_prompt = f.read().strip()
+        
     if prompt_type == "code":
         with open(CODE_PROMPT_PATH) as f: prompt = f.read().strip()
     elif prompt_type == "hpc":
@@ -117,6 +123,9 @@ def load_system_prompt(prompt_type="openfoam"):
         with open(os.path.join(OFA_ROOT, "prompts", "amrex.txt")) as f: prompt = f.read().strip()
     else:
         with open(OPENFOAM_PROMPT_PATH) as f: prompt = f.read().strip()
+        
+    if common_prompt:
+        prompt = prompt + "\n\n" + common_prompt
 
     prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
     if os.path.exists(prefs_file):

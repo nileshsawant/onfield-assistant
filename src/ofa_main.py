@@ -1076,10 +1076,30 @@ def check_and_execute_bash(response_text):
     if not bash_blocks and not search_blocks and not fetch_blocks and not read_blocks and not write_blocks and not edit_blocks:
         # Check if the AI wrote standard code blocks but forgot to use the tool syntax
         import re
-        rogue_code = re.findall(r"```(cpp|c\+\+|bash|sh|python|cmake|cmakelists)\n(.*?)\n```", response_text, re.IGNORECASE | re.DOTALL)
+        rogue_code = re.findall(r"```(cpp|c\+\+|bash|sh|python|cmake|cmakelists)\n(.*?)```", response_text, re.IGNORECASE | re.DOTALL)
         if rogue_code:
-            print("\n[Warning] The AI generated raw code blocks but did not use the `write <file>` or `bash` tool syntax.\nIt will not execute automatically. You can copy-paste the code manually.")
-        return None
+            # Let's see if we can salvage it if it mentioned a filename right before the block
+            salvaged = False
+            for rctype, rctext in rogue_code:
+                # Find where this block is in the response
+                block_idx = response_text.find("```" + rctype)
+                if block_idx > 0:
+                    preceding_text = response_text[:block_idx].split('\n')[-3:] # Get last 3 lines before the block
+                    for line in preceding_text:
+                        # Common ways LLMs declare filenames: "Here is main.cpp:" or "### `main.cpp`"
+                        m = re.search(r'`?([a-zA-Z0-9_\-\./\\]+\.(?:cpp|H|h|c|py|cmake|sh|bash))`?', line)
+                        if m:
+                            filename = m.group(1)
+                            print(f"\n[AI generated a rogue `{rctype}` code block, but mentioned file '{filename}'. Auto-casting to 'write' command...]")
+                            write_blocks.append((filename, rctext.strip()))
+                            salvaged = True
+                            break
+                        
+            if not salvaged:
+                print("\n[Warning] The AI generated raw code blocks but did not use the `write <file>` or `bash` tool syntax.")
+                print("It cannot be executed automatically because there is no filepath context. You can copy-paste the code manually.")
+        if not write_blocks:
+            return None
     
     all_outputs = []
 

@@ -1240,25 +1240,28 @@ def check_and_execute_bash(response_text):
             print("WARNING: This command looks potentially destructive!")
             ans = input("Execute this command? [y/N]: ").strip().lower()
         else:
-            # Auto-execute harmless search/read commands ONLY if every line is strictly targeting the repos directory explicitly
-            # and consists ONLY of read-only tools.
+            # Auto-execute harmless stateless commands, such as module loads and ls.
             lines = [l.strip() for l in cmd.split('\n') if l.strip()]
-            safe_tools = ["grep", "ls", "cat", "find", "tree", "tail", "head"]
             
             def is_line_safe(line):
-                # Ensure the line starts with a safe tool
-                if not any(line.startswith(tool) for tool in safe_tools):
+                # No destructive chaining, command substitution, or outputs allowed
+                if any(bad in line for bad in [">", ";", "&&", "||", "`", "$(", "|"]):
                     return False
-                # Ensure the line explicitly targets the repos directory
-                if "assistant/repos" not in line and "repos/" not in line:
-                    return False
-                # Ensure no destructive chaining or modifiers
-                if any(bad in line for bad in [">", ";", "&&", "||", "rm ", "mv ", "cp ", "wget", "curl", "git", "module "]):
-                    return False
-                return True
+                
+                # Commands that are safe anywhere (stateless environment lookups)
+                global_safe = ["module avail", "module show", "module list", "ls", "sinfo", "squeue", "pwd", "whoami", "echo", "which", "whereis"]
+                if any(line == tool or line.startswith(tool + " ") for tool in global_safe):
+                    return True
+                    
+                # Commands that read files (safe due to ACLs, but we still explicitly whitelist the base binaries)
+                read_tools = ["grep", "cat", "find", "tree", "tail", "head", "stat"]
+                if any(line == tool or line.startswith(tool + " ") for tool in read_tools):
+                    return True
+                    
+                return False
 
             if lines and all(is_line_safe(l) for l in lines):
-                print("Auto-approving read-only repository search...")
+                print("Auto-approving read-only stateless command...")
                 ans = 'y'
             else:
                 ans = input("Execute this command? [y/N]: ").strip().lower()

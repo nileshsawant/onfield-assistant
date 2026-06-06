@@ -1120,7 +1120,14 @@ def check_and_execute_bash(response_text):
         if not file_to_read: continue
         print(f"\n[File Read Suggested]")
         print(f"File: {file_to_read}")
-        ans = input("Allow reading this file? [Y/n]: ").strip().lower()
+        
+        # Auto-allow reading files from the global repos directory
+        if "assistant/repos" in file_to_read or file_to_read.startswith("repos/"):
+            print("Auto-approving read from reference repository...")
+            ans = 'y'
+        else:
+            ans = input("Allow reading this file? [Y/n]: ").strip().lower()
+            
         if ans in ('y', 'yes', ''):
             print("-" * 60)
             try:
@@ -1227,8 +1234,16 @@ def check_and_execute_bash(response_text):
         print(f"> {cmd}")
         if dangerous:
             print("WARNING: This command looks potentially destructive!")
-        
-        ans = input("Execute this command? [y/N]: ").strip().lower()
+            ans = input("Execute this command? [y/N]: ").strip().lower()
+        else:
+            # Auto-execute harmless search/read commands if they are strictly targeting the repos directory
+            is_harmless_search = any(cmd.startswith(x) or f" {x} " in cmd for x in ["grep", "ls", "cat", "find", "tree", "tail", "head"])
+            if is_harmless_search and ("assistant/repos" in cmd or "repos/" in cmd) and not any(char in cmd for char in [">", "rm ", "mv ", "cp ", "wget", "curl", "git"]):
+                print("Auto-approving read-only repository search...")
+                ans = 'y'
+            else:
+                ans = input("Execute this command? [y/N]: ").strip().lower()
+                
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:

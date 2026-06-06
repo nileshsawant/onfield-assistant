@@ -28,6 +28,10 @@ unset SLURM_STEPID SLURM_TASK_PID SLURM_PROCID SLURM_LOCALID SLURM_GTIDS SLURM_N
 
 export OLLAMA_MODELS="${OFA_ROOT}/models"
 export OFA_VECTORDB="${OFA_ROOT}/vectordb"
+
+# Force load Kestrel's CUDA driver paths into the session so the Ollama daemon can natively bind to the H100 hardware
+module load cuda/12.4 2>/dev/null || true
+
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
 
 exec "${OFA_ROOT}/env/bin/python3" "${OFA_ROOT}/src/ofa_main.py" "$@"

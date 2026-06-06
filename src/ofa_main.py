@@ -149,6 +149,9 @@ def ensure_ollama_running():
     env = os.environ.copy()
     env["OLLAMA_MODELS"] = os.path.join(OFA_ROOT, "models")
     env["OLLAMA_HOST"] = f"127.0.0.1:{OFA_PORT}"
+    env["OLLAMA_FLASH_ATTENTION"] = "1"
+    env["OLLAMA_KV_CACHE_TYPE"] = "q8_0"
+    env["CUDA_VISIBLE_DEVICES"] = "0"
     env["LD_LIBRARY_PATH"] = (
         os.path.join(OFA_ROOT, "lib")
         + ":"
@@ -462,6 +465,7 @@ def chat_stream(messages: list, **option_overrides):
         "temperature": 0.1,
         "num_predict": 32768,
         "num_ctx": 65536,
+        "num_gpu": 99,
     }
     opts.update(option_overrides)
     payload = {

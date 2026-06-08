@@ -21,10 +21,7 @@ client = chromadb.PersistentClient(path=VECTORDB_PATH)
 
 def process_reframe(repo_dir, coll_name, extensions):
     print(f"\nProcessing {repo_dir} -> Collection: {coll_name}")
-    try:
-        collection = client.create_collection(coll_name)
-    except ValueError:
-        collection = client.get_collection(coll_name)
+    collection = client.get_or_create_collection(coll_name)
 
     files_to_process = []
     

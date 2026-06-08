@@ -35,6 +35,7 @@ _hpc_docs_collection = None
 _of13_src_collection = None
 _amrex_src_collection = None
 _marbles_src_collection = None
+_reframe_src_collection = None
 
 
 
@@ -201,7 +202,7 @@ def ensure_ollama_running():
 
 def _init_rag():
     """Load the embedding model and ChromaDB collection once."""
-    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection
+    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection, _reframe_src_collection
     if _embed_model is not None:
         return
     import chromadb
@@ -240,6 +241,10 @@ def _init_rag():
         _marbles_src_collection = client.get_collection("marbles_src")
     except Exception:
         _marbles_src_collection = None
+    try:
+        _reframe_src_collection = client.get_collection("reframe_src")
+    except Exception:
+        _reframe_src_collection = None
 _of13_src_collection = None
 
 
@@ -800,7 +805,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 context = ""
             else:
                 if reframe_mode:
-                    rhel9_context = _get_reframe_rag()
+                    rhel9_context = _get_reframe_rag(user_input)
                     base_context = retrieve_hpc_context(user_input)
                     context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
                 else:
@@ -985,12 +990,28 @@ def _get_hpc_bm25():
     return _bm25_hpc, _hpc_all_docs
 
 
-def _get_reframe_rag():
+def _get_reframe_rag(query: str, top_k: int = 5):
     try:
         with open("/scratch/nsawant/rhel9_module_structure.txt", "r") as f:
-            return f.read().strip()
+            static_rh9 = f.read().strip()
     except Exception:
-        return ""
+        static_rh9 = ""
+        
+    _init_rag()
+    query_embedding = _embed_model.encode([query])[0].tolist()
+    context_parts = []
+    
+    if _reframe_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_reframe_src_collection, coll_name="reframe_src", top_k=top_k)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[ReFrame Repository Code/Docs - {s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+            
+    dynamic_rh9 = "\n\n---\n\n".join(context_parts)
+    return f"{static_rh9}\n\n{dynamic_rh9}".strip()
 
 def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
     _init_rag()
@@ -1380,7 +1401,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
     if reframe_mode:
-        rhel9_context = _get_reframe_rag() if not is_greeting else ""
+        rhel9_context = _get_reframe_rag(query) if not is_greeting else ""
         base_context = retrieve_hpc_context(query) if not is_greeting else ""
         context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}" if not is_greeting else ""
     else:

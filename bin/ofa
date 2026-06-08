@@ -30,7 +30,12 @@ export OLLAMA_MODELS="${OFA_ROOT}/models"
 export OFA_VECTORDB="${OFA_ROOT}/vectordb"
 
 # Force load Kestrel's CUDA driver paths into the session so the Ollama daemon can natively bind to the H100 hardware
-module load cuda/12.4 2>/dev/null || true
+# Handle both RHEL8 (cuda/12.4) and RHEL9 (cuda/12.8.1 or cuda)
+if grep -q "release 9" /etc/redhat-release 2>/dev/null; then
+    module load cuda 2>/dev/null || true
+else
+    module load cuda/12.4 2>/dev/null || true
+fi
 
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
 

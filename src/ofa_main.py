@@ -119,6 +119,12 @@ def load_system_prompt(prompt_type="openfoam"):
         with open(CODE_PROMPT_PATH) as f: prompt = f.read().strip()
     elif prompt_type == "hpc":
         with open(HPC_PROMPT_PATH) as f: prompt = f.read().strip()
+    elif prompt_type == "reframe":
+        reframe_prompt_path = os.path.join(OFA_ROOT, "prompts", "reframe.txt")
+        if os.path.exists(reframe_prompt_path):
+            with open(reframe_prompt_path) as f: prompt = f.read().strip()
+        else:
+            prompt = "You are a ReFrame testing assistant for Kestrel."
     elif prompt_type == "amrex":
         with open(os.path.join(OFA_ROOT, "prompts", "amrex.txt")) as f: prompt = f.read().strip()
     else:
@@ -714,7 +720,7 @@ def save_case(response_text: str, output_dir: str):
         print(f"  Written: {fpath}", file=sys.stderr)
 
 
-def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False):
+def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
     """Run interactive chat loop."""
     try:
         import readline
@@ -726,7 +732,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam")))
+    system_prompt = load_system_prompt("reframe") if reframe_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam"))))
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -793,13 +799,21 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             if is_greeting:
                 context = ""
             else:
-                context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
+                if reframe_mode:
+                    rhel9_context = _get_reframe_rag()
+                    base_context = retrieve_hpc_context(user_input)
+                    context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
+                else:
+                    context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
             if context:
-                augmented_input = (
-                    f"Here are relevant OpenFOAM example files for reference:\n\n"
-                    f"{context}\n\n---\n\n"
-                    f"User request: {user_input}"
-                )
+                if reframe_mode:
+                    augmented_input = f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{context}\n\n---\n\nUser request: {user_input}"
+                else:
+                    augmented_input = (
+                        f"Here are relevant OpenFOAM example files for reference:\n\n"
+                        f"{context}\n\n---\n\n"
+                        f"User request: {user_input}"
+                    )
             else:
                 augmented_input = user_input
 
@@ -970,6 +984,13 @@ def _get_hpc_bm25():
             _bm25_hpc = False # mark as missing
     return _bm25_hpc, _hpc_all_docs
 
+
+def _get_reframe_rag():
+    try:
+        with open("/scratch/nsawant/rhel9_module_structure.txt", "r") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
 
 def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
     _init_rag()
@@ -1355,17 +1376,22 @@ def check_and_execute_bash(response_text):
     return None
 
 
-def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False):
+def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
-    context = (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query)) if not is_greeting else ""
+    if reframe_mode:
+        rhel9_context = _get_reframe_rag() if not is_greeting else ""
+        base_context = retrieve_hpc_context(query) if not is_greeting else ""
+        context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}" if not is_greeting else ""
+    else:
+        context = (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query)) if not is_greeting else ""
 
     augmented = f"Context Information:\n---\n{context}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc"))}]
+        messages = [{"role": "system", "content": load_system_prompt("reframe") if reframe_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc")))}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
@@ -1424,6 +1450,10 @@ def main():
         help="General coding assistant mode"
     )
     parser.add_argument(
+        "--rhel9_reframe", action="store_true",
+        help="ReFrame testing assistant for RHEL9 Kestrel migration"
+    )
+    parser.add_argument(
         "--resume", "-r", action="store_true",
         help="Resume previous conversation session"
     )
@@ -1450,7 +1480,9 @@ def main():
         print("RAG ready.", file=sys.stderr)
 
     if args.query:
-        if args.amrex:
+        if args.rhel9_reframe:
+            hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=False, amrex_mode=False, reframe_mode=True)
+        elif args.amrex:
             hpc_single_query(" ".join(args.query), resume=args.resume, amrex_mode=True)
         elif args.code:
             # Reusing hpc logic internally but pointing to code prompt later
@@ -1460,7 +1492,7 @@ def main():
         else:
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
-        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex)
+        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, reframe_mode=args.rhel9_reframe)
 
 
 if __name__ == "__main__":

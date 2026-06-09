@@ -108,7 +108,18 @@ def extract_and_save_prefs(response_text: str):
 
 
 
+
+def extract_plan(response_text: str):
+    import re
+    plan_match = re.search(r'```plan\n(.*?)```', response_text, re.DOTALL | re.IGNORECASE)
+    if plan_match:
+        plan = plan_match.group(1).strip()
+        print(f"\n[Tracking Plan:\n{plan}\n]", file=sys.stderr)
+        return plan
+    return None
+
 def load_system_prompt(prompt_type="openfoam"):
+
     import os
     
     common_path = os.path.join(OFA_ROOT, "prompts", "common.txt")
@@ -727,6 +738,7 @@ def save_case(response_text: str, output_dir: str):
 
 def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
     """Run interactive chat loop."""
+    current_plan = ""
     try:
         import readline
         hist_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_history"
@@ -844,6 +856,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             messages.append({"role": "assistant", "content": last_response})
             save_session(messages)
             extract_and_save_prefs(last_response)
+            new_plan = extract_plan(last_response)
+            if new_plan: current_plan = new_plan
             
             cmd_out = check_and_execute_bash(last_response)
             if cmd_out:
@@ -852,7 +866,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                     truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
                 else:
                     truncated = cmd_out
-                messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})
+                
+                inject_msg = f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."
+                if current_plan:
+                    inject_msg += f"\n\n[SYSTEM REMINDER] Proceed with your active plan:\n```plan\n{current_plan}\n```\nEvaluate what is complete and trigger the next step."
+                    
+                messages.append({"role": "user", "content": inject_msg})
                 save_session(messages)
                 print("\n[AI is analyzing the output...]", flush=True)
             else:
@@ -866,6 +885,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
 
 
 def single_query(query: str, save_dir: str = None, fast: bool = False, resume: bool = False):
+    current_plan = ""
     """Run a single query.
 
     By default uses sequential file generation (plan then generate each file
@@ -1362,23 +1382,25 @@ def check_and_execute_bash(response_text):
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
-                res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
                 out_str = f"$ {cmd}\n"
                 captured_text = ""
-                if res.stdout:
-                    captured_text += res.stdout
-                if res.stderr:
-                    captured_text += res.stderr
                 
-                # Truncate massive outputs to save context window and avoid hangs
+                # Use Popen to stream output in real-time
+                process = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
+                
+                for line in process.stdout:
+                    print(line, end="", flush=True)
+                    captured_text += line
+                    
+                process.wait()
+                
+                # Truncate massive outputs to save context window for the AI (Terminal already saw full output)
                 lines = captured_text.split('\n')
                 if len(lines) > 100:
                     truncated = "\n".join(lines[:30]) + "\n... (output truncated, " + str(len(lines) - 60) + " lines omitted) ...\n" + "\n".join(lines[-30:])
                     out_str += truncated
-                    print(truncated)
                 else:
                     out_str += captured_text
-                    print(captured_text, end="")
                 
                 # Hard limit character length to prevent context explosion on monolithic lines
                 if len(out_str) > 3000:
@@ -1400,6 +1422,7 @@ def check_and_execute_bash(response_text):
 
 
 def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
+    current_plan = ""
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
     if reframe_mode:
@@ -1431,13 +1454,21 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
         messages.append({"role": "assistant", "content": response})
         save_session(messages)
         
+        new_plan = extract_plan(response)
+        if new_plan: current_plan = new_plan
+        
         cmd_out = check_and_execute_bash(response)
         if cmd_out:
             if len(cmd_out) > 96000:
                 truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
             else:
                 truncated = cmd_out
-            messages.append({"role": "user", "content": f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."})
+                
+            inject_msg = f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."
+            if current_plan:
+                inject_msg += f"\n\n[SYSTEM REMINDER] Proceed with your active plan:\n```plan\n{current_plan}\n```\nEvaluate what is complete and trigger the next step."
+                
+            messages.append({"role": "user", "content": inject_msg})
             save_session(messages)
             print("\n[AI is analyzing the output...]", flush=True)
         else:

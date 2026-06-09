@@ -813,6 +813,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             if context:
                 if reframe_mode:
                     augmented_input = f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{context}\n\n---\n\nUser request: {user_input}"
+                elif hpc_mode or code_mode or amrex_mode:
+                    augmented_input = f"Here is relevant context for your reference:\n\n{context}\n\n---\n\nUser request: {user_input}"
                 else:
                     augmented_input = (
                         f"Here are relevant OpenFOAM example files for reference:\n\n"

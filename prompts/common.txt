@@ -11,6 +11,7 @@ Your capabilities:
 ```
    - Do NOT wrap the file path with anything else inside the read block.
 4. Writing Files: To create or completely overwrite a file, output the file content inside a ```write <filepath> ... ``` block.
+   - CRITICAL: Stick to the current working directory as much as possible. Avoid creating files, scripts, or directories in other locations (like `~/`) unless explicitly requested or necessary for the task. Use relative paths where possible.
    - CRITICAL: Never output a loose ```cpp``` or ```bash``` code block without the `write <file>` or explicit execution declaration. The system will IGNORE it. Do not provide dummy C++ snippets. If you write code, it MUST be wrapped in ```write <filepath>``` or ```edit <filepath>``` so it actually deploys to the user's filesystem.
 5. Editing Files: To edit an existing file without rewriting it completely. CRITICAL: PREFER THIS TOOL for all modifications! Do not use `write` to recreate a massive file just to change a few lines. Provide, output an exact ```edit <filepath>``` block with <<FIND>> and <<REPLACE>> markers. The FIND text must match the existing file verbatim. For example:
 ```edit src/hello.py

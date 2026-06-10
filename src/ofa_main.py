@@ -57,6 +57,33 @@ def load_session():
     except Exception:
         return None
 
+
+def manage_session_context(messages, max_chars=100000):
+    """
+    Intelligently compress session history. Instead of dropping messages (which 
+    causes amnesia), we just strip the massive terminal logs from OLD messages, 
+    keeping the agent's thought process, plans, and instructions intact.
+    """
+    import sys
+    total_len = sum(len(m.get("content", "")) for m in messages)
+    if total_len <= max_chars:
+        return
+        
+    print(f"\n[System: Context size ({total_len} chars) near limit. Compressing old logs...]", file=sys.stderr)
+    
+    # Iterate from oldest to newest (skipping system prompt at 0 and the latest 3 messages)
+    for i in range(1, len(messages) - 3):
+        if total_len <= max_chars * 0.75: # Trim down to 75% capacity
+            break
+            
+        msg = messages[i]
+        if msg.get("role") == "user" and "Output from executed commands:" in msg.get("content", ""):
+            old_len = len(msg["content"])
+            if old_len > 400:
+                msg["content"] = "[Older terminal output omitted by system to preserve context memory.]"
+                total_len -= (old_len - len(msg["content"]))
+
+
 def extract_and_save_prefs(response_text: str):
     import re
     prefs_match = re.search(r'=== PREFS ===(.*?)=== END PREFS ===', response_text, re.DOTALL)
@@ -857,6 +884,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
 
             messages.append({"role": "assistant", "content": last_response})
             save_session(messages)
+            manage_session_context(messages)
             extract_and_save_prefs(last_response)
             new_plan = extract_plan(last_response)
             if new_plan: current_plan = new_plan
@@ -875,6 +903,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                     
                 messages.append({"role": "user", "content": inject_msg})
                 save_session(messages)
+                manage_session_context(messages)
                 print("\n[AI is analyzing the output...]", flush=True)
             else:
                 break
@@ -948,6 +977,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
         extract_and_save_prefs(response)
         messages.append({"role": "assistant", "content": response})
         save_session(messages)
+        manage_session_context(messages)
         return
 
     # --- Sequential generation ---
@@ -983,6 +1013,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
     messages.append({"role": "user", "content": query})
     messages.append({"role": "assistant", "content": f"Successfully generated {len(file_list)} files for the case."})
     save_session(messages)
+    manage_session_context(messages)
 
 
 
@@ -1458,6 +1489,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
         print("\n")
         messages.append({"role": "assistant", "content": response})
         save_session(messages)
+        manage_session_context(messages)
         
         new_plan = extract_plan(response)
         if new_plan: current_plan = new_plan
@@ -1475,6 +1507,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
                 
             messages.append({"role": "user", "content": inject_msg})
             save_session(messages)
+            manage_session_context(messages)
             print("\n[AI is analyzing the output...]", flush=True)
         else:
             break

@@ -493,7 +493,9 @@ def chat_stream(messages: list, **option_overrides):
     """Stream a chat response from Ollama."""
     opts = {
         "repeat_penalty": 1.15,
-        "temperature": 0.1,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 64,
         "num_predict": 32768,
         "num_ctx": 65536,
         "num_gpu": 99,
@@ -530,7 +532,7 @@ def chat_stream(messages: list, **option_overrides):
 
 def chat_complete(messages: list) -> str:
     """Non-streaming chat call — returns full response string (for planning)."""
-    return "".join(chat_stream(messages, temperature=0.1, num_predict=8192))
+    return "".join(chat_stream(messages, temperature=1.0, top_p=0.95, top_k=64, num_predict=8192))
 
 
 def plan_file_list(query: str, rag_context: str, system_prompt: str) -> list[str] | None:

@@ -1514,7 +1514,20 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
             
     return
 
+
+def handle_slurm_sigterm(*args):
+    import sys
+    import os
+    print("\n\n[SLURM WALLTIME REACHED]", file=sys.stderr)
+    print("SLURM has forcefully revoked the compute node allocation.", file=sys.stderr)
+    print("Safely shutting down Ollama and exiting...", file=sys.stderr)
+    _shutdown_ollama()
+    # Os._exit completely bypasses Python's atexit threading tracebacks (like TMonitor queues) 
+    # to guarantee a clean terminal exit when the cluster nukes the process
+    os._exit(0)
+
 def main():
+
     parser = argparse.ArgumentParser(
         description="OpenFOAM Assistant — AI-powered case setup helper"
     )
@@ -1558,7 +1571,7 @@ def main():
     # Handle Ctrl+C and SIGTERM gracefully (sys.exit triggers atexit handlers)
     # Use default KeyboardInterrupt handling for SIGINT
     signal.signal(signal.SIGINT, signal.default_int_handler)
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, handle_slurm_sigterm)
 
     ensure_ollama_running()
 

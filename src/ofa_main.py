@@ -1235,7 +1235,8 @@ def check_and_execute_bash(response_text):
 
     # Process read blocks
     for file_to_read in read_blocks:
-        file_to_read = file_to_read.strip()
+        import os
+        file_to_read = os.path.expanduser(file_to_read.strip())
         if not file_to_read: continue
         print(f"\n[File Read Suggested]")
         print(f"File: {file_to_read}")
@@ -1267,7 +1268,8 @@ def check_and_execute_bash(response_text):
 
     # Process write blocks
     for filepath, content in write_blocks:
-        filepath = filepath.strip()
+        import os
+        filepath = os.path.expanduser(filepath.strip())
         if not filepath: continue
         print(f"\n[File Write Suggested]")
         print(f"File: {filepath} ({len(content)} chars)")
@@ -1289,7 +1291,8 @@ def check_and_execute_bash(response_text):
 
     # Process edit blocks
     for filepath, content in edit_blocks:
-        filepath = filepath.strip()
+        import os
+        filepath = os.path.expanduser(filepath.strip())
         if not filepath: continue
         print(f"\n[File Edit Suggested]")
         print(f"File: {filepath}")

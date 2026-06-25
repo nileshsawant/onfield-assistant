@@ -33,12 +33,18 @@ VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"
 EMBEDDING_MODEL_PATH = os.path.join(OFA_ROOT, "embedding_model")
 
 OF13_ROOT = Path(
-    "/nopt/nrel/apps/cpu_stack/software/openfoam"
-    "/openfoam13_craympich_scotch/OpenFOAM-13"
+    os.environ.get(
+        "OFA_OPENFOAM13_ROOT",
+        "/nopt/nrel/apps/cpu_stack/software/openfoam"
+        "/openfoam13_craympich_scotch/OpenFOAM-13",
+    )
 )
 
 KESTREL_DOCS_ROOT = Path(
-    "/projects/hpcapps/nsawant/apps/HPC/docs/Documentation"
+    os.environ.get(
+        "OFA_KESTREL_DOCS_ROOT",
+        "/projects/hpcapps/shared/HPC/docs/Documentation",
+    )
 )
 KESTREL_SUBDIRS = [
     "Systems/Kestrel",

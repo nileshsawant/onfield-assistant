@@ -12,10 +12,17 @@ OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 EMBEDDING_MODEL_PATH = os.path.join(OFA_ROOT, "embedding_model")
 
-# The two latest OpenFOAM versions to index
+# The two latest OpenFOAM versions to index. Override per deployment using the
+# OFA_OPENFOAM13_ROOT and OFA_OPENFOAM_V2512_ROOT environment variables.
 OPENFOAM_ROOTS = {
-    "openfoam13": "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam13_craympich_scotch/OpenFOAM-13",
-    "openfoam_v2512": "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam_v2512_openmpi/OpenFOAM-v2512",
+    "openfoam13": os.environ.get(
+        "OFA_OPENFOAM13_ROOT",
+        "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam13_craympich_scotch/OpenFOAM-13",
+    ),
+    "openfoam_v2512": os.environ.get(
+        "OFA_OPENFOAM_V2512_ROOT",
+        "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam_v2512_openmpi/OpenFOAM-v2512",
+    ),
 }
 
 # Directories to skip everywhere

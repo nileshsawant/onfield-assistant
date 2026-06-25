@@ -1,6 +1,7 @@
 import os
 import sys
 import glob
+from pathlib import Path
 
 try:
     import chromadb
@@ -9,11 +10,15 @@ except ImportError:
     print("Please run this script from an environment with chromadb and sentence_transformers installed.")
     sys.exit(1)
 
-VECTORDB_PATH = "/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/vectordb"
-REFRAME_REPO_DIR = "/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/repos/reframe-universal"
+OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
+VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
+REFRAME_REPO_DIR = os.environ.get(
+    "OFA_REFRAME_REPO_DIR",
+    os.path.join(OFA_ROOT, "repos", "reframe-universal"),
+)
 
 print("Loading embedding model...")
-model_path = "/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/embedding_model"
+model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
 embed_model = SentenceTransformer(model_path, device="cpu")
 
 print(f"Connecting to ChromaDB at {VECTORDB_PATH}...")
@@ -30,7 +35,7 @@ def process_reframe(repo_dir, coll_name, extensions):
         files_to_process.extend(glob.glob(f"{repo_dir}/**/*{ext}", recursive=True))
         
     # Inject the PDF text extraction manually if available
-    pdf_text = "/scratch/nsawant/rhel9_stack.txt"
+    pdf_text = os.environ.get("OFA_RHEL9_STACK_FILE", os.path.join(OFA_ROOT, "data", "rhel9_stack.txt"))
     if os.path.exists(pdf_text):
         files_to_process.append(pdf_text)
         

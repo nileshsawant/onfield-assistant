@@ -3,6 +3,8 @@ import os
 import sys
 import subprocess
 import glob
+import tempfile
+from pathlib import Path
 
 # Try to import necessary libraries
 try:
@@ -12,8 +14,12 @@ except ImportError:
     print("Please run this script from an environment with chromadb and sentence_transformers installed.")
     sys.exit(1)
 
-VECTORDB_PATH = "/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/vectordb"
-TMP_CLONE_DIR = "/scratch/nsawant/amrex_ingest_tmp"
+OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
+VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
+TMP_CLONE_DIR = os.environ.get(
+    "OFA_AMREX_CLONE_DIR",
+    os.path.join(tempfile.gettempdir(), f"amrex_ingest_{os.environ.get('USER', 'default')}"),
+)
 
 # Ensure user directory setup
 os.makedirs(TMP_CLONE_DIR, exist_ok=True)
@@ -27,7 +33,7 @@ if not os.path.exists("marblesThermal"):
 
 # Load model
 print("Loading embedding model...")
-model_path = "/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/embedding_model"
+model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
 embed_model = SentenceTransformer(model_path, device="cpu")
 
 # Initialize Master ChromaDB

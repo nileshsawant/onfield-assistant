@@ -25,7 +25,10 @@ OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 EMBEDDING_MODEL_PATH = os.path.join(OFA_ROOT, "embedding_model")
 
-OF13_ROOT = "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam13_craympich_scotch/OpenFOAM-13"
+OF13_ROOT = os.environ.get(
+    "OFA_OPENFOAM13_ROOT",
+    "/nopt/nrel/apps/cpu_stack/software/openfoam/openfoam13_craympich_scotch/OpenFOAM-13",
+)
 
 CASE_SUBDIRS = {"system", "0", "constant"}
 CASE_SCRIPTS = {"Allrun", "Allclean"}

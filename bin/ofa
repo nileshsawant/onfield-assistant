@@ -1,7 +1,13 @@
 #!/bin/bash
 # ofa — OpenFOAM Assistant CLI wrapper
 
-OFA_ROOT="${OFA_ROOT:-/nopt/nrel/apps/cpu_stack/software/openfoam/assistant}"
+# Auto-detect OFA_ROOT from the script location so the wrapper is portable
+# across installations. Honour an explicit override via the OFA_ROOT env var.
+if [ -z "$OFA_ROOT" ]; then
+    _OFA_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+    OFA_ROOT="$(cd "$(dirname "$_OFA_SCRIPT")/.." && pwd)"
+fi
+export OFA_ROOT
 
 # If not inside a SLURM allocation, request a GPU node automatically
 if [ -z "$SLURM_JOB_ID" ]; then
@@ -14,7 +20,7 @@ if [ -z "$SLURM_JOB_ID" ]; then
     PARTITION="${OFA_PARTITION:-debug}"
     WALLTIME="${OFA_WALLTIME:-00:30:00}"
     echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
-    exec salloc -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node=32 \
+    exec salloc --job-name=ofa -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node=32 \
               --mem=80G --gres=gpu:1 -p "$PARTITION" \
               srun --nodes=1 --ntasks=1 --pty "$0" "$@"
 fi

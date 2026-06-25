@@ -29,6 +29,38 @@ HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
 PLAN_PROMPT_PATH = os.path.join(PROMPTS_DIR, "plan.txt")
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 
+def _resolve_scratch():
+    """Resolve a writable per-user scratch directory for session/prefs/history.
+
+    Priority:
+      1. $OFA_SCRATCH (explicit override)
+      2. /scratch/$USER (Kestrel and similar HPC layouts) if it exists
+      3. $XDG_STATE_HOME/ofa
+      4. ~/.local/state/ofa
+    The chosen directory is created if missing so callers can write to it.
+    """
+    user = os.environ.get("USER", "default")
+    candidates = []
+    if os.environ.get("OFA_SCRATCH"):
+        candidates.append(os.environ["OFA_SCRATCH"])
+    kestrel_scratch = f"/scratch/{user}"
+    if os.path.isdir(kestrel_scratch):
+        candidates.append(kestrel_scratch)
+    if os.environ.get("XDG_STATE_HOME"):
+        candidates.append(os.path.join(os.environ["XDG_STATE_HOME"], "ofa"))
+    candidates.append(os.path.join(os.path.expanduser("~"), ".local", "state", "ofa"))
+    for path in candidates:
+        try:
+            os.makedirs(path, exist_ok=True)
+            return path
+        except Exception:
+            continue
+    # Last resort: temp dir (non-persistent)
+    import tempfile
+    return tempfile.gettempdir()
+
+OFA_SCRATCH = _resolve_scratch()
+
 _embed_model = None       # loaded once at startup
 _chroma_collection = None  # loaded once at startup
 _hpc_docs_collection = None
@@ -41,7 +73,7 @@ _reframe_src_collection = None
 
 _ollama_proc = None
 
-SESSION_FILE = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_session.json"
+SESSION_FILE = os.path.join(OFA_SCRATCH, ".ofa_session.json")
 
 def save_session(messages):
     try:
@@ -89,7 +121,7 @@ def extract_and_save_prefs(response_text: str):
     prefs_match = re.search(r'=== PREFS ===(.*?)=== END PREFS ===', response_text, re.DOTALL)
     if prefs_match:
         new_prefs = prefs_match.group(1).strip()
-        prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
+        prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
         with open(prefs_file, "a") as f:
             f.write("\n" + new_prefs)
         print(f"  [Saved user preference to {prefs_file}]", file=sys.stderr)
@@ -107,7 +139,7 @@ def _shutdown_ollama():
             _ollama_proc.kill()
         _ollama_proc = None
 
-SESSION_FILE = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_session.json"
+SESSION_FILE = os.path.join(OFA_SCRATCH, ".ofa_session.json")
 
 def save_session(messages):
     try:
@@ -128,7 +160,7 @@ def extract_and_save_prefs(response_text: str):
     prefs_match = re.search(r'=== PREFS ===(.*?)=== END PREFS ===', response_text, re.DOTALL)
     if prefs_match:
         new_prefs = prefs_match.group(1).strip()
-        prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
+        prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
         with open(prefs_file, "a") as f:
             f.write("\n" + new_prefs)
         print(f"  [Saved user preference to {prefs_file}]", file=sys.stderr)
@@ -172,12 +204,19 @@ def load_system_prompt(prompt_type="openfoam"):
     if common_prompt:
         prompt = prompt + "\n\n" + common_prompt
 
-    prefs_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_prefs.txt"
+    prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
     if os.path.exists(prefs_file):
         with open(prefs_file) as f:
             prefs = f.read().strip()
         if prefs:
             prompt += "\n\n--- USER PREFERENCES ---\n" + prefs
+    # Substitute portable placeholders so prompts can reference deployment-specific
+    # locations without hard-coding them in the prompt text.
+    prompt = (
+        prompt
+        .replace("{OFA_ROOT}", OFA_ROOT)
+        .replace("{OFA_SCRATCH}", OFA_SCRATCH)
+    )
     return prompt
 
 
@@ -251,8 +290,7 @@ def _init_rag():
     )
     import subprocess
     import shutil
-    user = os.environ.get("USER", "default")
-    local_db = f"/scratch/{user}/.ofa_vectordb"
+    local_db = os.path.join(OFA_SCRATCH, ".ofa_vectordb")
     
     # Sync the master vector database to the user's scratch to avoid readonly SQLite lock errors
     try:
@@ -770,7 +808,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     current_plan = ""
     try:
         import readline
-        hist_file = f"/scratch/{os.environ.get('USER', 'default')}/.ofa_history"
+        hist_file = os.path.join(OFA_SCRATCH, ".ofa_history")
         if os.path.exists(hist_file):
             readline.read_history_file(hist_file)
         import atexit
@@ -1046,8 +1084,12 @@ def _get_hpc_bm25():
 
 
 def _get_reframe_rag(query: str, top_k: int = 5):
+    rh9_module_file = os.environ.get(
+        "OFA_RHEL9_MODULE_FILE",
+        os.path.join(OFA_ROOT, "data", "rhel9_module_structure.txt"),
+    )
     try:
-        with open("/scratch/nsawant/rhel9_module_structure.txt", "r") as f:
+        with open(rh9_module_file, "r") as f:
             static_rh9 = f.read().strip()
     except Exception:
         static_rh9 = ""

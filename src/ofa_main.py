@@ -220,6 +220,58 @@ def load_system_prompt(prompt_type="openfoam"):
     return prompt
 
 
+def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
+    """Run a shell command and persist its final working directory back to the
+    Python process so `cd` in one block carries over to the next.
+
+    Wraps the user command with a trailer that records `pwd` to a temp file,
+    then chdir's Python (and therefore every subsequent subprocess inheritor)
+    to that directory.
+
+    Returns (captured_output: str, returncode: int).
+    """
+    import tempfile
+    pwd_fd, pwd_path = tempfile.mkstemp(prefix="ofa_pwd_", suffix=".txt")
+    os.close(pwd_fd)
+    # POSIX-portable: run user cmd, save its exit code, write pwd, exit with saved code.
+    wrapped = f"{cmd}\n__ofa_rc=$?\npwd > {pwd_path}\nexit $__ofa_rc"
+    captured = ""
+    try:
+        if stream:
+            proc = subprocess.Popen(
+                wrapped, shell=True, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL, bufsize=1, universal_newlines=True,
+            )
+            for line in proc.stdout:
+                print(line, end="", flush=True)
+                captured += line
+            proc.wait()
+            rc = proc.returncode
+        else:
+            res = subprocess.run(
+                wrapped, shell=True, text=True, capture_output=True,
+                stdin=subprocess.DEVNULL,
+            )
+            captured = (res.stdout or "") + (res.stderr or "")
+            rc = res.returncode
+        # Sync Python's CWD with wherever the shell ended up so the next block
+        # inherits it (POSIX subprocess inherits parent CWD by default).
+        try:
+            with open(pwd_path) as f:
+                new_cwd = f.read().strip()
+            if new_cwd and os.path.isdir(new_cwd) and new_cwd != os.getcwd():
+                os.chdir(new_cwd)
+        except Exception:
+            pass
+        return captured, rc
+    finally:
+        try:
+            os.unlink(pwd_path)
+        except Exception:
+            pass
+
+
 def ensure_ollama_running():
     """Start Ollama server if not already running."""
     try:
@@ -860,14 +912,10 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         if user_input.startswith("$"):
             cmd = user_input[1:].strip()
             print(f"[Executing Local Command: {cmd}]")
-            import subprocess
             try:
-                res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
-                cmd_out = ""
-                if res.stdout: cmd_out += res.stdout
-                if res.stderr: cmd_out += res.stderr
-                if not cmd_out.strip(): cmd_out = "(No output)\n"
-                
+                cmd_out, _rc = _run_with_cwd_tracking(cmd, stream=False)
+                if not cmd_out.strip():
+                    cmd_out = "(No output)\n"
                 if len(cmd_out) > 96000:
                     cmd_out = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
             except Exception as e:
@@ -1461,16 +1509,9 @@ def check_and_execute_bash(response_text):
             print("-" * 60)
             try:
                 out_str = f"$ {cmd}\n"
-                captured_text = ""
-                
-                # Use Popen to stream output in real-time
-                process = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1, universal_newlines=True)
-                
-                for line in process.stdout:
-                    print(line, end="", flush=True)
-                    captured_text += line
-                    
-                process.wait()
+                # Streaming Popen wrapped with CWD-tracking so `cd` persists
+                # across blocks (and into subsequent local `$` commands too).
+                captured_text, _rc = _run_with_cwd_tracking(cmd, stream=True)
                 
                 # Truncate massive outputs to save context window for the AI (Terminal already saw full output)
                 lines = captured_text.split('\n')

@@ -491,54 +491,128 @@ def make_thought_filter(extra_tag_pairs=None):
     return filter_chunk, flush
 
 
-def extract_and_save_prefs(response_text: str):
-    """Persist a `=== PREFS === ... === END PREFS ===` block from the model.
+# ---------------------------------------------------------------------------
+# Long-term memory: two channels, both line-oriented free-text files with
+# dedupe + atomic write + 16 KB cap. The model emits memory entries inline
+# in its response inside === <LABEL> === ... === END <LABEL> === markers.
+#
+# Channels:
+#   .ofa_prefs.txt   — explicit user preferences ("always use tabs"). The
+#                      model is told to save these when the user states a
+#                      lasting directive.
+#   .ofa_lessons.txt — observations the model wrote autonomously for its
+#                      future self: command failures it understood, user
+#                      corrections, environment quirks. Triggered by the
+#                      "Lessons Channel" section of the system prompt
+#                      without any user directive needed.
+#
+# Both files are loaded into every system prompt with clear framing so the
+# model can use them as long-term context across sessions/modes.
+# ---------------------------------------------------------------------------
+MEMORY_MAX_BYTES = 16 * 1024  # per-file hard cap
 
-    Each preference is stored on its own line; duplicates are suppressed and
-    the file is hard-capped at PREFS_MAX_BYTES so a hostile turn or a chatty
-    model cannot inflate the system prompt indefinitely. The file is rewritten
-    atomically rather than appended to.
+def _memory_file(channel: str) -> str:
+    """channel='prefs' -> <scratch>/.ofa_prefs.txt; 'lessons' -> .ofa_lessons.txt"""
+    return os.path.join(OFA_SCRATCH, f".ofa_{channel}.txt")
+
+def _save_marker_block(response_text: str, label: str, channel: str,
+                       max_per_turn: int = 4) -> int:
+    """Persist any `=== <LABEL> === ... === END <LABEL> ===` blocks from the
+    response into the matching channel file. Returns how many distinct lines
+    were newly added (0 if nothing new).
+
+    Dedup is global (a line that already exists is silently skipped). When
+    the merged file would exceed MEMORY_MAX_BYTES, oldest entries are dropped
+    until it fits. Writes are atomic via tempfile + os.replace so a crash
+    mid-write never corrupts the file.
     """
-    prefs_match = re.search(r'=== PREFS ===(.*?)=== END PREFS ===', response_text, re.DOTALL)
-    if not prefs_match:
-        return
-    new_block = prefs_match.group(1).strip()
-    if not new_block:
-        return
-    prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
-    existing = ""
+    # Allow multiple blocks per response (re.findall, not re.search).
+    pattern = rf'=== {re.escape(label)} ===(.*?)=== END {re.escape(label)} ==='
+    blocks = re.findall(pattern, response_text, re.DOTALL)
+    if not blocks:
+        return 0
+
+    path = _memory_file(channel)
     try:
-        with open(prefs_file) as f:
-            existing = f.read()
-    except FileNotFoundError:
-        pass
+        if os.path.exists(path):
+            with open(path) as f:
+                existing = f.read()
+        else:
+            existing = ""
     except OSError as e:
-        print(f"Warning: could not read existing prefs {prefs_file}: {e}", file=sys.stderr)
-        return
+        print(f"Warning: could not read existing {channel} file {path}: {e}", file=sys.stderr)
+        return 0
 
-    # Merge line-by-line, de-duplicating while preserving order.
-    seen = set()
-    merged = []
-    for line in (existing + "\n" + new_block).splitlines():
-        s = line.strip()
-        if not s or s in seen:
-            continue
-        seen.add(s)
-        merged.append(s)
+    # Collect candidate new lines (across all blocks this turn), preserving
+    # order, de-duping vs the existing file.
+    existing_lines = {l.strip() for l in existing.splitlines() if l.strip()}
+    new_lines = []
+    seen_in_response = set()
+    for block in blocks:
+        for raw in block.splitlines():
+            s = raw.strip().lstrip("-*•").strip()  # tolerate '- foo' or '* foo'
+            if not s or s in existing_lines or s in seen_in_response:
+                continue
+            seen_in_response.add(s)
+            new_lines.append(s)
+            if len(new_lines) >= max_per_turn:
+                break
+        if len(new_lines) >= max_per_turn:
+            break
 
-    PREFS_MAX_BYTES = 16 * 1024  # ~16 KB is plenty for free-text prefs
-    while merged and len("\n".join(merged).encode("utf-8")) > PREFS_MAX_BYTES:
-        merged.pop(0)  # drop oldest until under cap
+    if not new_lines:
+        return 0
+
+    merged_lines = [l.strip() for l in existing.splitlines() if l.strip()] + new_lines
+    # Drop oldest until under cap.
+    while merged_lines and len("\n".join(merged_lines).encode("utf-8")) > MEMORY_MAX_BYTES:
+        merged_lines.pop(0)
 
     try:
-        tmp = prefs_file + ".tmp"
+        tmp = path + ".tmp"
         with open(tmp, "w") as f:
-            f.write("\n".join(merged) + "\n")
-        os.replace(tmp, prefs_file)
-        print(f"  [Saved user preference to {prefs_file}]", file=sys.stderr)
+            f.write("\n".join(merged_lines) + "\n")
+        os.replace(tmp, path)
+        kind = "preference" if channel == "prefs" else "lesson"
+        for line in new_lines:
+            print(_c(f"  [memory] saved {kind}: {line[:120]}", "magenta"), file=sys.stderr)
     except OSError as e:
-        print(f"Warning: could not write prefs {prefs_file}: {e}", file=sys.stderr)
-  # set if we started Ollama ourselves
+        print(f"Warning: could not write {channel} file {path}: {e}", file=sys.stderr)
+        return 0
+    return len(new_lines)
+
+
+def extract_and_save_prefs(response_text: str):
+    """Persist a `=== PREFS === ... === END PREFS ===` block from the model."""
+    _save_marker_block(response_text, "PREFS", "prefs")
+
+
+def extract_and_save_lessons(response_text: str):
+    """Persist a `=== LESSON === ... === END LESSON ===` block from the model.
+
+    Triggered autonomously when the model recognizes a failure mode, an
+    environment quirk, or a user correction. The 'Lessons Channel' system
+    prompt encourages this without requiring an explicit user directive.
+    Capped tighter than prefs (2/turn vs 4) to prevent the model from
+    spamming the lessons file with every observation.
+    """
+    _save_marker_block(response_text, "LESSON", "lessons", max_per_turn=2)
+
+
+def _read_memory_file(channel: str) -> str:
+    """Return the content of <scratch>/.ofa_<channel>.txt or '' if missing."""
+    try:
+        with open(_memory_file(channel)) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+    except OSError as e:
+        print(f"Warning: could not read {channel} memory: {e}", file=sys.stderr)
+        return ""
+
+
+def _count_memory_lines(channel: str) -> int:
+    return sum(1 for l in _read_memory_file(channel).splitlines() if l.strip())
 
 
 def _shutdown_ollama():
@@ -590,12 +664,24 @@ def load_system_prompt(prompt_type="openfoam"):
     if common_prompt:
         prompt = prompt + "\n\n" + common_prompt
 
-    prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
-    if os.path.exists(prefs_file):
-        with open(prefs_file) as f:
-            prefs = f.read().strip()
-        if prefs:
-            prompt += "\n\n--- USER PREFERENCES ---\n" + prefs
+    # Long-term memory injection. Both channels are scoped to the user's
+    # OFA_SCRATCH so they persist across sessions/modes. Lessons go FIRST
+    # because they're typically the harder-won knowledge; user prefs are
+    # ground truth that overrides them where they conflict.
+    lessons = _read_memory_file("lessons")
+    if lessons:
+        prompt += (
+            "\n\n--- LESSONS LEARNED (your past observations, treat as priors) ---\n"
+            + lessons
+            + "\n--- END LESSONS ---"
+        )
+    prefs = _read_memory_file("prefs")
+    if prefs:
+        prompt += (
+            "\n\n--- USER PREFERENCES (override lessons when in conflict) ---\n"
+            + prefs
+            + "\n--- END USER PREFERENCES ---"
+        )
     # Substitute portable placeholders so prompts can reference deployment-specific
     # locations without hard-coding them in the prompt text.
     prompt = (
@@ -811,6 +897,11 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
         manage_session_context(messages)
         if extract_prefs:
             extract_and_save_prefs(last_response)
+        # Autonomous lessons are written every turn regardless of mode — the
+        # whole point is that the model captures observations on its own,
+        # and lessons are useful across modes (an HPC quirk noticed in
+        # --hpc benefits --code on the same node).
+        extract_and_save_lessons(last_response)
         new_plan = extract_plan(last_response)
         if new_plan:
             current_plan = new_plan
@@ -1884,6 +1975,15 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     # all non-default models are unvetted.
     _print_active_model_banner()
 
+    # Surface long-term memory state so the user can tell at a glance whether
+    # any prefs/lessons are in effect this session. Use /memory to inspect.
+    n_p = _count_memory_lines("prefs")
+    n_l = _count_memory_lines("lessons")
+    if n_p or n_l:
+        print(_c(f"Memory: {n_p} preference(s), {n_l} lesson(s) loaded — type /memory to inspect.", "cyan"))
+    else:
+        print(_c("Memory: empty (long-term prefs & lessons accrue as you work).", "cyan"))
+
     print("\nType 'quit' to exit, 'save <dir>' to save last response. Type '/help' for more commands.")
     print("-" * 60)
 
@@ -1911,6 +2011,9 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 "  /history              — show how many messages are in the session\n"
                 "  /cwd                  — show current working directory\n"
                 "  /retry                — re-prompt the model and demand a proper tool fence\n"
+                "  /memory               — show what's stored in long-term memory\n"
+                "  /remember <text>      — manually add a lesson to long-term memory\n"
+                "  /forget [prefs|lessons|all]  — clear stored memory (default: lessons)\n"
                 "  save <dir>            — save last assistant response into <dir>\n"
                 "  $ <shell command>     — run a shell command locally (cd persists)\n"
                 "  @<path>               — inline a file into your prompt (relative to cwd)\n"
@@ -1930,6 +2033,47 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             continue
         if user_input.lower() == "/cwd":
             print(_current_cwd, file=sys.stderr)
+            continue
+        if user_input.lower() == "/memory":
+            prefs = _read_memory_file("prefs")
+            lessons = _read_memory_file("lessons")
+            n_p = _count_memory_lines("prefs")
+            n_l = _count_memory_lines("lessons")
+            print(_c(f"\n--- Long-term memory ({n_p} prefs, {n_l} lessons) ---", "cyan"), file=sys.stderr)
+            print(_c("Preferences (user-explicit):", "yellow"), file=sys.stderr)
+            print(prefs if prefs else "  (none)", file=sys.stderr)
+            print(_c("\nLessons (model autonomous):", "yellow"), file=sys.stderr)
+            print(lessons if lessons else "  (none)", file=sys.stderr)
+            print(_c(f"\nFiles: {_memory_file('prefs')} , {_memory_file('lessons')}", "cyan"), file=sys.stderr)
+            continue
+        if user_input.lower().startswith("/remember"):
+            text = user_input[len("/remember"):].strip()
+            if not text:
+                print("Usage: /remember <one short lesson to save>", file=sys.stderr)
+                continue
+            # Inject as a synthetic LESSON block and reuse the same save path
+            # for dedup/cap/byte-budget enforcement.
+            synthetic = f"=== LESSON ===\n{text}\n=== END LESSON ==="
+            n = _save_marker_block(synthetic, "LESSON", "lessons", max_per_turn=1)
+            if n == 0:
+                print(_c("[memory] nothing saved (duplicate or empty)", "yellow"), file=sys.stderr)
+            continue
+        if user_input.lower().startswith("/forget"):
+            arg = user_input[len("/forget"):].strip().lower() or "lessons"
+            if arg not in ("prefs", "lessons", "all"):
+                print("Usage: /forget [prefs|lessons|all]   (default: lessons)", file=sys.stderr)
+                continue
+            targets = ("prefs", "lessons") if arg == "all" else (arg,)
+            for ch in targets:
+                p = _memory_file(ch)
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                        print(_c(f"[memory] cleared {ch} ({p})", "magenta"), file=sys.stderr)
+                    else:
+                        print(_c(f"[memory] {ch} already empty", "yellow"), file=sys.stderr)
+                except OSError as e:
+                    print(f"Could not clear {ch}: {e}", file=sys.stderr)
             continue
         if user_input.lower() == "/retry":
             # Manual nudge: append the tool-fence reminder and re-enter the
@@ -2079,6 +2223,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
             save_case(response, save_dir)
             print(f"\\nCase files saved to: {save_dir}", file=sys.stderr)
         extract_and_save_prefs(response)
+        extract_and_save_lessons(response)
         messages.append({"role": "assistant", "content": response})
         save_session(messages)
         manage_session_context(messages)
@@ -2111,6 +2256,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
         print(f"\nCase files saved to: {save_dir}", file=sys.stderr)
     
     extract_and_save_prefs(full_response)
+    extract_and_save_lessons(full_response)
     messages = load_session() if resume else None
     if not messages:
         messages = [{"role": "system", "content": system_prompt}]

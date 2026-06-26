@@ -646,6 +646,7 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
     Returns: (last_assistant_response_text, updated_current_plan).
     """
     last_response = ""
+    nudged_this_loop = False  # flips to True after a one-shot tool-fence nudge
     while True:
         last_response = ""
         thought_filter, thought_flush = make_thought_filter(get_model_thought_tags())
@@ -675,7 +676,17 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
 
         cmd_out = check_and_execute_bash(last_response)
         if not cmd_out:
+            # No tool blocks were parsed. If the model clearly *wanted* to use
+            # a tool but wrote the intent in prose instead of fences, nudge it
+            # once and continue. Bounded by _NUDGE_LIMIT so we can't loop.
+            if _looks_like_unfenced_tool_intent(last_response) and not nudged_this_loop:
+                nudged_this_loop = True
+                print(_c("\n[Model described a tool call in prose without using a fence — nudging once.]", "yellow"), file=sys.stderr)
+                messages.append({"role": "user", "content": _TOOL_FENCE_NUDGE})
+                save_session(messages)
+                continue
             break
+        nudged_this_loop = False  # successful tool dispatch resets the nudge gate
 
         if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
             truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
@@ -690,6 +701,58 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
         print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
 
     return last_response, current_plan
+
+
+# Heuristic: tokens that strongly suggest the model intended to invoke a tool
+# but emitted it as prose instead of a fenced block. Used by the nudge logic
+# in _run_react_loop().
+_TOOL_INTENT_PATTERNS = [
+    r"\bwe (?:need|should|have|are going|ought)\b[^.]{0,40}\b(?:use|search|fetch|run|check|read|grep|look)\b",
+    r"\bI(?:'ll| will| am going to| should| need to| ought to) (?:search|fetch|run|check|read|use|grep|look up)\b",
+    r"\blet me (?:search|fetch|run|check|read|look up|grep|try)\b",
+    r"\busing the (?:search|fetch|read|bash|write|edit) tool\b",
+    r"\bsearch tool\b|\bfetch tool\b|\bread tool\b",
+]
+_TOOL_INTENT_RE = re.compile("|".join(_TOOL_INTENT_PATTERNS), re.IGNORECASE)
+
+# Standalone http(s) URLs in the response are also a strong signal — the model
+# was about to fetch one but forgot the ```fetch fence.
+_URL_RE = re.compile(r"https?://[^\s)]+")
+
+def _looks_like_unfenced_tool_intent(response: str) -> bool:
+    """Return True if the response prose suggests the model wanted to invoke
+    a tool but emitted no fence. Conservative — we never return True if the
+    response already contains any ``` fence, because that means SOMETHING
+    was emitted as a tool call (even if our parser later rejected it for an
+    unrelated reason).
+    """
+    if not response or not response.strip():
+        return False
+    # If the response contains any code fence at all, assume the model already
+    # tried to emit a tool call. The nudge is for the "wrote intent as prose
+    # with no fence whatsoever" case.
+    if "```" in response:
+        return False
+    if _TOOL_INTENT_RE.search(response):
+        return True
+    # Bare URLs without any fence are also suspicious.
+    if _URL_RE.search(response):
+        return True
+    return False
+
+_TOOL_FENCE_NUDGE = (
+    "[SYSTEM] Your previous response mentioned an action (search / fetch / run / read / write / edit) "
+    "in prose but did not include the actual fenced tool block, so nothing was executed.\n\n"
+    "Re-issue your intended action as a proper fenced block. The accepted fences are:\n"
+    "  ```bash <command> ```\n"
+    "  ```read <path> ```\n"
+    "  ```search <query> ```\n"
+    "  ```fetch <url> ```\n"
+    "  ```write <path>\\n<content>\\n```\n"
+    "  ```edit <path>\\n<<FIND>>\\n<old>\\n<<REPLACE>>\\n<new>\\n```\n\n"
+    "If you've reconsidered and no tool is actually needed, instead reply with a brief plain-English "
+    "answer and the conversation will return to the user."
+)
 
 
 # Files an @-reference will not be expanded for, even on a clean read attempt.
@@ -1591,6 +1654,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 "  /clear                — reset conversation (keeps system prompt + plan)\n"
                 "  /history              — show how many messages are in the session\n"
                 "  /cwd                  — show current working directory\n"
+                "  /retry                — re-prompt the model and demand a proper tool fence\n"
                 "  save <dir>            — save last assistant response into <dir>\n"
                 "  $ <shell command>     — run a shell command locally (cd persists)\n"
                 "  @<path>               — inline a file into your prompt (relative to cwd)\n"
@@ -1610,6 +1674,18 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             continue
         if user_input.lower() == "/cwd":
             print(_current_cwd, file=sys.stderr)
+            continue
+        if user_input.lower() == "/retry":
+            # Manual nudge: append the tool-fence reminder and re-enter the
+            # loop. Useful when the model produced a turn that the auto-nudge
+            # didn't catch but the user can see was supposed to be a tool call.
+            messages.append({"role": "user", "content": _TOOL_FENCE_NUDGE})
+            print(_c("[Re-prompting model with a tool-fence reminder…]", "yellow"), file=sys.stderr)
+            last_response, current_plan = _run_react_loop(
+                messages, current_plan,
+                extract_prefs=True,
+                tolerate_connect_error=True,
+            )
             continue
         if user_input.lower().startswith("save "):
             dirname = user_input[5:].strip()

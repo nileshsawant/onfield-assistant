@@ -678,6 +678,91 @@ def _backup_existing(filepath: str) -> str | None:
         return None
 
 
+# Map of file extension -> (validator argv, label). Each validator MUST be
+# fast (< 5s), read-only, and require no network. Items that don't exist on
+# the system or that time out are skipped silently.
+def _build_syntax_validators():
+    """Lazy build of the validator table so a missing tool doesn't blow up
+    at import time."""
+    import shutil as _sh
+    table = {}
+    if _sh.which("python3"):
+        table[".py"] = ([sys.executable or "python3", "-m", "py_compile"], "python -m py_compile")
+    if _sh.which("g++"):
+        for ext in (".cpp", ".cxx", ".cc", ".cu", ".C", ".hpp", ".hh", ".hxx", ".H", ".h"):
+            table[ext] = (["g++", "-fsyntax-only", "-x", "c++"], "g++ -fsyntax-only")
+        # plain C uses gcc syntax mode too, but g++ accepts -x c
+        for ext in (".c",):
+            table[ext] = (["g++", "-fsyntax-only", "-x", "c"], "g++ -fsyntax-only -x c")
+    if _sh.which("gfortran"):
+        for ext in (".f", ".f90", ".F90", ".f95", ".F"):
+            table[ext] = (["gfortran", "-fsyntax-only"], "gfortran -fsyntax-only")
+    if _sh.which("bash"):
+        for ext in (".sh", ".bash"):
+            table[ext] = (["bash", "-n"], "bash -n")
+    if _sh.which("cmake"):
+        table["cmakelists"] = (["cmake", "-P"], "cmake -P (dry-run)")  # special-cased by filename below
+    return table
+
+_SYNTAX_VALIDATORS = None  # built on first use
+
+def _quick_syntax_check(filepath: str) -> tuple[str, bool] | None:
+    """Run a fast read-only syntax check appropriate for `filepath`'s
+    extension. Returns (summary_text, ok) — the summary is suitable to be
+    fed back as tool output to the LLM so it can react. Returns None if
+    no validator is available for this file type (e.g. a .txt or a
+    Makefile or an OpenFOAM dict file).
+
+    Bounded by a 5s timeout and runs read-only — never modifies the file.
+    """
+    global _SYNTAX_VALIDATORS
+    if _SYNTAX_VALIDATORS is None:
+        _SYNTAX_VALIDATORS = _build_syntax_validators()
+
+    # Filename-based lookups first.
+    base = os.path.basename(filepath).lower()
+    ext = os.path.splitext(filepath)[1]
+    argv, label = None, None
+
+    if base in ("cmakelists.txt", "cmakelists"):
+        # CMake config-file syntax check needs the file passed as -P argument.
+        # `cmake -P` actually executes the script; that's NOT safe for unknown
+        # CMakeLists since they can call file(REMOVE ...) etc. So skip CMake
+        # auto-check — it's an oddball where the syntax checker IS the
+        # interpreter.
+        return None
+    if ext in _SYNTAX_VALIDATORS:
+        argv, label = _SYNTAX_VALIDATORS[ext]
+    else:
+        return None
+
+    try:
+        # py_compile is a module invocation; the others take the filename as
+        # a positional arg. python -m py_compile <file> is what we already
+        # built into the table, so just append the path.
+        cmd = argv + [filepath]
+        res = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5.0,
+        )
+        ok = res.returncode == 0
+        out = (res.stdout or "").strip()
+        if ok:
+            return (f"[syntax-check] {label}: OK", True)
+        # Truncate to keep tool output digestible
+        if len(out) > 2000:
+            out = out[:1000] + "\n...[truncated]...\n" + out[-1000:]
+        return (f"[syntax-check] {label} reported errors:\n{out}", False)
+    except subprocess.TimeoutExpired:
+        return (f"[syntax-check] {label} timed out after 5s; skipped.", True)
+    except (FileNotFoundError, OSError) as e:
+        return (f"[syntax-check] {label} could not run: {e}", True)
+
+
 def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bool = False, tolerate_connect_error: bool = False) -> tuple[str, str]:
     """The Plan → Execute → Observe loop shared by interactive_mode,
     single_query and hpc_single_query.
@@ -1236,6 +1321,28 @@ def _init_rag():
     _amrex_src_collection = _get_optional("amrex_src")
     _marbles_src_collection = _get_optional("marbles_src")
     _reframe_src_collection = _get_optional("reframe_src")
+
+    # Eager BM25 build: the previous lazy build inside _hybrid_search caused
+    # a multi-second freeze on the user's FIRST query (which is when first
+    # impressions are formed). Build now, while we're already paying the
+    # cold-start cost. Each call is independently try/excepted so a broken
+    # collection doesn't block RAG startup.
+    _prebuild_bm25 = [
+        ("openfoam",     _chroma_collection),
+        ("hpc_docs",     _hpc_docs_collection),
+        ("of13_src",     _of13_src_collection),
+        ("amrex_src",    _amrex_src_collection),
+        ("marbles_src",  _marbles_src_collection),
+        ("reframe_src",  _reframe_src_collection),
+    ]
+    for _name, _coll in _prebuild_bm25:
+        if _coll is None:
+            continue
+        try:
+            _get_bm25_index(_coll, _name)
+        except Exception as _e:
+            print(f"Warning: BM25 prebuild for '{_name}' failed: {_e}", file=sys.stderr)
+    print(f"BM25 indices ready: {sorted(k for k, v in _bm25_indices.items() if v is not False)}", file=sys.stderr)
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
@@ -2280,6 +2387,15 @@ def _handle_write_blocks(write_blocks, all_outputs):
                 backup_note = f" (previous version backed up to {backup})" if backup else ""
                 out_str = f"\n--- File Write Success ---\nSuccessfully wrote to {filepath}{backup_note}\n----------------------------------\n"
                 print(f"Wrote to target file.{backup_note}")
+                # Auto-feedback: if we have a fast read-only syntax checker
+                # for this file type, run it and feed the result back so the
+                # LLM can self-correct on the next turn without the user
+                # having to spot the bug.
+                sc = _quick_syntax_check(filepath)
+                if sc:
+                    sc_text, sc_ok = sc
+                    print(_c(sc_text, "green" if sc_ok else "yellow"))
+                    out_str += sc_text + "\n"
             except Exception as e:
                 out_str = f"\n--- File Write Error ---\n{str(e)}\n----------------------------------\n"
                 print(out_str)
@@ -2325,6 +2441,12 @@ def _handle_edit_blocks(edit_blocks, all_outputs):
                         backup_note = f" (previous version backed up to {backup})" if backup else ""
                         out_str = f"\n--- File Edit Success ---\nSuccessfully edited {filepath}{backup_note}\n----------------------------------\n"
                         print(f"Edited target file successfully.{backup_note}")
+                        # Auto-feedback after a successful edit, same as write.
+                        sc = _quick_syntax_check(filepath)
+                        if sc:
+                            sc_text, sc_ok = sc
+                            print(_c(sc_text, "green" if sc_ok else "yellow"))
+                            out_str += sc_text + "\n"
                     else:
                         out_str = f"\n--- File Edit Error ---\nCould not find the exact <<FIND>> text in {filepath}. The file was not changed.\n----------------------------------\n"
                         print(out_str)

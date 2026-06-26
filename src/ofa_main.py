@@ -178,6 +178,88 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
             if old_len > 400:
                 msg["content"] = "[Older terminal output omitted by system to preserve context memory.]"
                 total_len -= (old_len - len(msg["content"]))
+        elif msg.get("role") == "assistant" and "<thought>" in msg.get("content", ""):
+            # Older assistant turns: strip out the model's internal <thought> deliberation,
+            # which is only valuable for the immediately-following turn anyway.
+            old_len = len(msg["content"])
+            new_content = re.sub(r"<thought>.*?</thought>\s*", "", msg["content"], flags=re.DOTALL)
+            if len(new_content) < old_len:
+                msg["content"] = new_content
+                total_len -= (old_len - len(new_content))
+
+
+# ---------------------------------------------------------------------------
+# Thinking-channel streaming filter.
+#
+# The model is instructed (via prompts/common.txt) to put any deliberation
+# inside <thought>...</thought> blocks. make_thought_filter() returns
+# (filter_chunk, flush) closures that strip those blocks from the *displayed*
+# stream — the captured response text fed back to the caller is untouched, so
+# the model still has continuity to its own scratch-pad on the next turn.
+# Older <thought> blocks are dropped from session history by
+# manage_session_context() above.
+# ---------------------------------------------------------------------------
+_THOUGHT_OPEN = "<thought>"
+_THOUGHT_CLOSE = "</thought>"
+
+def make_thought_filter():
+    state = {"in_thought": False, "buf": "", "shown_marker": False}
+    open_len = len(_THOUGHT_OPEN)
+    close_len = len(_THOUGHT_CLOSE)
+
+    def _flush(s: str):
+        if s:
+            print(s, end="", flush=True)
+
+    def filter_chunk(chunk: str):
+        state["buf"] += chunk
+        # process repeatedly because a single chunk can contain multiple toggles
+        while True:
+            if state["in_thought"]:
+                i = state["buf"].find(_THOUGHT_CLOSE)
+                if i == -1:
+                    # discard everything we can, but keep a tail that could still
+                    # be the start of </thought>
+                    keep = min(close_len - 1, len(state["buf"]))
+                    state["buf"] = state["buf"][-keep:] if keep else ""
+                    return
+                # close tag found; suppress everything up to and including it
+                state["buf"] = state["buf"][i + close_len:]
+                state["in_thought"] = False
+                state["shown_marker"] = False
+                _flush(_c(" [/thinking]\n", "dim"))
+                continue
+            else:
+                i = state["buf"].find(_THOUGHT_OPEN)
+                if i == -1:
+                    # might be partial open tag at end; flush everything except a tail
+                    keep = min(open_len - 1, len(state["buf"]))
+                    if keep:
+                        _flush(state["buf"][:-keep])
+                        state["buf"] = state["buf"][-keep:]
+                    else:
+                        _flush(state["buf"])
+                        state["buf"] = ""
+                    return
+                # print everything before the open tag, then enter thought mode
+                _flush(state["buf"][:i])
+                state["buf"] = state["buf"][i + open_len:]
+                state["in_thought"] = True
+                _flush(_c("\n[thinking…]", "dim"))
+                state["shown_marker"] = True
+                continue
+
+    def flush():
+        # End-of-stream: print whatever's left if we're not inside an open <thought>.
+        if not state["in_thought"] and state["buf"]:
+            _flush(state["buf"])
+        state["buf"] = ""
+        # If we're stuck inside an unclosed <thought>, just newline so the prompt
+        # doesn't run onto the [thinking…] marker visually.
+        if state["in_thought"]:
+            _flush("\n")
+
+    return filter_chunk, flush
 
 
 def extract_and_save_prefs(response_text: str):
@@ -393,11 +475,14 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
     last_response = ""
     while True:
         last_response = ""
+        thought_filter, thought_flush = make_thought_filter()
         try:
             for chunk in chat_stream(messages):
-                print(chunk, end="", flush=True)
+                thought_filter(chunk)
                 last_response += chunk
+            thought_flush()
         except KeyboardInterrupt:
+            thought_flush()
             print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
         except httpx.ConnectError:
             print("\n[Error: Connection to Ollama server lost. The backend may have crashed.]", file=sys.stderr)
@@ -1201,9 +1286,11 @@ def generate_file(
 
     for attempt in range(3):
         content = ""
+        thought_filter, thought_flush = make_thought_filter()
         for chunk in chat_stream(messages):
-            print(chunk, end="", flush=True)
+            thought_filter(chunk)
             content += chunk
+        thought_flush()
         print()
         if content.strip():
             # Strip LLM preamble/re-outputs: find last "// File: ..." marker the LLM may have
@@ -1480,11 +1567,14 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
             messages = [{"role": "system", "content": system_prompt}]
         messages.append({"role": "user", "content": augmented})
         response = ""
+        thought_filter, thought_flush = make_thought_filter()
         try:
             for chunk in chat_stream(messages):
-                print(chunk, end="", flush=True)
+                thought_filter(chunk)
                 response += chunk
+            thought_flush()
         except KeyboardInterrupt:
+            thought_flush()
             print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
             pass
         print()

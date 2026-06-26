@@ -196,6 +196,14 @@ def _print_active_model_banner():
         print(_c("\nKnown but not pulled (run `ofa --list-models` for full list).", "dim"))
 
     print(_c(
+        "\nTo switch models:"
+        "\n  ofa --model <id>          (just this run, e.g. `ofa --model llama3.3:70b`)"
+        "\n  export OFA_MODEL=<id>     (persistent for the shell)"
+        "\n  ofa --list-models         (show all registered models + pulled status)",
+        "bold",
+    ))
+
+    print(_c(
         "\n" + "!" * 66 + "\n"
         "ONLY gemma4:31b has been tested with the assistant's safety guards.\n"
         "Any other model is EXPERIMENTAL. We've seen non-default models emit\n"

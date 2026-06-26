@@ -266,6 +266,26 @@ def _banner(label: str, *styles: str) -> str:
     return _c(label, "bold", *styles)
 
 
+def _safe_input(prompt: str, *, decline_value: str = "n", lowercase: bool = True) -> str:
+    """input() wrapper that treats Ctrl+C and EOF as 'decline' instead of
+    crashing the whole agent. The previous behaviour propagated the
+    KeyboardInterrupt up through _run_react_loop → interactive_mode → main,
+    killing the SLURM allocation along with the Python process — meaning a
+    Ctrl+C at an approval prompt cost the user their session. Now Ctrl+C
+    here returns the declining answer ('n' by default) and a yellow notice
+    so the agent can move on to the next user turn cleanly.
+
+    Set lowercase=False for prompts that need exact-case matching (e.g. the
+    catastrophic-command confirmation phrase).
+    """
+    try:
+        s = input(prompt).strip()
+        return s.lower() if lowercase else s
+    except (KeyboardInterrupt, EOFError):
+        print(_c("\n[Ctrl+C → treated as 'no'; command skipped. The session is still alive.]", "yellow"), file=sys.stderr)
+        return decline_value
+
+
 def _resolve_scratch():
     """Resolve a writable per-user scratch directory for session/prefs/history.
 
@@ -896,24 +916,64 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
                 cwd=_current_cwd, start_new_session=True,
                 env=sub_env,
             )
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                captured += line
-                if not killed_for_destructive and _STREAM_KILL_RE.search(line):
-                    killed_for_destructive = True
-                    alert = _c(
-                        f"\n!!! DESTRUCTIVE OPERATION DETECTED IN COMMAND OUTPUT !!!\n"
-                        f"Pattern matched: {line.strip()[:200]}\n"
-                        f"Killing the subprocess and its descendants immediately.\n",
-                        "bold", "red",
-                    )
-                    print(alert, file=sys.stderr, flush=True)
-                    captured += alert
-                    try:
-                        os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
-                    except (ProcessLookupError, PermissionError) as e:
-                        print(_c(f"  (could not signal process group: {e})", "yellow"), file=sys.stderr)
-            proc.wait()
+            try:
+                for line in proc.stdout:
+                    print(line, end="", flush=True)
+                    captured += line
+                    if not killed_for_destructive and _STREAM_KILL_RE.search(line):
+                        killed_for_destructive = True
+                        alert = _c(
+                            f"\n!!! DESTRUCTIVE OPERATION DETECTED IN COMMAND OUTPUT !!!\n"
+                            f"Pattern matched: {line.strip()[:200]}\n"
+                            f"Killing the subprocess and its descendants immediately.\n",
+                            "bold", "red",
+                        )
+                        print(alert, file=sys.stderr, flush=True)
+                        captured += alert
+                        try:
+                            os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
+                        except (ProcessLookupError, PermissionError) as e:
+                            print(_c(f"  (could not signal process group: {e})", "yellow"), file=sys.stderr)
+                proc.wait()
+            except KeyboardInterrupt:
+                # User hit Ctrl+C while the subprocess (or one of its
+                # descendants, e.g. a hung `srun ... cmake .`) was running.
+                # The subprocess is in its own session/pgrp so it did NOT
+                # receive the SIGINT — only the Python parent did. We must
+                # explicitly take down the whole process group, otherwise
+                # the hang continues on the compute node, the user has no
+                # way to make it stop, and the next bash block inherits a
+                # poisoned environment.
+                alert = _c(
+                    "\n[Ctrl+C → killing subprocess group (and any descendants).]",
+                    "bold", "yellow",
+                )
+                print(alert, file=sys.stderr, flush=True)
+                captured += alert
+                try:
+                    os.killpg(os.getpgid(proc.pid), _sig.SIGTERM)
+                    # Give it ~2s to drain, then SIGKILL anything still alive.
+                    for _ in range(20):
+                        try:
+                            os.killpg(os.getpgid(proc.pid), 0)
+                        except (ProcessLookupError, PermissionError):
+                            break
+                        time.sleep(0.1)
+                    else:
+                        try:
+                            os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                except (ProcessLookupError, PermissionError) as e:
+                    print(_c(f"  (could not signal process group: {e})", "yellow"), file=sys.stderr)
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    pass
+                # Re-raise so _handle_bash_blocks records the abort cleanly.
+                # _safe_input later in the loop handles the next prompt's
+                # Ctrl+C without dying.
+                raise
             rc = proc.returncode
         else:
             res = subprocess.run(
@@ -2109,7 +2169,7 @@ def _handle_search_blocks(search_blocks, all_outputs):
             continue
         print(_banner("\n[Internet Search Suggested]", "blue"))
         print(f"Query: {q}")
-        ans = input("Execute this search? [y/N]: ").strip().lower()
+        ans = _safe_input("Execute this search? [y/N]: ")
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
@@ -2143,7 +2203,7 @@ def _handle_fetch_blocks(fetch_blocks, all_outputs):
             print(err_msg)
             all_outputs.append(err_msg)
             continue
-        ans = input("Execute this fetch? [y/N]: ").strip().lower()
+        ans = _safe_input("Execute this fetch? [y/N]: ")
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
@@ -2179,7 +2239,7 @@ def _handle_read_blocks(read_blocks, all_outputs):
             print("Auto-approving read from reference repository...")
             ans = 'y'
         else:
-            ans = input("Allow reading this file? [Y/n]: ").strip().lower()
+            ans = _safe_input("Allow reading this file? [Y/n]: ", decline_value="n")
         if ans in ('y', 'yes', ''):
             print("-" * 60)
             try:
@@ -2209,7 +2269,7 @@ def _handle_write_blocks(write_blocks, all_outputs):
         if warn:
             print(warn)
         print(_diff_preview(filepath, content))
-        ans = input("Allow writing this file? [y/N]: ").strip().lower()
+        ans = _safe_input("Allow writing this file? [y/N]: ")
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
@@ -2251,7 +2311,7 @@ def _handle_edit_blocks(edit_blocks, all_outputs):
                     print(_c(f"  WARNING: <<FIND>> text not found verbatim in {filepath}; edit will fail.", "yellow"))
             except OSError as e:
                 print(f"  (could not preview edit: {e})")
-            ans = input("Allow editing this file? [y/N]: ").strip().lower()
+            ans = _safe_input("Allow editing this file? [y/N]: ")
             if ans in ('y', 'yes'):
                 print("-" * 60)
                 try:
@@ -2527,7 +2587,7 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
                 f"Anything else aborts the command.",
                 "bold", "red",
             ))
-            ans = input("Confirmation> ").strip()
+            ans = _safe_input("Confirmation> ", decline_value="", lowercase=False)
             if ans != confirm_phrase:
                 msg = "[Catastrophic command refused — no execution.]"
                 print(_c(msg, "bold", "red"))
@@ -2543,7 +2603,7 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
                     "Review the Makefile first if you didn't write it.",
                     "yellow",
                 ))
-            ans = input("Execute this command? [y/N]: ").strip().lower()
+            ans = _safe_input("Execute this command? [y/N]: ")
         elif _is_command_safe_for_auto_approve(cmd):
             print("Auto-approving read-only stateless command...")
             ans = 'y'
@@ -2554,7 +2614,7 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
                     "Ofa cannot pre-validate sub-shell rules; review unknown Makefiles first.",
                     "yellow",
                 ))
-            ans = input("Execute this command? [y/N]: ").strip().lower()
+            ans = _safe_input("Execute this command? [y/N]: ")
 
         if ans in ('y', 'yes'):
             print("-" * 60)

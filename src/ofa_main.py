@@ -249,6 +249,63 @@ def _fence_rag(context: str, label: str = "RETRIEVED REFERENCE") -> str:
     )
 
 
+def _warn_if_outside_cwd(filepath: str) -> str:
+    """Return a one-line warning string if `filepath` escapes the current
+    working directory tree, otherwise empty string. Soft warning only — we
+    do not block, since users legitimately edit prompts/configs elsewhere."""
+    try:
+        abs_path = os.path.abspath(filepath)
+        cwd = os.path.abspath(os.getcwd())
+        if not abs_path.startswith(cwd + os.sep) and abs_path != cwd:
+            return f"  WARNING: {abs_path} is outside the current working directory ({cwd})."
+    except Exception:
+        return ""
+    return ""
+
+
+def _diff_preview(filepath: str, new_content: str, max_lines: int = 40) -> str:
+    """Return a short unified diff between the current file and `new_content`,
+    or a snippet of `new_content` if the file does not yet exist. Used to give
+    the user something concrete to look at before approving a write/edit."""
+    import difflib
+    try:
+        with open(filepath) as f:
+            old = f.read()
+    except FileNotFoundError:
+        preview = "\n".join(new_content.splitlines()[:max_lines])
+        more = "" if new_content.count("\n") < max_lines else f"\n... ({new_content.count(chr(10)) - max_lines} more lines)"
+        return f"  [new file] preview:\n----\n{preview}{more}\n----"
+    except OSError as e:
+        return f"  (could not read existing file for diff: {e})"
+    diff_lines = list(difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"{filepath} (current)",
+        tofile=f"{filepath} (proposed)",
+        n=2,
+    ))
+    if not diff_lines:
+        return "  (no changes — proposed content is identical to existing file)"
+    if len(diff_lines) > max_lines:
+        diff_lines = diff_lines[:max_lines] + [f"... ({len(diff_lines) - max_lines} more diff lines)\n"]
+    return "  diff:\n----\n" + "".join(diff_lines) + "----"
+
+
+def _backup_existing(filepath: str) -> str | None:
+    """Copy `filepath` to `<filepath>.bak.<unix_ts>` if it exists. Returns the
+    backup path on success, None otherwise."""
+    import shutil, time
+    if not os.path.exists(filepath):
+        return None
+    backup = f"{filepath}.bak.{int(time.time())}"
+    try:
+        shutil.copy2(filepath, backup)
+        return backup
+    except OSError as e:
+        print(f"  Warning: could not back up {filepath}: {e}", file=sys.stderr)
+        return None
+
+
 def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
     """Run a shell command and persist its final working directory back to the
     Python process so `cd` in one block carries over to the next.
@@ -955,6 +1012,32 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             continue
         if user_input.lower() in ("quit", "exit", "q"):
             break
+        if user_input.lower() in ("/help", "help", "?"):
+            print(
+                "\nofa interactive commands:\n"
+                "  quit | exit | q       — exit\n"
+                "  /clear                — reset conversation (keeps system prompt + plan)\n"
+                "  /history              — show how many messages are in the session\n"
+                "  /cwd                  — show current working directory\n"
+                "  save <dir>            — save last assistant response into <dir>\n"
+                "  $ <shell command>     — run a shell command locally (cd persists)\n"
+                "  /help                 — this message\n",
+                file=sys.stderr,
+            )
+            continue
+        if user_input.lower() == "/clear":
+            # Keep system prompt; drop everything else; reset plan tracker.
+            messages = [messages[0]] if messages and messages[0].get("role") == "system" else []
+            current_plan = ""
+            save_session(messages)
+            print("[Conversation cleared. System prompt retained.]", file=sys.stderr)
+            continue
+        if user_input.lower() == "/history":
+            print(f"[Session has {len(messages)} messages, ~{sum(len(m.get('content','')) for m in messages)} chars total]", file=sys.stderr)
+            continue
+        if user_input.lower() == "/cwd":
+            print(os.getcwd(), file=sys.stderr)
+            continue
         if user_input.lower().startswith("save "):
             dirname = user_input[5:].strip()
             if last_response:
@@ -1456,16 +1539,22 @@ def check_and_execute_bash(response_text):
         if not filepath: continue
         print(f"\n[File Write Suggested]")
         print(f"File: {filepath} ({len(content)} chars)")
+        warn = _warn_if_outside_cwd(filepath)
+        if warn:
+            print(warn)
+        print(_diff_preview(filepath, content))
         ans = input("Allow writing this file? [y/N]: ").strip().lower()
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
                 import os
                 os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+                backup = _backup_existing(filepath)
                 with open(filepath, 'w') as f:
                     f.write(content)
-                out_str = f"\n--- File Write Success ---\nSuccessfully wrote to {filepath}\n----------------------------------\n"
-                print(f"Wrote to target file.")
+                backup_note = f" (previous version backed up to {backup})" if backup else ""
+                out_str = f"\n--- File Write Success ---\nSuccessfully wrote to {filepath}{backup_note}\n----------------------------------\n"
+                print(f"Wrote to target file.{backup_note}")
             except Exception as e:
                 out_str = f"\n--- File Write Error ---\n{str(e)}\n----------------------------------\n"
                 print(out_str)
@@ -1479,11 +1568,24 @@ def check_and_execute_bash(response_text):
         if not filepath: continue
         print(f"\n[File Edit Suggested]")
         print(f"File: {filepath}")
+        warn = _warn_if_outside_cwd(filepath)
+        if warn:
+            print(warn)
         
         # Parse FIND and REPLACE sections
         if "<<FIND>>" in content and "<<REPLACE>>" in content:
             find_str = content.split("<<FIND>>")[1].split("<<REPLACE>>")[0].strip('\n')
             replace_str = content.split("<<REPLACE>>")[1].strip('\n')
+            # Show a preview of what the edit will actually do
+            try:
+                with open(filepath) as _pf:
+                    _pdata = _pf.read()
+                if find_str in _pdata:
+                    print(_diff_preview(filepath, _pdata.replace(find_str, replace_str, 1)))
+                else:
+                    print(f"  WARNING: <<FIND>> text not found verbatim in {filepath}; edit will fail.")
+            except OSError as e:
+                print(f"  (could not preview edit: {e})")
             
             ans = input("Allow editing this file? [y/N]: ").strip().lower()
             if ans in ('y', 'yes'):
@@ -1493,11 +1595,13 @@ def check_and_execute_bash(response_text):
                         file_data = f.read()
                     
                     if find_str in file_data:
+                        backup = _backup_existing(filepath)
                         file_data = file_data.replace(find_str, replace_str, 1)
                         with open(filepath, 'w') as f:
                             f.write(file_data)
-                        out_str = f"\n--- File Edit Success ---\nSuccessfully edited {filepath}\n----------------------------------\n"
-                        print(f"Edited target file successfully.")
+                        backup_note = f" (previous version backed up to {backup})" if backup else ""
+                        out_str = f"\n--- File Edit Success ---\nSuccessfully edited {filepath}{backup_note}\n----------------------------------\n"
+                        print(f"Edited target file successfully.{backup_note}")
                     else:
                         out_str = f"\n--- File Edit Error ---\nCould not find the exact <<FIND>> text in {filepath}. The file was not changed.\n----------------------------------\n"
                         print(out_str)

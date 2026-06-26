@@ -367,6 +367,63 @@ def _backup_existing(filepath: str) -> str | None:
         return None
 
 
+# Files an @-reference will not be expanded for, even on a clean read attempt.
+_ATTACH_MAX_BYTES = 64 * 1024              # per-file cap
+_ATTACH_MAX_TOTAL = 256 * 1024             # combined cap per turn
+_AT_REF_RE = re.compile(r"(?<![\\\w/])@([A-Za-z0-9_./\-]+(?:\.[A-Za-z0-9]+)?)")
+
+def _expand_at_file_refs(text: str) -> str:
+    """Expand `@path/to/file` tokens in user prompts into inlined file content.
+
+    A token is expanded only if it resolves to an existing readable file
+    relative to the logical current working directory. Each file is capped
+    at _ATTACH_MAX_BYTES; total inlined size per turn is capped at
+    _ATTACH_MAX_TOTAL. Tokens that don't resolve are left as plain text so
+    the user can still talk *about* files like @amrex_caveat without
+    accidentally triggering an attach.
+    """
+    matches = list(_AT_REF_RE.finditer(text))
+    if not matches:
+        return text
+    attached_total = 0
+    appended_blocks = []
+    seen = set()
+    for m in matches:
+        ref = m.group(1)
+        if ref in seen:
+            continue
+        candidate = ref if os.path.isabs(ref) else os.path.join(_current_cwd, ref)
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            with open(candidate, "rb") as f:
+                blob = f.read(_ATTACH_MAX_BYTES + 1)
+        except OSError as e:
+            print(_c(f"  [attach] could not read @{ref}: {e}", "yellow"), file=sys.stderr)
+            continue
+        truncated = len(blob) > _ATTACH_MAX_BYTES
+        if truncated:
+            blob = blob[:_ATTACH_MAX_BYTES]
+        try:
+            decoded = blob.decode("utf-8")
+        except UnicodeDecodeError:
+            print(_c(f"  [attach] skipping @{ref} (not utf-8)", "yellow"), file=sys.stderr)
+            continue
+        if attached_total + len(decoded) > _ATTACH_MAX_TOTAL:
+            print(_c(f"  [attach] hit {_ATTACH_MAX_TOTAL}-byte combined cap; @{ref} and later refs were skipped", "yellow"), file=sys.stderr)
+            break
+        seen.add(ref)
+        attached_total += len(decoded)
+        size_note = f" (truncated to {_ATTACH_MAX_BYTES} bytes)" if truncated else ""
+        appended_blocks.append(
+            f"<attached path=\"{ref}\"{size_note}>\n{decoded}\n</attached>"
+        )
+        print(_c(f"  [attach] inlined @{ref} ({len(decoded)} bytes{size_note})", "green"), file=sys.stderr)
+    if not appended_blocks:
+        return text
+    return text + "\n\n" + "\n\n".join(appended_blocks)
+
+
 def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
     """Run a shell command and persist its final working directory back to the
     Python process so `cd` in one block carries over to the next.
@@ -1217,6 +1274,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 "  /cwd                  — show current working directory\n"
                 "  save <dir>            — save last assistant response into <dir>\n"
                 "  $ <shell command>     — run a shell command locally (cd persists)\n"
+                "  @<path>               — inline a file into your prompt (relative to cwd)\n"
                 "  /help                 — this message\n",
                 file=sys.stderr,
             )
@@ -1259,6 +1317,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             augmented_input = f"I manually executed the following command:\n```bash\n{cmd}\n```\nHere is the output:\n```text\n{cmd_out}\n```\nPlease analyze this output or continue your previous thoughts incorporating this context."
 
         else:
+            # Inline any @file references in the user's prompt before we
+            # forward it to RAG retrieval and the LLM. Unresolvable @tokens
+            # are left untouched so the user can still talk *about* names
+            # like @cleanup without triggering an attach.
+            user_input = _expand_at_file_refs(user_input)
+
             # Retrieve RAG context
             greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
             is_greeting = user_input.strip().lower() in greetings

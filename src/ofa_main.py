@@ -17,10 +17,14 @@ import httpx
 OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
 
-# Run each user's Ollama server on a completely isolated port based on their numeric UID to completely eliminate collisions on shared SLURM compute nodes!
-USER_UID = os.getuid()
-OFA_PORT = 10000 + (USER_UID % 50000)
-OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
+# Per-user Ollama port. The actual value is chosen at startup by
+# _pick_ollama_endpoint(): we try the cached port from the previous run first
+# (so a concurrent ofa invocation by the same user reuses the same daemon),
+# fall back to an honest free-port probe, then advertise the choice in
+# OLLAMA_HOST. UID-derived ports were collision-prone (any two UIDs that
+# differ by a multiple of 50_000 would clash) so we no longer use them.
+OFA_PORT = None         # type: int | None
+OLLAMA_HOST = None      # type: str | None
 
 MODEL = os.environ.get("OFA_MODEL", "gemma4:31b")
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
@@ -410,7 +414,15 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
 
 
 def ensure_ollama_running():
-    """Start Ollama server if not already running."""
+    """Start Ollama server if not already running.
+
+    The chosen TCP port is persisted to `<OFA_SCRATCH>/.ofa_ollama.port` and
+    the daemon's PID to `<OFA_SCRATCH>/.ofa_ollama.pid`. Concurrent `ofa`
+    invocations by the same user reuse the same daemon when possible.
+    """
+    global OFA_PORT, OLLAMA_HOST
+    _pick_ollama_endpoint()
+
     try:
         r = httpx.get(f"{OLLAMA_HOST}/api/tags", timeout=2.0)
         if r.status_code == 200:
@@ -419,11 +431,17 @@ def ensure_ollama_running():
             if any(m.get("name") == MODEL for m in tags):
                 return True
             else:
-                # Daemon is running but doesn't have our model! Probably a stale process using the wrong cache.
-                print("Warning: Stale Ollama daemon detected. Attempting to kill it...", file=sys.stderr)
-                # Removed 'import os, signal' from here to avoid UnboundLocalError since os is imported globally
-                os.system(f"killall -u {os.environ.get('USER')} -9 ollama 2>/dev/null")
+                # Daemon is running but doesn't have our model — likely a
+                # stale process bound to our port from a previous version.
+                # Try to terminate just *that* daemon via its recorded PID;
+                # avoid `killall -u $USER` which would also nuke a sibling
+                # session.
+                print("Warning: Stale Ollama daemon detected on this port. Attempting to terminate it...", file=sys.stderr)
+                _terminate_stale_ollama()
                 time.sleep(1)
+                # After killing, pick a fresh port — the previous one may
+                # take a few seconds to drop TIME_WAIT.
+                _pick_ollama_endpoint(force_new=True)
     except (httpx.ConnectError, httpx.TimeoutException):
         pass
 
@@ -449,6 +467,13 @@ def ensure_ollama_running():
         stderr=subprocess.DEVNULL,
         preexec_fn=os.setpgrp # <-- Critical: detach Ollama from Bash process group so Ctrl-C doesn't kill it
     )
+    # Record the PID so a future invocation can terminate only this daemon
+    # (and not any sibling daemons the user might have running).
+    try:
+        with open(os.path.join(OFA_SCRATCH, ".ofa_ollama.pid"), "w") as f:
+            f.write(str(_ollama_proc.pid))
+    except OSError as e:
+        print(f"Warning: could not write pidfile: {e}", file=sys.stderr)
     atexit.register(_shutdown_ollama)
 
     # Wait for server to be ready
@@ -464,6 +489,92 @@ def ensure_ollama_running():
 
     print("ERROR: Could not start Ollama server.", file=sys.stderr)
     sys.exit(1)
+
+
+def _pick_ollama_endpoint(force_new: bool = False):
+    """Decide which TCP port the Ollama daemon should listen on, and persist
+    that choice to `<scratch>/.ofa_ollama.port` so concurrent ofa runs can
+    reuse the same daemon.
+
+    Priority:
+      1. $OFA_OLLAMA_PORT (explicit user override)
+      2. Cached port in <scratch>/.ofa_ollama.port if a daemon is responding
+         there (unless force_new=True)
+      3. An OS-assigned free port in the ephemeral range
+    """
+    global OFA_PORT, OLLAMA_HOST
+    port_file = os.path.join(OFA_SCRATCH, ".ofa_ollama.port")
+
+    if os.environ.get("OFA_OLLAMA_PORT"):
+        try:
+            OFA_PORT = int(os.environ["OFA_OLLAMA_PORT"])
+            OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
+            return
+        except ValueError:
+            pass
+
+    if not force_new:
+        try:
+            with open(port_file) as f:
+                cached = int(f.read().strip())
+            # Probe it: if a daemon is alive, reuse.
+            try:
+                r = httpx.get(f"http://127.0.0.1:{cached}/api/tags", timeout=1.0)
+                if r.status_code == 200:
+                    OFA_PORT = cached
+                    OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
+                    return
+            except (httpx.ConnectError, httpx.TimeoutException):
+                pass
+        except (OSError, ValueError):
+            pass
+
+    # Find a free port by binding to 0 and reading the assigned value.
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        OFA_PORT = s.getsockname()[1]
+    finally:
+        s.close()
+    OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
+    try:
+        with open(port_file, "w") as f:
+            f.write(str(OFA_PORT))
+    except OSError as e:
+        print(f"Warning: could not persist port to {port_file}: {e}", file=sys.stderr)
+
+
+def _terminate_stale_ollama():
+    """Terminate only *our* recorded Ollama daemon (by PID file), not every
+    Ollama belonging to this user. Quietly returns if the pidfile is missing
+    or stale."""
+    pid_file = os.path.join(OFA_SCRATCH, ".ofa_ollama.pid")
+    try:
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+        # Give it a moment to come down cleanly before escalating.
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    except ProcessLookupError:
+        pass  # already gone
+    except PermissionError:
+        print(f"Warning: refusing to kill pid {pid} (not ours).", file=sys.stderr)
+
+
 
 
 def _init_rag():

@@ -1650,77 +1650,7 @@ def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
         return fetch_url_context(query)
 
 
-def check_and_execute_bash(response_text):
-    import re, subprocess
-    bash_blocks = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```", response_text, re.DOTALL)
-    search_blocks = re.findall(r"```(?:search)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
-    fetch_blocks = re.findall(r"```(?:fetch)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
-    read_blocks = re.findall(r"```(?:read)(?:\s+|\n)(.*?)\s*```", response_text, re.DOTALL)
-    write_blocks = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
-    edit_blocks = re.findall(r"```(?:edit)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
-
-    # ---- Coalesce duplicate write/edit blocks targeting the same file ----
-    # The LLM sometimes self-corrects inside a single response ("wait, that
-    # was wrong, here's the fixed version") and emits two or three blocks for
-    # the same file in a row. Approving the first one corrupts the file. Keep
-    # only the LAST block per filepath and warn the user.
-    def _dedup_by_filepath(blocks, kind):
-        if len(blocks) <= 1:
-            return blocks
-        latest_by_path = {}
-        order = []
-        for path, content in blocks:
-            key = path.strip()
-            if key not in latest_by_path:
-                order.append(key)
-            latest_by_path[key] = (path, content)
-        deduped = [latest_by_path[k] for k in order]
-        for k in order:
-            count = sum(1 for p, _ in blocks if p.strip() == k)
-            if count > 1:
-                print(
-                    _c(
-                        f"  [coalesced {count} {kind} blocks for '{k}' — keeping only the LATEST version "
-                        f"(the model self-corrected mid-response).]",
-                        "yellow",
-                    ),
-                    file=sys.stderr,
-                )
-        return deduped
-    write_blocks = _dedup_by_filepath(write_blocks, "write")
-    edit_blocks = _dedup_by_filepath(edit_blocks, "edit")
-
-    if not bash_blocks and not search_blocks and not fetch_blocks and not read_blocks and not write_blocks and not edit_blocks:
-        # Check if the AI wrote standard code blocks but forgot to use the tool syntax
-        import re
-        rogue_code = re.findall(r"```(cpp|c\+\+|bash|sh|python|cmake|cmakelists)\n(.*?)```", response_text, re.IGNORECASE | re.DOTALL)
-        if rogue_code:
-            # Let's see if we can salvage it if it mentioned a filename right before the block
-            salvaged = False
-            for rctype, rctext in rogue_code:
-                # Find where this block is in the response
-                block_idx = response_text.find("```" + rctype)
-                if block_idx > 0:
-                    preceding_text = response_text[:block_idx].split('\n')[-3:] # Get last 3 lines before the block
-                    for line in preceding_text:
-                        # Common ways LLMs declare filenames: "Here is main.cpp:" or "### `main.cpp`"
-                        m = re.search(r'`?([a-zA-Z0-9_\-\./\\]+\.(?:cpp|H|h|c|py|cmake|sh|bash))`?', line)
-                        if m:
-                            filename = m.group(1)
-                            print(f"\n[AI generated a rogue `{rctype}` code block, but mentioned file '{filename}'. Auto-casting to 'write' command...]")
-                            write_blocks.append((filename, rctext.strip()))
-                            salvaged = True
-                            break
-                        
-            if not salvaged:
-                print("\n[Warning] The AI generated raw code blocks but did not use the `write <file>` or `bash` tool syntax.")
-                print("It cannot be executed automatically because there is no filepath context. You can copy-paste the code manually.")
-        if not write_blocks:
-            return None
-    
-    all_outputs = []
-
-    # Process search blocks
+def _handle_search_blocks(search_blocks, all_outputs):
     for q in search_blocks:
         q = q.strip()
         if not q:
@@ -1730,7 +1660,6 @@ def check_and_execute_bash(response_text):
         ans = input("Execute this search? [y/N]: ").strip().lower()
         if ans in ('y', 'yes'):
             print("-" * 60)
-
             try:
                 from ddgs import DDGS
                 results = DDGS().text(q, max_results=3, safesearch='strict')
@@ -1738,20 +1667,18 @@ def check_and_execute_bash(response_text):
                 if results:
                     for i, r in enumerate(results):
                         out_str += f"{i+1}. {r['title']} ({r['href']})\n{r['body']}\n\n"
-
                 else:
                     out_str += "No results found.\n"
                 print(out_str)
                 all_outputs.append(out_str)
             except Exception as e:
-
                 err_msg = f"Error executing search: {e}"
                 print(err_msg)
                 all_outputs.append(err_msg)
             print("-" * 60)
 
 
-    # Process fetch blocks
+def _handle_fetch_blocks(fetch_blocks, all_outputs):
     for url in fetch_blocks:
         url = url.strip()
         if not url:
@@ -1774,10 +1701,8 @@ def check_and_execute_bash(response_text):
                 tree = html.fromstring(resp.content)
                 for bad in tree.xpath('//script|//style|//header|//footer|//nav|//aside'):
                     bad.getparent().remove(bad)
-                
                 elements = tree.xpath('//text()')
                 cleaned = " ".join([t.strip() for t in elements if t.strip() and len(t.strip()) > 3])
-                
                 if not cleaned:
                     cleaned = "Unable to read dynamic webpage content cleanly."
                 out_str = f"\n--- Fetched URL: {url} ---\n{cleaned[:16000]}\n----------------------------------\n"
@@ -1790,30 +1715,27 @@ def check_and_execute_bash(response_text):
             print("-" * 60)
 
 
-    # Process read blocks
+def _handle_read_blocks(read_blocks, all_outputs):
     for file_to_read in read_blocks:
-        import os
         file_to_read = os.path.expanduser(file_to_read.strip())
-        if not file_to_read: continue
+        if not file_to_read:
+            continue
         print(_banner("\n[File Read Suggested]", "green"))
         print(f"File: {file_to_read}")
-        
         # Auto-allow reading files from the global repos directory
         if "assistant/repos" in file_to_read or file_to_read.startswith("repos/"):
             print("Auto-approving read from reference repository...")
             ans = 'y'
         else:
             ans = input("Allow reading this file? [Y/n]: ").strip().lower()
-            
         if ans in ('y', 'yes', ''):
             print("-" * 60)
             try:
-                import os
                 if os.path.exists(file_to_read):
                     with open(file_to_read, 'r') as f:
                         content = f.read()
-                        out_str = f"\n--- Context from {file_to_read} ---\n{content[:16000]}\n----------------------------------\n"
-                        print(f"Read {len(content)} characters.")
+                    out_str = f"\n--- Context from {file_to_read} ---\n{content[:16000]}\n----------------------------------\n"
+                    print(f"Read {len(content)} characters.")
                 else:
                     out_str = f"\n--- File Read Error ---\nFile not found: {file_to_read}\n----------------------------------\n"
                     print(out_str)
@@ -1823,11 +1745,12 @@ def check_and_execute_bash(response_text):
             all_outputs.append(out_str)
             print("-" * 60)
 
-    # Process write blocks
+
+def _handle_write_blocks(write_blocks, all_outputs):
     for filepath, content in write_blocks:
-        import os
         filepath = os.path.expanduser(filepath.strip())
-        if not filepath: continue
+        if not filepath:
+            continue
         print(_banner("\n[File Write Suggested]", "yellow"))
         print(f"File: {filepath} ({len(content)} chars)")
         warn = _warn_if_outside_cwd(filepath)
@@ -1838,7 +1761,6 @@ def check_and_execute_bash(response_text):
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
-                import os
                 os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
                 backup = _backup_existing(filepath)
                 with open(filepath, 'w') as f:
@@ -1852,17 +1774,17 @@ def check_and_execute_bash(response_text):
             all_outputs.append(out_str)
             print("-" * 60)
 
-    # Process edit blocks
+
+def _handle_edit_blocks(edit_blocks, all_outputs):
     for filepath, content in edit_blocks:
-        import os
         filepath = os.path.expanduser(filepath.strip())
-        if not filepath: continue
+        if not filepath:
+            continue
         print(_banner("\n[File Edit Suggested]", "yellow"))
         print(f"File: {filepath}")
         warn = _warn_if_outside_cwd(filepath)
         if warn:
             print(warn)
-        
         # Parse FIND and REPLACE sections
         if "<<FIND>>" in content and "<<REPLACE>>" in content:
             find_str = content.split("<<FIND>>")[1].split("<<REPLACE>>")[0].strip('\n')
@@ -1877,14 +1799,12 @@ def check_and_execute_bash(response_text):
                     print(_c(f"  WARNING: <<FIND>> text not found verbatim in {filepath}; edit will fail.", "yellow"))
             except OSError as e:
                 print(f"  (could not preview edit: {e})")
-            
             ans = input("Allow editing this file? [y/N]: ").strip().lower()
             if ans in ('y', 'yes'):
                 print("-" * 60)
                 try:
                     with open(filepath, 'r') as f:
                         file_data = f.read()
-                    
                     if find_str in file_data:
                         backup = _backup_existing(filepath)
                         file_data = file_data.replace(find_str, replace_str, 1)
@@ -1906,62 +1826,63 @@ def check_and_execute_bash(response_text):
             print(out_str)
             all_outputs.append(out_str)
 
-    # Process bash blocks
+
+def _is_bash_block_executable(cmd: str) -> bool:
+    """Return False if a bash block is just script text the user is supposed
+    to read (shebang/SBATCH header or pure comments), True otherwise."""
+    if (cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd) and "cat <<" not in cmd:
+        return False
+    lines = cmd.split('\n')
+    if all(line.strip().startswith('#') or not line.strip() for line in lines):
+        return False
+    return True
+
+
+def _is_command_dangerous(lower_cmd: str) -> bool:
+    return any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"])
+
+
+def _is_command_safe_for_auto_approve(cmd: str) -> bool:
+    """Whether all lines in a multi-line bash block are stateless read-only
+    commands we can run without prompting."""
+    lines = [l.strip() for l in cmd.split('\n') if l.strip()]
+    if not lines:
+        return False
+    def _line_ok(line):
+        if any(bad in line for bad in [">", ";", "&&", "||", "`", "$(", "|"]):
+            return False
+        global_safe = ["module avail", "module show", "module list", "ls", "sinfo", "squeue", "pwd", "whoami", "echo", "which", "whereis"]
+        if any(line == tool or line.startswith(tool + " ") for tool in global_safe):
+            return True
+        read_tools = ["grep", "cat", "find", "tree", "tail", "head", "stat"]
+        if any(line == tool or line.startswith(tool + " ") for tool in read_tools):
+            return True
+        return False
+    return all(_line_ok(l) for l in lines)
+
+
+def _handle_bash_blocks(bash_blocks, all_outputs):
     for cmd in bash_blocks:
         cmd = cmd.strip()
         if not cmd:
             continue
-            
         # Automatically inject --overlap into srun commands to prevent SLURM step deadlocks
         if "srun " in cmd and "--overlap" not in cmd:
             cmd = cmd.replace("srun ", "srun --overlap ")
-            
-        # Prevent the AI from executing standalone script files natively in the shell.
-        # If the block starts with #!/bin/bash or contains pure #SBATCH lines, and DOES NOT contain `cat << 'EOF'`, it's just raw script text meant for the user.
-        if (cmd.startswith("#!/bin/bash") or cmd.startswith("#!/bin/sh") or "#SBATCH" in cmd) and "cat <<" not in cmd:
+        if not _is_bash_block_executable(cmd):
             continue
-            
-        lines = cmd.split('\n')
-        if all(line.strip().startswith('#') or not line.strip() for line in lines):
-             # it is literally just a block of comments or an un-executed script file text.
-             continue
-        dangerous = False
-        lower_cmd = cmd.lower()
-        if any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"]):
-            dangerous = True
-        
+        dangerous = _is_command_dangerous(cmd.lower())
         print(_banner("\n[System Command Suggested]", "yellow"))
         print(f"> {cmd}")
         if dangerous:
             print(_c("WARNING: This command looks potentially destructive!", "bold", "red"))
             ans = input("Execute this command? [y/N]: ").strip().lower()
+        elif _is_command_safe_for_auto_approve(cmd):
+            print("Auto-approving read-only stateless command...")
+            ans = 'y'
         else:
-            # Auto-execute harmless stateless commands, such as module loads and ls.
-            lines = [l.strip() for l in cmd.split('\n') if l.strip()]
-            
-            def is_line_safe(line):
-                # No destructive chaining, command substitution, or outputs allowed
-                if any(bad in line for bad in [">", ";", "&&", "||", "`", "$(", "|"]):
-                    return False
-                
-                # Commands that are safe anywhere (stateless environment lookups)
-                global_safe = ["module avail", "module show", "module list", "ls", "sinfo", "squeue", "pwd", "whoami", "echo", "which", "whereis"]
-                if any(line == tool or line.startswith(tool + " ") for tool in global_safe):
-                    return True
-                    
-                # Commands that read files (safe due to ACLs, but we still explicitly whitelist the base binaries)
-                read_tools = ["grep", "cat", "find", "tree", "tail", "head", "stat"]
-                if any(line == tool or line.startswith(tool + " ") for tool in read_tools):
-                    return True
-                    
-                return False
+            ans = input("Execute this command? [y/N]: ").strip().lower()
 
-            if lines and all(is_line_safe(l) for l in lines):
-                print("Auto-approving read-only stateless command...")
-                ans = 'y'
-            else:
-                ans = input("Execute this command? [y/N]: ").strip().lower()
-                
         if ans in ('y', 'yes'):
             print("-" * 60)
             try:
@@ -1969,21 +1890,17 @@ def check_and_execute_bash(response_text):
                 # Streaming Popen wrapped with CWD-tracking so `cd` persists
                 # across blocks (and into subsequent local `$` commands too).
                 captured_text, _rc = _run_with_cwd_tracking(cmd, stream=True)
-                
-                # Truncate massive outputs to save context window for the AI (Terminal already saw full output)
                 lines = captured_text.split('\n')
                 if len(lines) > 100:
                     truncated = "\n".join(lines[:30]) + "\n... (output truncated, " + str(len(lines) - 60) + " lines omitted) ...\n" + "\n".join(lines[-30:])
                     out_str += truncated
                 else:
                     out_str += captured_text
-                
-                # Hard limit character length to prevent context explosion on monolithic lines
                 if len(out_str) > PER_BLOCK_MAX_CHARS:
                     out_str = out_str[:PER_BLOCK_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + out_str[-PER_BLOCK_HEAD_TAIL:]
                 all_outputs.append(out_str)
             except KeyboardInterrupt:
-                err_msg = f"\n[Command execution aborted by user (Ctrl+C)]"
+                err_msg = "\n[Command execution aborted by user (Ctrl+C)]"
                 print(err_msg)
                 all_outputs.append(err_msg)
             except Exception as e:
@@ -1991,10 +1908,94 @@ def check_and_execute_bash(response_text):
                 print(err_msg)
                 all_outputs.append(err_msg)
             print("-" * 60)
-    
-    if all_outputs:
-        return "\n".join(all_outputs)
-    return None
+
+
+def _salvage_rogue_code_blocks(response_text, write_blocks):
+    """If the model emitted raw ```cpp / ```python blocks instead of using the
+    `write <path>` tool but mentioned a filename in the preceding 3 lines,
+    cast each one into a synthetic write_block. Returns the (possibly
+    augmented) write_blocks list."""
+    rogue_code = re.findall(r"```(cpp|c\+\+|bash|sh|python|cmake|cmakelists)\n(.*?)```", response_text, re.IGNORECASE | re.DOTALL)
+    if not rogue_code:
+        return write_blocks
+    salvaged = False
+    for rctype, rctext in rogue_code:
+        block_idx = response_text.find("```" + rctype)
+        if block_idx > 0:
+            preceding_text = response_text[:block_idx].split('\n')[-3:]
+            for line in preceding_text:
+                m = re.search(r'`?([a-zA-Z0-9_\-\./\\]+\.(?:cpp|H|h|c|py|cmake|sh|bash))`?', line)
+                if m:
+                    filename = m.group(1)
+                    print(f"\n[AI generated a rogue `{rctype}` code block, but mentioned file '{filename}'. Auto-casting to 'write' command...]")
+                    write_blocks.append((filename, rctext.strip()))
+                    salvaged = True
+                    break
+    if not salvaged:
+        print("\n[Warning] The AI generated raw code blocks but did not use the `write <file>` or `bash` tool syntax.")
+        print("It cannot be executed automatically because there is no filepath context. You can copy-paste the code manually.")
+    return write_blocks
+
+
+def _dedup_blocks_by_filepath(blocks, kind):
+    """Coalesce duplicate write/edit blocks for the same filepath, keeping
+    only the LAST one and warning the user."""
+    if len(blocks) <= 1:
+        return blocks
+    latest_by_path = {}
+    order = []
+    for path, content in blocks:
+        key = path.strip()
+        if key not in latest_by_path:
+            order.append(key)
+        latest_by_path[key] = (path, content)
+    deduped = [latest_by_path[k] for k in order]
+    for k in order:
+        count = sum(1 for p, _ in blocks if p.strip() == k)
+        if count > 1:
+            print(
+                _c(
+                    f"  [coalesced {count} {kind} blocks for '{k}' — keeping only the LATEST version "
+                    f"(the model self-corrected mid-response).]",
+                    "yellow",
+                ),
+                file=sys.stderr,
+            )
+    return deduped
+
+
+def check_and_execute_bash(response_text):
+    """Parse the assistant's response for tool-use fences and dispatch each
+    tool's handler. Returns the concatenated tool output (for feeding back
+    into the LLM as a new user message), or None if nothing was executed."""
+    bash_blocks   = re.findall(r"```(?:bash|sh|shell)\n(.*?)\n```",       response_text, re.DOTALL)
+    search_blocks = re.findall(r"```(?:search)(?:\s+|\n)(.*?)\s*```",     response_text, re.DOTALL)
+    fetch_blocks  = re.findall(r"```(?:fetch)(?:\s+|\n)(.*?)\s*```",      response_text, re.DOTALL)
+    read_blocks   = re.findall(r"```(?:read)(?:\s+|\n)(.*?)\s*```",       response_text, re.DOTALL)
+    write_blocks  = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```",    response_text, re.DOTALL)
+    edit_blocks   = re.findall(r"```(?:edit)\s+([^\n]+)\n(.*?)\n```",     response_text, re.DOTALL)
+
+    write_blocks = _dedup_blocks_by_filepath(write_blocks, "write")
+    edit_blocks  = _dedup_blocks_by_filepath(edit_blocks,  "edit")
+
+    if not any([bash_blocks, search_blocks, fetch_blocks, read_blocks, write_blocks, edit_blocks]):
+        write_blocks = _salvage_rogue_code_blocks(response_text, write_blocks)
+        if not write_blocks:
+            return None
+
+    all_outputs: list[str] = []
+    # Fixed dispatch order: information gathering first (search/fetch/read),
+    # then file mutations (write/edit), then shell commands. Adding a new
+    # tool means: define _handle_<name>_blocks, parse its fence above, and
+    # add it to this dispatch chain.
+    _handle_search_blocks(search_blocks, all_outputs)
+    _handle_fetch_blocks(fetch_blocks, all_outputs)
+    _handle_read_blocks(read_blocks, all_outputs)
+    _handle_write_blocks(write_blocks, all_outputs)
+    _handle_edit_blocks(edit_blocks, all_outputs)
+    _handle_bash_blocks(bash_blocks, all_outputs)
+
+    return "\n".join(all_outputs) if all_outputs else None
 
 
 def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):

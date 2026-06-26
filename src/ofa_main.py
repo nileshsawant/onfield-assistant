@@ -94,10 +94,11 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.05, "num_ctx": 16384, "num_predict": 8192,
         "thought_tags": [],
     },
-    # IBM Granite 4.
-    "granite4:32b": {
+    # IBM Granite 4. Note: 'granite4:32b' does NOT exist as an Ollama tag;
+    # the actual ~19 GB MoE variant is 'granite4:32b-a9b-h' (alias 'small-h').
+    "granite4:32b-a9b-h": {
         "temperature": 0.7, "top_p": 0.95, "top_k": 50,
-        "repeat_penalty": 1.05, "num_ctx": 32768, "num_predict": 16384,
+        "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
         "thought_tags": [],
     },
 }

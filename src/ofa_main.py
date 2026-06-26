@@ -590,15 +590,36 @@ def _init_rag():
     )
     import subprocess
     import shutil
+    import fcntl
     local_db = os.path.join(OFA_SCRATCH, ".ofa_vectordb")
-    
-    # Sync the master vector database to the user's scratch to avoid readonly SQLite lock errors
+
+    # Sync the master vector database to the user's scratch to avoid readonly
+    # SQLite lock errors when multiple users hit the same path. flock the
+    # rsync so two concurrent `ofa` invocations by the same user don't
+    # corrupt `local_db` mid-read (rsync --delete + ChromaDB sqlite ==
+    # ugly). The lock is per-target-directory.
+    lock_path = local_db + ".lock"
     try:
-        subprocess.run(["rsync", "-a", "--delete", f"{VECTORDB_PATH}/", f"{local_db}/"], check=False)
-    except Exception as e:
+        os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+        with open(lock_path, "w") as lock_fp:
+            try:
+                fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX)
+            except OSError as e:
+                print(f"Warning: could not lock {lock_path} ({e}); proceeding anyway", file=sys.stderr)
+            try:
+                subprocess.run(
+                    ["rsync", "-a", "--delete", f"{VECTORDB_PATH}/", f"{local_db}/"],
+                    check=False,
+                )
+            finally:
+                try:
+                    fcntl.flock(lock_fp.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+    except OSError as e:
         print(f"Warning: Failed to sync vector db locally: {e}", file=sys.stderr)
         local_db = VECTORDB_PATH
-        
+
     client = chromadb.PersistentClient(path=local_db)
     _chroma_collection = client.get_collection("openfoam")
 

@@ -34,6 +34,152 @@ PLAN_PROMPT_PATH = os.path.join(PROMPTS_DIR, "plan.txt")
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 
 # ---------------------------------------------------------------------------
+# Model registry. Each entry overrides the default sampling parameters for
+# that model and (optionally) declares the chat-template "thinking" tags it
+# emits so the display filter can hide them just like our own <thought>.
+#
+# Resolution order at startup:
+#   1. CLI flag --model <id>
+#   2. $OFA_MODEL env var
+#   3. The default below (currently gemma4:31b for backwards compat).
+#
+# Sampling defaults inside each entry follow the upstream model card.
+# Anything missing falls back to the module-level LLM_* defaults further down.
+# Override per-deployment by dropping a JSON file at $OFA_MODELS_JSON or
+# $OFA_ROOT/models.json with the same shape as MODEL_REGISTRY.
+# ---------------------------------------------------------------------------
+MODEL_REGISTRY = {
+    # Google Gemma 4 — current default. Sampling per the model card.
+    "gemma4:31b": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
+        "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
+        "thought_tags": [],
+    },
+    "gemma4:26b": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
+        "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
+        "thought_tags": [],
+    },
+    # OpenAI gpt-oss — MoE, agent-tuned, emits <|channel|>analysis ... thinking.
+    "gpt-oss:120b": {
+        "temperature": 0.7, "top_p": 0.95, "top_k": 0,
+        "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
+        "thought_tags": [("<|channel|>analysis", "<|end|>")],
+    },
+    "gpt-oss:20b": {
+        "temperature": 0.7, "top_p": 0.95, "top_k": 0,
+        "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
+        "thought_tags": [("<|channel|>analysis", "<|end|>")],
+    },
+    # Meta Llama 4 (MoE).
+    "llama4:scout": {
+        "temperature": 0.6, "top_p": 0.9, "top_k": 0,
+        "repeat_penalty": 1.1, "num_ctx": 131072, "num_predict": 16384,
+        "thought_tags": [],
+    },
+    "llama4:maverick": {
+        "temperature": 0.6, "top_p": 0.9, "top_k": 0,
+        "repeat_penalty": 1.1, "num_ctx": 131072, "num_predict": 16384,
+        "thought_tags": [],
+    },
+    # Meta Llama 3.3 70B dense.
+    "llama3.3:70b": {
+        "temperature": 0.6, "top_p": 0.9, "top_k": 0,
+        "repeat_penalty": 1.1, "num_ctx": 32768, "num_predict": 16384,
+        "thought_tags": [],
+    },
+    # Microsoft phi-4 — small, strong reasoning.
+    "phi4:14b": {
+        "temperature": 0.7, "top_p": 0.95, "top_k": 50,
+        "repeat_penalty": 1.05, "num_ctx": 16384, "num_predict": 8192,
+        "thought_tags": [],
+    },
+    # IBM Granite 4.
+    "granite4:32b": {
+        "temperature": 0.7, "top_p": 0.95, "top_k": 50,
+        "repeat_penalty": 1.05, "num_ctx": 32768, "num_predict": 16384,
+        "thought_tags": [],
+    },
+}
+
+def _load_external_model_registry():
+    """Merge any user-provided model registry JSON on top of the built-in one.
+
+    Looked for at $OFA_MODELS_JSON, falling back to $OFA_ROOT/models.json.
+    Missing or malformed files are ignored silently (with a stderr warning)
+    so this never blocks startup."""
+    path = os.environ.get("OFA_MODELS_JSON") or os.path.join(OFA_ROOT, "models.json")
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as f:
+            extra = json.load(f)
+        if isinstance(extra, dict):
+            MODEL_REGISTRY.update(extra)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Warning: could not load model registry {path}: {e}", file=sys.stderr)
+
+_load_external_model_registry()
+
+def get_model_options():
+    """Return the sampling options for the currently-selected MODEL.
+
+    Per-env-var overrides ($OFA_TEMPERATURE etc.) always win over the
+    registry, so a one-off tweak doesn't require editing the registry."""
+    reg = MODEL_REGISTRY.get(MODEL, {})
+    return {
+        "temperature":    float(os.environ["OFA_TEMPERATURE"])    if os.environ.get("OFA_TEMPERATURE")    else reg.get("temperature",    LLM_TEMPERATURE),
+        "top_p":          float(os.environ["OFA_TOP_P"])          if os.environ.get("OFA_TOP_P")          else reg.get("top_p",          LLM_TOP_P),
+        "top_k":          int(os.environ["OFA_TOP_K"])            if os.environ.get("OFA_TOP_K")          else reg.get("top_k",          LLM_TOP_K),
+        "repeat_penalty": float(os.environ["OFA_REPEAT_PENALTY"]) if os.environ.get("OFA_REPEAT_PENALTY") else reg.get("repeat_penalty", LLM_REPEAT_PENALTY),
+        "num_predict":    int(os.environ["OFA_NUM_PREDICT"])      if os.environ.get("OFA_NUM_PREDICT")    else reg.get("num_predict",    LLM_NUM_PREDICT),
+        "num_ctx":        int(os.environ["OFA_NUM_CTX"])          if os.environ.get("OFA_NUM_CTX")        else reg.get("num_ctx",        LLM_NUM_CTX),
+        "num_gpu":        int(os.environ["OFA_NUM_GPU"])          if os.environ.get("OFA_NUM_GPU")        else LLM_NUM_GPU,
+    }
+
+def get_model_thought_tags():
+    """Native chat-template thinking tags for the currently-selected MODEL,
+    used by make_thought_filter() to also hide upstream reasoning streams
+    (e.g. gpt-oss <|channel|>analysis...<|end|>) on top of our own
+    <thought>...</thought> convention."""
+    return MODEL_REGISTRY.get(MODEL, {}).get("thought_tags", [])
+
+def _is_model_pulled(model_id: str) -> bool:
+    """Heuristic: check whether a manifest for `model_id` exists under
+    $OLLAMA_MODELS or the bundled assistant/models directory. The id format
+    is 'family:tag' which Ollama lays out as
+    manifests/registry.ollama.ai/library/<family>/<tag>."""
+    family, _, tag = model_id.partition(":")
+    if not tag:
+        tag = "latest"
+    candidates = [
+        os.environ.get("OLLAMA_MODELS", ""),
+        os.path.join(OFA_ROOT, "models"),
+    ]
+    for root in candidates:
+        if not root:
+            continue
+        manifest = os.path.join(root, "manifests", "registry.ollama.ai", "library", family, tag)
+        if os.path.isfile(manifest):
+            return True
+    return False
+
+def _print_model_registry():
+    """Pretty-print MODEL_REGISTRY annotated with which models are actually
+    pulled locally. Used by --list-models."""
+    print(f"Active model: {MODEL}{' (pulled)' if _is_model_pulled(MODEL) else ' (NOT pulled — run: ollama pull ' + MODEL + ')'}\n")
+    print("Registered models:")
+    name_w = max(len(n) for n in MODEL_REGISTRY) + 2
+    for name in sorted(MODEL_REGISTRY):
+        opts = MODEL_REGISTRY[name]
+        pulled = "pulled" if _is_model_pulled(name) else "not pulled"
+        print(f"  {name:<{name_w}} ctx={opts.get('num_ctx', '?'):>7}  T={opts.get('temperature', '?')}  top_p={opts.get('top_p', '?')}  top_k={opts.get('top_k', '?')}  [{pulled}]")
+    print("\nSelect a model for the next run with:")
+    print("  ofa --model <id>            (one-off)")
+    print("  export OFA_MODEL=<id>       (persistent for the shell)")
+    print("\nAdd or override entries in $OFA_ROOT/models.json (or $OFA_MODELS_JSON).")
+
+# ---------------------------------------------------------------------------
 # Behavioural tuning constants. Override via env vars where useful.
 # ---------------------------------------------------------------------------
 # Sampling defaults follow the official Gemma 4 model card recommendations.
@@ -202,38 +348,65 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
 _THOUGHT_OPEN = "<thought>"
 _THOUGHT_CLOSE = "</thought>"
 
-def make_thought_filter():
-    state = {"in_thought": False, "buf": "", "shown_marker": False}
-    open_len = len(_THOUGHT_OPEN)
-    close_len = len(_THOUGHT_CLOSE)
+def make_thought_filter(extra_tag_pairs=None):
+    """Build a streaming filter that hides 'thinking' regions from display.
+
+    Always hides our own <thought>...</thought> convention. Additionally
+    hides any (open_tag, close_tag) pairs in `extra_tag_pairs`, which the
+    caller typically gets from get_model_thought_tags() — e.g. for
+    gpt-oss, [("<|channel|>analysis", "<|end|>")] hides upstream
+    reasoning streams using the model's native chat-template tokens.
+
+    The captured response string fed back to the caller stays intact, so
+    the model retains continuity with its own scratchpad on the next turn.
+    """
+    extra_tag_pairs = extra_tag_pairs or []
+    # Build a list of all (open, close) pairs we care about. Order matters
+    # only for the unlikely case where one open-tag string is a prefix of
+    # another — we resolve ambiguity by checking longer tags first.
+    pairs = [(_THOUGHT_OPEN, _THOUGHT_CLOSE)] + list(extra_tag_pairs)
+    state = {"in_thought": False, "buf": "", "active_close": None}
+    max_open_len = max(len(o) for o, _ in pairs)
 
     def _flush(s: str):
         if s:
             print(s, end="", flush=True)
+
+    def _earliest_open(text):
+        """Return (idx, open_tag, close_tag) for the earliest open tag in
+        text, or (-1, None, None) if no open tag is present."""
+        best = (-1, None, None)
+        for o, c in pairs:
+            i = text.find(o)
+            if i != -1 and (best[0] == -1 or i < best[0]):
+                best = (i, o, c)
+        return best
 
     def filter_chunk(chunk: str):
         state["buf"] += chunk
         # process repeatedly because a single chunk can contain multiple toggles
         while True:
             if state["in_thought"]:
-                i = state["buf"].find(_THOUGHT_CLOSE)
+                close = state["active_close"]
+                close_len = len(close)
+                i = state["buf"].find(close)
                 if i == -1:
                     # discard everything we can, but keep a tail that could still
-                    # be the start of </thought>
+                    # be the start of the close tag.
                     keep = min(close_len - 1, len(state["buf"]))
                     state["buf"] = state["buf"][-keep:] if keep else ""
                     return
                 # close tag found; suppress everything up to and including it
                 state["buf"] = state["buf"][i + close_len:]
                 state["in_thought"] = False
-                state["shown_marker"] = False
+                state["active_close"] = None
                 _flush(_c(" [/thinking]\n", "dim"))
                 continue
             else:
-                i = state["buf"].find(_THOUGHT_OPEN)
+                i, open_tag, close_tag = _earliest_open(state["buf"])
                 if i == -1:
                     # might be partial open tag at end; flush everything except a tail
-                    keep = min(open_len - 1, len(state["buf"]))
+                    keep = min(max_open_len - 1, len(state["buf"]))
                     if keep:
                         _flush(state["buf"][:-keep])
                         state["buf"] = state["buf"][-keep:]
@@ -243,10 +416,10 @@ def make_thought_filter():
                     return
                 # print everything before the open tag, then enter thought mode
                 _flush(state["buf"][:i])
-                state["buf"] = state["buf"][i + open_len:]
+                state["buf"] = state["buf"][i + len(open_tag):]
                 state["in_thought"] = True
+                state["active_close"] = close_tag
                 _flush(_c("\n[thinking…]", "dim"))
-                state["shown_marker"] = True
                 continue
 
     def flush():
@@ -475,7 +648,7 @@ def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bo
     last_response = ""
     while True:
         last_response = ""
-        thought_filter, thought_flush = make_thought_filter()
+        thought_filter, thought_flush = make_thought_filter(get_model_thought_tags())
         try:
             for chunk in chat_stream(messages):
                 thought_filter(chunk)
@@ -1124,16 +1297,8 @@ def retrieve_context(query: str, top_k: int = 10) -> str:
         return fetch_url_context(query)
 
 def chat_stream(messages: list, **option_overrides):
-    """Stream a chat response from Ollama."""
-    opts = {
-        "repeat_penalty": LLM_REPEAT_PENALTY,
-        "temperature": LLM_TEMPERATURE,
-        "top_p": LLM_TOP_P,
-        "top_k": LLM_TOP_K,
-        "num_predict": LLM_NUM_PREDICT,
-        "num_ctx": LLM_NUM_CTX,
-        "num_gpu": LLM_NUM_GPU,
-    }
+    """Stream a chat response from Ollama using per-model sampling options."""
+    opts = get_model_options()
     opts.update(option_overrides)
     payload = {
         "model": MODEL,
@@ -1286,7 +1451,7 @@ def generate_file(
 
     for attempt in range(3):
         content = ""
-        thought_filter, thought_flush = make_thought_filter()
+        thought_filter, thought_flush = make_thought_filter(get_model_thought_tags())
         for chunk in chat_stream(messages):
             thought_filter(chunk)
             content += chunk
@@ -1567,7 +1732,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
             messages = [{"role": "system", "content": system_prompt}]
         messages.append({"role": "user", "content": augmented})
         response = ""
-        thought_filter, thought_flush = make_thought_filter()
+        thought_filter, thought_flush = make_thought_filter(get_model_thought_tags())
         try:
             for chunk in chat_stream(messages):
                 thought_filter(chunk)
@@ -2195,7 +2360,28 @@ def main():
         "--fast", action="store_true",
         help="Single-shot mode: generate all files at once (faster, less consistent)"
     )
+    parser.add_argument(
+        "--model", "-m", metavar="ID",
+        help="Override the LLM model id for this run (e.g. 'gemma4:31b', "
+             "'gpt-oss:120b', 'llama4:scout'). Wins over $OFA_MODEL. "
+             "See --list-models for what the registry knows about."
+    )
+    parser.add_argument(
+        "--list-models", action="store_true",
+        help="Print the model registry and exit. Shows which models are pulled "
+             "locally vs only known to the registry."
+    )
     args = parser.parse_args()
+
+    # --model wins over the env var (which was already baked into the
+    # module-level MODEL global by the time argparse runs).
+    if args.model:
+        global MODEL
+        MODEL = args.model
+
+    if args.list_models:
+        _print_model_registry()
+        sys.exit(0)
 
     # Handle Ctrl+C and SIGTERM gracefully (sys.exit triggers atexit handlers)
     # Use default KeyboardInterrupt handling for SIGINT

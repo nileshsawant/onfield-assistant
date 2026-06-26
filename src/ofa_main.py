@@ -358,37 +358,105 @@ def load_session():
 
 
 def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
-    """
-    Intelligently compress session history. Instead of dropping messages (which 
-    causes amnesia), we just strip the massive terminal logs from OLD messages, 
-    keeping the agent's thought process, plans, and instructions intact.
+    """Compress session history to stay within ``max_chars`` budget.
+
+    Strategy (oldest → newest, skipping system prompt and the last 2 messages
+    so the model retains the immediate user→assistant→tool context):
+
+    1. Drop ``<thought>...</thought>`` deliberation from old assistant turns.
+    2. Replace old ``"Output from executed commands:"`` user messages with a
+       short placeholder.
+    3. Strip the contents of fenced code blocks (``` ... ```) from any other
+       old user message above ``LARGE_USER_MSG_CHARS`` — this catches large
+       ``@file`` pastes and command outputs the model produced from sources
+       other than the tool-execution helper.
+
+    We only emit the "Compressing..." banner when we actually freed bytes,
+    and we now report before→after sizes so the user can see the effect.
+    If we still cannot reach the target after exhausting eligible messages,
+    we hint at ``/clear`` instead of repeatedly alarming the user on every
+    subsequent turn.
     """
     import sys
+    LARGE_USER_MSG_CHARS = 8000  # only worth fence-stripping if this big
+    target_chars = max_chars * SESSION_COMPRESS_TARGET_RATIO
+
     total_len = sum(len(m.get("content", "")) for m in messages)
     if total_len <= max_chars:
         return
-        
-    print(f"\n[System: Context size ({total_len} chars) near limit. Compressing old logs...]", file=sys.stderr)
-    
-    # Iterate from oldest to newest (skipping system prompt at 0 and the latest 3 messages)
-    for i in range(1, len(messages) - 3):
-        if total_len <= max_chars * SESSION_COMPRESS_TARGET_RATIO: # Trim down to target capacity
+
+    before_len = total_len
+    freed = 0
+    protected_tail = 2  # keep last 2 messages fully intact (assistant + tool output)
+    # ``_FENCE_RE`` matches ``` ... ``` blocks (any language tag) lazily so
+    # multiple blocks in one message each get caught.
+    _FENCE_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n.*?```", re.DOTALL)
+
+    for i in range(1, max(1, len(messages) - protected_tail)):
+        if total_len <= target_chars:
             break
-            
         msg = messages[i]
-        if msg.get("role") == "user" and "Output from executed commands:" in msg.get("content", ""):
-            old_len = len(msg["content"])
-            if old_len > 400:
-                msg["content"] = "[Older terminal output omitted by system to preserve context memory.]"
-                total_len -= (old_len - len(msg["content"]))
-        elif msg.get("role") == "assistant" and "<thought>" in msg.get("content", ""):
-            # Older assistant turns: strip out the model's internal <thought> deliberation,
-            # which is only valuable for the immediately-following turn anyway.
-            old_len = len(msg["content"])
-            new_content = re.sub(r"<thought>.*?</thought>\s*", "", msg["content"], flags=re.DOTALL)
-            if len(new_content) < old_len:
+        content = msg.get("content", "")
+        if not content:
+            continue
+        role = msg.get("role")
+
+        if role == "assistant" and "<thought>" in content:
+            new_content = re.sub(r"<thought>.*?</thought>\s*", "", content, flags=re.DOTALL)
+            if len(new_content) < len(content):
+                saved = len(content) - len(new_content)
                 msg["content"] = new_content
-                total_len -= (old_len - len(new_content))
+                total_len -= saved
+                freed += saved
+                content = new_content  # so the user-msg branch below can re-check
+
+        if role == "user":
+            if "Output from executed commands:" in content and len(content) > 400:
+                placeholder = "[Older terminal output omitted by system to preserve context memory.]"
+                saved = len(content) - len(placeholder)
+                if saved > 0:
+                    msg["content"] = placeholder
+                    total_len -= saved
+                    freed += saved
+            elif len(content) > LARGE_USER_MSG_CHARS and "```" in content:
+                # Replace each fenced block with a short note. This catches
+                # @file inlines and any other pasted large block while
+                # preserving the user's surrounding prose (which is small).
+                def _shrink(match):
+                    body = match.group(0)
+                    # Keep the opening fence line (it carries the language tag)
+                    # so the model knows what KIND of content used to be there.
+                    first_nl = body.find("\n")
+                    head = body[:first_nl] if first_nl > 0 else "```"
+                    return f"{head}\n[Older code/output block omitted by system to preserve context memory.]\n```"
+                new_content = _FENCE_RE.sub(_shrink, content)
+                if len(new_content) < len(content):
+                    saved = len(content) - len(new_content)
+                    msg["content"] = new_content
+                    total_len -= saved
+                    freed += saved
+
+    if freed > 0:
+        print(
+            _c(
+                f"\n[System: compressed session history {before_len} → {total_len} chars "
+                f"(freed {freed:,}, target ≤ {int(target_chars):,}).]",
+                "dim", "cyan",
+            ),
+            file=sys.stderr,
+        )
+        if total_len > max_chars:
+            print(
+                _c(
+                    "[System: still above the compression threshold — consider "
+                    "/clear to reset history if responses start to degrade.]",
+                    "yellow",
+                ),
+                file=sys.stderr,
+            )
+    # If freed == 0 we say nothing: the caller has nothing actionable to
+    # report and a noisy "Compressing..." line on every subsequent turn was
+    # the original UX bug.
 
 
 # ---------------------------------------------------------------------------

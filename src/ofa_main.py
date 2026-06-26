@@ -22,12 +22,35 @@ USER_UID = os.getuid()
 OFA_PORT = 10000 + (USER_UID % 50000)
 OLLAMA_HOST = f"http://127.0.0.1:{OFA_PORT}"
 
-MODEL = "gemma4:31b"
+MODEL = os.environ.get("OFA_MODEL", "gemma4:31b")
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
 HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
 PLAN_PROMPT_PATH = os.path.join(PROMPTS_DIR, "plan.txt")
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
+
+# ---------------------------------------------------------------------------
+# Behavioural tuning constants. Override via env vars where useful.
+# ---------------------------------------------------------------------------
+# Sampling defaults follow the official Gemma 4 model card recommendations.
+LLM_TEMPERATURE   = float(os.environ.get("OFA_TEMPERATURE", "1.0"))
+LLM_TOP_P         = float(os.environ.get("OFA_TOP_P", "0.95"))
+LLM_TOP_K         = int(os.environ.get("OFA_TOP_K", "64"))
+LLM_REPEAT_PENALTY = float(os.environ.get("OFA_REPEAT_PENALTY", "1.15"))
+LLM_NUM_PREDICT   = int(os.environ.get("OFA_NUM_PREDICT", "32768"))
+LLM_NUM_CTX       = int(os.environ.get("OFA_NUM_CTX", "65536"))
+LLM_NUM_GPU       = int(os.environ.get("OFA_NUM_GPU", "99"))
+# Maximum chars of single-command output to feed back to the LLM.
+TOOL_OUTPUT_MAX_CHARS = 96000
+TOOL_OUTPUT_HEAD_TAIL = 48000
+# Single bash-block stdout cap (per-block, smaller — distinct from session-wide).
+PER_BLOCK_MAX_CHARS = 3000
+PER_BLOCK_HEAD_TAIL = 1500
+# Session context compression thresholds.
+SESSION_COMPRESS_AT_CHARS = 100000
+SESSION_COMPRESS_TARGET_RATIO = 0.75
+# Consecutive tool-error threshold before we pause and hand back to the user.
+MAX_CONSECUTIVE_ERRORS = 3
 
 def _resolve_scratch():
     """Resolve a writable per-user scratch directory for session/prefs/history.
@@ -93,7 +116,7 @@ def load_session():
         return None
 
 
-def manage_session_context(messages, max_chars=100000):
+def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
     """
     Intelligently compress session history. Instead of dropping messages (which 
     causes amnesia), we just strip the massive terminal logs from OLD messages, 
@@ -108,7 +131,7 @@ def manage_session_context(messages, max_chars=100000):
     
     # Iterate from oldest to newest (skipping system prompt at 0 and the latest 3 messages)
     for i in range(1, len(messages) - 3):
-        if total_len <= max_chars * 0.75: # Trim down to 75% capacity
+        if total_len <= max_chars * SESSION_COMPRESS_TARGET_RATIO: # Trim down to target capacity
             break
             
         msg = messages[i]
@@ -721,13 +744,13 @@ def retrieve_context(query: str, top_k: int = 10) -> str:
 def chat_stream(messages: list, **option_overrides):
     """Stream a chat response from Ollama."""
     opts = {
-        "repeat_penalty": 1.15,
-        "temperature": 1.0,
-        "top_p": 0.95,
-        "top_k": 64,
-        "num_predict": 32768,
-        "num_ctx": 65536,
-        "num_gpu": 99,
+        "repeat_penalty": LLM_REPEAT_PENALTY,
+        "temperature": LLM_TEMPERATURE,
+        "top_p": LLM_TOP_P,
+        "top_k": LLM_TOP_K,
+        "num_predict": LLM_NUM_PREDICT,
+        "num_ctx": LLM_NUM_CTX,
+        "num_gpu": LLM_NUM_GPU,
     }
     opts.update(option_overrides)
     payload = {
@@ -1054,8 +1077,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 cmd_out, _rc = _run_with_cwd_tracking(cmd, stream=False)
                 if not cmd_out.strip():
                     cmd_out = "(No output)\n"
-                if len(cmd_out) > 96000:
-                    cmd_out = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
+                if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
+                    cmd_out = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
             except Exception as e:
                 cmd_out = f"Error executing command: {e}"
                 
@@ -1117,8 +1140,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             cmd_out = check_and_execute_bash(last_response)
             if cmd_out:
                 # If command output is extremely large, truncate it to prevent LLM context collapse
-                if len(cmd_out) > 96000:
-                    truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
+                if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
+                    truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
                 else:
                     truncated = cmd_out
                 
@@ -1688,8 +1711,8 @@ def check_and_execute_bash(response_text):
                     out_str += captured_text
                 
                 # Hard limit character length to prevent context explosion on monolithic lines
-                if len(out_str) > 3000:
-                    out_str = out_str[:1500] + "\n...[OUTPUT TRUNCATED]...\n" + out_str[-1500:]
+                if len(out_str) > PER_BLOCK_MAX_CHARS:
+                    out_str = out_str[:PER_BLOCK_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + out_str[-PER_BLOCK_HEAD_TAIL:]
                 all_outputs.append(out_str)
             except KeyboardInterrupt:
                 err_msg = f"\n[Command execution aborted by user (Ctrl+C)]"
@@ -1745,8 +1768,8 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
         
         cmd_out = check_and_execute_bash(response)
         if cmd_out:
-            if len(cmd_out) > 96000:
-                truncated = cmd_out[:48000] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-48000:]
+            if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
+                truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
             else:
                 truncated = cmd_out
                 

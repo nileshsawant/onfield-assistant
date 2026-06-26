@@ -52,6 +52,34 @@ SESSION_COMPRESS_TARGET_RATIO = 0.75
 # Consecutive tool-error threshold before we pause and hand back to the user.
 MAX_CONSECUTIVE_ERRORS = 3
 
+# ---------------------------------------------------------------------------
+# Terminal coloring. Respects NO_COLOR (https://no-color.org/) and disables
+# itself when stdout is not a TTY so logs to files / pipes stay clean.
+# ---------------------------------------------------------------------------
+_USE_COLOR = sys.stdout.isatty() and "NO_COLOR" not in os.environ and os.environ.get("TERM", "") != "dumb"
+_ANSI = {
+    "reset":  "\033[0m",
+    "bold":   "\033[1m",
+    "dim":    "\033[2m",
+    "red":    "\033[31m",
+    "green":  "\033[32m",
+    "yellow": "\033[33m",
+    "blue":   "\033[34m",
+    "magenta":"\033[35m",
+    "cyan":   "\033[36m",
+}
+def _c(text: str, *styles: str) -> str:
+    """Wrap text in ANSI styles, but only if the terminal supports it."""
+    if not _USE_COLOR or not styles:
+        return text
+    prefix = "".join(_ANSI.get(s, "") for s in styles)
+    return f"{prefix}{text}{_ANSI['reset']}"
+
+def _banner(label: str, *styles: str) -> str:
+    """Render a section header like '[File Edit Suggested]' with colour."""
+    return _c(label, "bold", *styles)
+
+
 def _resolve_scratch():
     """Resolve a writable per-user scratch directory for session/prefs/history.
 
@@ -210,7 +238,7 @@ def extract_plan(response_text: str):
     plan_match = re.search(r'```plan\n(.*?)```', response_text, re.DOTALL | re.IGNORECASE)
     if plan_match:
         plan = plan_match.group(1).strip()
-        print(f"\n[Tracking Plan:\n{plan}\n]", file=sys.stderr)
+        print(_c(f"\n[Tracking Plan:\n{plan}\n]", "magenta"), file=sys.stderr)
         return plan
     return None
 
@@ -280,7 +308,7 @@ def _warn_if_outside_cwd(filepath: str) -> str:
         abs_path = os.path.abspath(filepath)
         cwd = os.path.abspath(os.getcwd())
         if not abs_path.startswith(cwd + os.sep) and abs_path != cwd:
-            return f"  WARNING: {abs_path} is outside the current working directory ({cwd})."
+            return _c(f"  WARNING: {abs_path} is outside the current working directory ({cwd}).", "yellow")
     except Exception:
         return ""
     return ""
@@ -1152,7 +1180,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 messages.append({"role": "user", "content": inject_msg})
                 save_session(messages)
                 manage_session_context(messages)
-                print("\n[AI is analyzing the output...]", flush=True)
+                print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
             else:
                 break
 
@@ -1422,6 +1450,37 @@ def check_and_execute_bash(response_text):
     write_blocks = re.findall(r"```(?:write)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
     edit_blocks = re.findall(r"```(?:edit)\s+([^\n]+)\n(.*?)\n```", response_text, re.DOTALL)
 
+    # ---- Coalesce duplicate write/edit blocks targeting the same file ----
+    # The LLM sometimes self-corrects inside a single response ("wait, that
+    # was wrong, here's the fixed version") and emits two or three blocks for
+    # the same file in a row. Approving the first one corrupts the file. Keep
+    # only the LAST block per filepath and warn the user.
+    def _dedup_by_filepath(blocks, kind):
+        if len(blocks) <= 1:
+            return blocks
+        latest_by_path = {}
+        order = []
+        for path, content in blocks:
+            key = path.strip()
+            if key not in latest_by_path:
+                order.append(key)
+            latest_by_path[key] = (path, content)
+        deduped = [latest_by_path[k] for k in order]
+        for k in order:
+            count = sum(1 for p, _ in blocks if p.strip() == k)
+            if count > 1:
+                print(
+                    _c(
+                        f"  [coalesced {count} {kind} blocks for '{k}' — keeping only the LATEST version "
+                        f"(the model self-corrected mid-response).]",
+                        "yellow",
+                    ),
+                    file=sys.stderr,
+                )
+        return deduped
+    write_blocks = _dedup_by_filepath(write_blocks, "write")
+    edit_blocks = _dedup_by_filepath(edit_blocks, "edit")
+
     if not bash_blocks and not search_blocks and not fetch_blocks and not read_blocks and not write_blocks and not edit_blocks:
         # Check if the AI wrote standard code blocks but forgot to use the tool syntax
         import re
@@ -1457,7 +1516,7 @@ def check_and_execute_bash(response_text):
         q = q.strip()
         if not q:
             continue
-        print(f"\n[Internet Search Suggested]")
+        print(_banner("\n[Internet Search Suggested]", "blue"))
         print(f"Query: {q}")
         ans = input("Execute this search? [y/N]: ").strip().lower()
         if ans in ('y', 'yes'):
@@ -1488,7 +1547,7 @@ def check_and_execute_bash(response_text):
         url = url.strip()
         if not url:
             continue
-        print(f"\n[Web Fetch Suggested]")
+        print(_banner("\n[Web Fetch Suggested]", "blue"))
         print(f"URL: {url}")
         ok, reason = _is_safe_url(url)
         if not ok:
@@ -1527,7 +1586,7 @@ def check_and_execute_bash(response_text):
         import os
         file_to_read = os.path.expanduser(file_to_read.strip())
         if not file_to_read: continue
-        print(f"\n[File Read Suggested]")
+        print(_banner("\n[File Read Suggested]", "green"))
         print(f"File: {file_to_read}")
         
         # Auto-allow reading files from the global repos directory
@@ -1560,7 +1619,7 @@ def check_and_execute_bash(response_text):
         import os
         filepath = os.path.expanduser(filepath.strip())
         if not filepath: continue
-        print(f"\n[File Write Suggested]")
+        print(_banner("\n[File Write Suggested]", "yellow"))
         print(f"File: {filepath} ({len(content)} chars)")
         warn = _warn_if_outside_cwd(filepath)
         if warn:
@@ -1589,7 +1648,7 @@ def check_and_execute_bash(response_text):
         import os
         filepath = os.path.expanduser(filepath.strip())
         if not filepath: continue
-        print(f"\n[File Edit Suggested]")
+        print(_banner("\n[File Edit Suggested]", "yellow"))
         print(f"File: {filepath}")
         warn = _warn_if_outside_cwd(filepath)
         if warn:
@@ -1606,7 +1665,7 @@ def check_and_execute_bash(response_text):
                 if find_str in _pdata:
                     print(_diff_preview(filepath, _pdata.replace(find_str, replace_str, 1)))
                 else:
-                    print(f"  WARNING: <<FIND>> text not found verbatim in {filepath}; edit will fail.")
+                    print(_c(f"  WARNING: <<FIND>> text not found verbatim in {filepath}; edit will fail.", "yellow"))
             except OSError as e:
                 print(f"  (could not preview edit: {e})")
             
@@ -1662,10 +1721,10 @@ def check_and_execute_bash(response_text):
         if any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"]):
             dangerous = True
         
-        print(f"\n[System Command Suggested]")
+        print(_banner("\n[System Command Suggested]", "yellow"))
         print(f"> {cmd}")
         if dangerous:
-            print("WARNING: This command looks potentially destructive!")
+            print(_c("WARNING: This command looks potentially destructive!", "bold", "red"))
             ans = input("Execute this command? [y/N]: ").strip().lower()
         else:
             # Auto-execute harmless stateless commands, such as module loads and ls.
@@ -1780,7 +1839,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
             messages.append({"role": "user", "content": inject_msg})
             save_session(messages)
             manage_session_context(messages)
-            print("\n[AI is analyzing the output...]", flush=True)
+            print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
         else:
             break
             

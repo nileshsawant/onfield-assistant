@@ -79,14 +79,17 @@ def save_session(messages):
     try:
         with open(SESSION_FILE, "w") as f:
             json.dump(messages, f)
-    except Exception:
-        pass
+    except OSError as e:
+        print(f"Warning: could not save session to {SESSION_FILE}: {e}", file=sys.stderr)
 
 def load_session():
     try:
         with open(SESSION_FILE, "r") as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Warning: could not load session from {SESSION_FILE}: {e}", file=sys.stderr)
         return None
 
 
@@ -138,33 +141,6 @@ def _shutdown_ollama():
         except subprocess.TimeoutExpired:
             _ollama_proc.kill()
         _ollama_proc = None
-
-SESSION_FILE = os.path.join(OFA_SCRATCH, ".ofa_session.json")
-
-def save_session(messages):
-    try:
-        with open(SESSION_FILE, "w") as f:
-            json.dump(messages, f)
-    except Exception:
-        pass
-
-def load_session():
-    try:
-        with open(SESSION_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-def extract_and_save_prefs(response_text: str):
-    import re
-    prefs_match = re.search(r'=== PREFS ===(.*?)=== END PREFS ===', response_text, re.DOTALL)
-    if prefs_match:
-        new_prefs = prefs_match.group(1).strip()
-        prefs_file = os.path.join(OFA_SCRATCH, ".ofa_prefs.txt")
-        with open(prefs_file, "a") as f:
-            f.write("\n" + new_prefs)
-        print(f"  [Saved user preference to {prefs_file}]", file=sys.stderr)
-
 
 
 
@@ -353,27 +329,19 @@ def _init_rag():
         
     client = chromadb.PersistentClient(path=local_db)
     _chroma_collection = client.get_collection("openfoam")
-    try:
-        _hpc_docs_collection = client.get_collection("hpc_docs")
-    except Exception:
-        _hpc_docs_collection = None
-    try:
-        _of13_src_collection = client.get_collection("of13_src")
-    except Exception:
-        _of13_src_collection = None
-    try:
-        _amrex_src_collection = client.get_collection("amrex_src")
-    except Exception:
-        _amrex_src_collection = None
-    try:
-        _marbles_src_collection = client.get_collection("marbles_src")
-    except Exception:
-        _marbles_src_collection = None
-    try:
-        _reframe_src_collection = client.get_collection("reframe_src")
-    except Exception:
-        _reframe_src_collection = None
-_of13_src_collection = None
+
+    def _get_optional(name):
+        try:
+            return client.get_collection(name)
+        except Exception as e:
+            print(f"Info: chromadb collection '{name}' not available ({e.__class__.__name__}); related modes will skip it.", file=sys.stderr)
+            return None
+
+    _hpc_docs_collection = _get_optional("hpc_docs")
+    _of13_src_collection = _get_optional("of13_src")
+    _amrex_src_collection = _get_optional("amrex_src")
+    _marbles_src_collection = _get_optional("marbles_src")
+    _reframe_src_collection = _get_optional("reframe_src")
 
 
 
@@ -1072,7 +1040,7 @@ def single_query(query: str, save_dir: str = None, fast: bool = False, resume: b
 
     if not file_list:
         print("Warning: could not parse file plan, falling back to single-shot.", file=sys.stderr)
-        single_query(query, save_dir=save_dir, fast=args.fast, resume=resume)
+        single_query(query, save_dir=save_dir, fast=fast, resume=resume)
         return
 
     print(f"Generating {len(file_list)} files: {file_list}", file=sys.stderr)

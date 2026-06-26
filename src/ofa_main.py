@@ -822,26 +822,50 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
     avoids calling `os.chdir()`, which would change the Python process's CWD
     globally and break any threaded callers.
 
+    While streaming, watches every line of output against _STREAM_KILL_RE.
+    On a match (e.g. 'rm: cannot remove /bin' or 'removed /nopt/nrel/...')
+    the whole subprocess process group is SIGKILLed immediately — important
+    because the original cmd may have invoked make or a wrapper script that
+    then forked `rm`, and we need to terminate the *forked* rm, not just the
+    shell that started it.
+
     Returns (captured_output: str, returncode: int).
     """
     global _current_cwd
-    import tempfile
+    import tempfile, signal as _sig
     pwd_fd, pwd_path = tempfile.mkstemp(prefix="ofa_pwd_", suffix=".txt")
     os.close(pwd_fd)
     # POSIX-portable: run user cmd, save its exit code, write pwd, exit with saved code.
     wrapped = f"{cmd}\n__ofa_rc=$?\npwd > {pwd_path}\nexit $__ofa_rc"
     captured = ""
+    killed_for_destructive = False
     try:
         if stream:
+            # start_new_session=True puts the child in its own process group
+            # so a single os.killpg(...) takes down anything `make` etc. forked.
             proc = subprocess.Popen(
                 wrapped, shell=True, text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, bufsize=1, universal_newlines=True,
-                cwd=_current_cwd,
+                cwd=_current_cwd, start_new_session=True,
             )
             for line in proc.stdout:
                 print(line, end="", flush=True)
                 captured += line
+                if not killed_for_destructive and _STREAM_KILL_RE.search(line):
+                    killed_for_destructive = True
+                    alert = _c(
+                        f"\n!!! DESTRUCTIVE OPERATION DETECTED IN COMMAND OUTPUT !!!\n"
+                        f"Pattern matched: {line.strip()[:200]}\n"
+                        f"Killing the subprocess and its descendants immediately.\n",
+                        "bold", "red",
+                    )
+                    print(alert, file=sys.stderr, flush=True)
+                    captured += alert
+                    try:
+                        os.killpg(os.getpgid(proc.pid), _sig.SIGKILL)
+                    except (ProcessLookupError, PermissionError) as e:
+                        print(_c(f"  (could not signal process group: {e})", "yellow"), file=sys.stderr)
             proc.wait()
             rc = proc.returncode
         else:
@@ -852,6 +876,17 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
             )
             captured = (res.stdout or "") + (res.stderr or "")
             rc = res.returncode
+            # Non-streaming path: scan the whole captured blob once.
+            if _STREAM_KILL_RE.search(captured):
+                alert = _c(
+                    "\n!!! DESTRUCTIVE OPERATION OUTPUT DETECTED (post-hoc) !!!\n"
+                    "The command had already completed before the scan ran.\n"
+                    "Review the captured output above. Future runs of similar\n"
+                    "commands will be killed mid-stream.\n",
+                    "bold", "red",
+                )
+                print(alert, file=sys.stderr, flush=True)
+                captured += alert
         # Track wherever the shell ended up so the next block inherits it.
         # We update a module-scope variable instead of calling os.chdir() so
         # the parent Python process's CWD stays fixed (safer for threading
@@ -2205,6 +2240,90 @@ def _is_command_dangerous(lower_cmd: str) -> bool:
     return any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"])
 
 
+# Filesystem prefixes ofa will REFUSE to touch via rm/chmod/chown-style mass
+# operations even with explicit user approval. Includes both classic system
+# paths and the HPC software-deployment trees that an admin user has write
+# access to. Override at deployment time with $OFA_PROTECTED_PREFIXES (colon
+# separated, takes precedence — empty string disables the default list).
+_DEFAULT_PROTECTED_PREFIXES = (
+    "/bin", "/sbin", "/lib", "/lib64", "/boot", "/etc", "/usr", "/var",
+    "/opt", "/proc", "/sys", "/run", "/dev", "/root",
+    "/nopt/nrel", "/nopt/nlr", "/nopt/slurm", "/nopt/sgi",
+)
+PROTECTED_PREFIXES = tuple(
+    p for p in os.environ.get(
+        "OFA_PROTECTED_PREFIXES",
+        ":".join(_DEFAULT_PROTECTED_PREFIXES),
+    ).split(":") if p
+)
+
+# Regex patterns describing commands so dangerous that the user must type a
+# literal confirmation phrase (not just 'y') to proceed. Matched against the
+# full *lower-cased* command text.
+_CATASTROPHIC_PATTERNS = [
+    # rm hitting an absolute glob like /* or /<sysdir>/*
+    r"\brm\b[^|]*\s/(?:\*|\.\*|\.\.)",                  # rm ... /*  or /.*  or /..
+    r"\brm\b[^|]*\s-[a-z]*r[a-z]*\s+/(?:\s|$)",         # rm -rf /   (root)
+    r"\brm\b[^|]*\s+/\s*$",                              # rm /
+    # rm targeting a protected prefix (any flags)
+    r"\brm\b[^|]*\s(?:" + "|".join(re.escape(p) for p in _DEFAULT_PROTECTED_PREFIXES) + r")(?:/|\s|$)",
+    # chmod/chown -R on root or protected prefix (note: cmd is lowercased
+    # before this regex runs, so -R becomes -r — but we keep the [a-z] class
+    # tight rather than relying on prior lowercasing of the input).
+    # `[^|]*\s` between the flag and the path allows the intermediate mode
+    # arg, owner, etc. (e.g. `chmod -R 777 /` or `chown -R nobody:nobody /`).
+    r"\bchmod\b[^|]*\s-[a-z]*r[a-z]*\b[^|]*\s/(?:\s|$)",
+    r"\bchown\b[^|]*\s-[a-z]*r[a-z]*\b[^|]*\s/(?:\s|$)",
+    r"\bchmod\b[^|]*\s(?:" + "|".join(re.escape(p) for p in _DEFAULT_PROTECTED_PREFIXES) + r")(?:/|\s|$)",
+    r"\bchown\b[^|]*\s(?:" + "|".join(re.escape(p) for p in _DEFAULT_PROTECTED_PREFIXES) + r")(?:/|\s|$)",
+    # dd of=<disk device>  or  mkfs.<type> <disk device>  (positional)
+    r"\b(?:mkfs|dd)\b[^|]*\sof=/dev/(?:sd|nvme|hd|vd|xvd)[a-z0-9]+",
+    r"\bmkfs(?:\.[a-z0-9]+)?\s+/dev/(?:sd|nvme|hd|vd|xvd)[a-z0-9]*",
+    # find ... -delete or find ... -exec rm on root/protected
+    r"\bfind\s+/(?:\s|$).*-(?:delete|exec\s+rm)",
+    # shred on a system path
+    r"\bshred\b[^|]*\s/(?:bin|sbin|lib|lib64|boot|etc|usr|var|opt|nopt)",
+    # write-to-disk-device redirection
+    r">\s*/dev/(?:sd|nvme|hd|vd|xvd)[a-z0-9]+",
+]
+_CATASTROPHIC_RE = re.compile("|".join(_CATASTROPHIC_PATTERNS), re.IGNORECASE)
+
+def _is_command_catastrophic(cmd: str) -> tuple[bool, str]:
+    """Return (True, reason) if the literal command text would cause
+    irreversible damage to system or HPC-app filesystems. The check is
+    pattern-based — it cannot see what a Makefile or sub-shell will do,
+    but it catches the literal cases an LLM is most likely to emit by
+    accident (rm /*, rm -rf /, dd of=/dev/sdX, etc.)."""
+    lowered = cmd.lower()
+    if _CATASTROPHIC_RE.search(lowered):
+        return True, "matches a catastrophic-deletion pattern"
+    # Look for explicit references to protected prefixes alongside any of the
+    # write-class commands. This catches forms the regex misses, like
+    # `cd /etc && rm something` or backticked variables that expand to root.
+    write_verbs = (" rm ", " rmdir ", " unlink ", " chmod ", " chown ", " mv ", " > ")
+    for prefix in PROTECTED_PREFIXES:
+        if prefix in cmd and any(v in (" " + lowered + " ") for v in write_verbs):
+            return True, f"references protected prefix '{prefix}' from a write-class command"
+    return False, ""
+
+# Runtime stream monitor: if a running subprocess prints any of these patterns,
+# it is actively attempting destructive operations on system paths. We SIGKILL
+# it before it gets further.
+_STREAM_KILL_PATTERNS = [
+    # GNU rm verbose output successfully deleting a protected path
+    r"removed (?:directory )?['\"]?/(?:bin|sbin|lib|lib64|boot|etc|usr|var|opt|nopt|root)/",
+    # rm complaining about a protected path (means it just tried to delete it)
+    r"rm: cannot remove ['\"]?/(?:bin|sbin|lib|lib64|boot|etc|usr|var|root)\b",
+    # Same for the HPC trees
+    r"rm: cannot remove ['\"]?/nopt/(?:nrel|nlr|slurm|sgi)\b",
+    r"removed (?:directory )?['\"]?/nopt/(?:nrel|nlr|slurm|sgi)/",
+    # mkfs / dd / shred starting on a real device
+    r"mkfs\.[a-z0-9]+ /dev/(?:sd|nvme|hd|vd|xvd)",
+    r"dd:.+writing to '/dev/(?:sd|nvme|hd|vd|xvd)",
+]
+_STREAM_KILL_RE = re.compile("|".join(_STREAM_KILL_PATTERNS), re.IGNORECASE)
+
+
 def _is_command_safe_for_auto_approve(cmd: str) -> bool:
     """Whether all lines in a multi-line bash block are stateless read-only
     commands we can run without prompting."""
@@ -2234,16 +2353,52 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
             cmd = cmd.replace("srun ", "srun --overlap ")
         if not _is_bash_block_executable(cmd):
             continue
+        catastrophic, cat_reason = _is_command_catastrophic(cmd)
         dangerous = _is_command_dangerous(cmd.lower())
+        runs_make = bool(re.search(r"\b(?:make|cmake|ninja|nmake)\b", cmd))
         print(_banner("\n[System Command Suggested]", "yellow"))
         print(f"> {cmd}")
-        if dangerous:
+
+        if catastrophic:
+            # Type-the-exact-phrase confirmation, not just y/N. We want a
+            # palpable speed bump for the LLM-induced bad day.
+            confirm_phrase = "I HAVE READ THIS COMMAND"
+            print(_c(
+                f"\nCATASTROPHIC OPERATION DETECTED — {cat_reason}.\n"
+                f"This command can irreversibly damage system or HPC-app files.\n"
+                f"Protected prefixes (set via $OFA_PROTECTED_PREFIXES):\n  "
+                + " ".join(PROTECTED_PREFIXES) +
+                f"\n\nTo proceed, type the exact phrase: {confirm_phrase}\n"
+                f"Anything else aborts the command.",
+                "bold", "red",
+            ))
+            ans = input("Confirmation> ").strip()
+            if ans != confirm_phrase:
+                msg = "[Catastrophic command refused — no execution.]"
+                print(_c(msg, "bold", "red"))
+                all_outputs.append(msg)
+                continue
+            # The phrase matched: fall through to the runner. Treat as 'y'.
+            ans = "y"
+        elif dangerous:
             print(_c("WARNING: This command looks potentially destructive!", "bold", "red"))
+            if runs_make:
+                print(_c(
+                    "  Note: `make`/`cmake` runs whatever the Makefile contains. "
+                    "Review the Makefile first if you didn't write it.",
+                    "yellow",
+                ))
             ans = input("Execute this command? [y/N]: ").strip().lower()
         elif _is_command_safe_for_auto_approve(cmd):
             print("Auto-approving read-only stateless command...")
             ans = 'y'
         else:
+            if runs_make:
+                print(_c(
+                    "  Note: `make`/`cmake` runs whatever the Makefile contains. "
+                    "Ofa cannot pre-validate sub-shell rules; review unknown Makefiles first.",
+                    "yellow",
+                ))
             ans = input("Execute this command? [y/N]: ").strip().lower()
 
         if ans in ('y', 'yes'):
@@ -2252,6 +2407,8 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
                 out_str = f"$ {cmd}\n"
                 # Streaming Popen wrapped with CWD-tracking so `cd` persists
                 # across blocks (and into subsequent local `$` commands too).
+                # Also monitors stdout for system-deletion patterns and
+                # SIGKILLs the subprocess if any fire.
                 captured_text, _rc = _run_with_cwd_tracking(cmd, stream=True)
                 lines = captured_text.split('\n')
                 if len(lines) > 100:

@@ -168,6 +168,45 @@ def _print_model_registry():
     print("  export OFA_MODEL=<id>       (persistent for the shell)")
     print("\nAdd or override entries in $OFA_ROOT/models.json (or $OFA_MODELS_JSON).")
 
+
+# Models that have been hardened against the destructive-command/Makefile
+# escape scenarios documented in the README. Anything not in this set is
+# considered experimental, and the interactive banner warns the user.
+TESTED_MODELS = frozenset({"gemma4:31b"})
+
+def _print_active_model_banner():
+    """Print a short banner showing the active model, the menu of pulled
+    alternatives, and a loud warning if the active model is not in
+    TESTED_MODELS. Called once at interactive-mode startup."""
+    pulled = [n for n in sorted(MODEL_REGISTRY) if _is_model_pulled(n)]
+    not_pulled = [n for n in sorted(MODEL_REGISTRY) if not _is_model_pulled(n)]
+
+    active_is_tested = MODEL in TESTED_MODELS
+    print()
+    if active_is_tested:
+        print(_c(f"Active model: {MODEL}  [tested]", "bold", "green"))
+    else:
+        print(_c(f"Active model: {MODEL}  [UNTESTED — see warning below]", "bold", "red"))
+
+    print(_c("\nAvailable (pulled):", "bold"))
+    for n in pulled:
+        marker = _c("✓ tested", "green") if n in TESTED_MODELS else _c("untested", "yellow")
+        print(f"  {n:<22} [{marker}]")
+    if not_pulled:
+        print(_c("\nKnown but not pulled (run `ofa --list-models` for full list).", "dim"))
+
+    print(_c(
+        "\n" + "!" * 66 + "\n"
+        "ONLY gemma4:31b has been tested with the assistant's safety guards.\n"
+        "Any other model is EXPERIMENTAL. We've seen non-default models emit\n"
+        "Makefiles or shell commands that attempted to delete system paths\n"
+        "(e.g. rm -f /*). The destructive-command guards are designed to\n"
+        "catch those, but they are not infallible — review every approval\n"
+        "prompt carefully. To switch back: `ofa --model gemma4:31b`.\n"
+        + "!" * 66,
+        "bold", "red",
+    ))
+
 # ---------------------------------------------------------------------------
 # Behavioural tuning constants. Override via env vars where useful.
 # ---------------------------------------------------------------------------
@@ -1664,7 +1703,13 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
     print("  3. Coding Assistant (--code) - Read/Write/Execute codebase tools")
     print("\nFeatures:\n  - Session Resume (--resume)\n  - History saved to /scratch")
-    print("\nType 'quit' to exit, 'save <dir>' to save last response.")
+
+    # Active model + the full menu of pulled alternatives. Surfacing the menu
+    # here saves a `ofa --list-models` round-trip and reminds the user that
+    # all non-default models are unvetted.
+    _print_active_model_banner()
+
+    print("\nType 'quit' to exit, 'save <dir>' to save last response. Type '/help' for more commands.")
     print("-" * 60)
 
     last_response = ""

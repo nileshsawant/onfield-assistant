@@ -31,6 +31,7 @@ PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
 HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
 PLAN_PROMPT_PATH = os.path.join(PROMPTS_DIR, "plan.txt")
+SKILLS_DIR = os.path.join(PROMPTS_DIR, "skills")
 VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"))
 
 # ---------------------------------------------------------------------------
@@ -613,6 +614,82 @@ def _read_memory_file(channel: str) -> str:
 
 def _count_memory_lines(channel: str) -> int:
     return sum(1 for l in _read_memory_file(channel).splitlines() if l.strip())
+
+
+# ---------------------------------------------------------------------------
+# Skill loading: a "skill" is a Markdown file in $OFA_ROOT/prompts/skills/
+# that the user explicitly injects into the running session via the
+# `/skill <name>` slash command. The skill text becomes a system-role
+# message tagged with a `[SKILL: <name>]` content prefix so it (a) shows
+# the model where the extra context came from and (b) lets us find and
+# remove the message later without tracking indices.
+#
+# Lifetime is session-scoped: `/clear` and exiting both drop loaded
+# skills. We intentionally do NOT auto-load skills based on the user's
+# query — keep the mental model simple, the user is in control.
+# ---------------------------------------------------------------------------
+
+SKILL_MARKER_PREFIX = "[SKILL: "  # message-content prefix that flags a skill
+
+
+def _list_skill_files() -> list[tuple[str, str]]:
+    """Return [(name, one_line_summary), ...] for every .md file in SKILLS_DIR.
+
+    The summary is the first non-blank, non-heading line of the file
+    truncated to 80 chars. Missing dir is treated as "no skills available".
+    """
+    if not os.path.isdir(SKILLS_DIR):
+        return []
+    out = []
+    for fname in sorted(os.listdir(SKILLS_DIR)):
+        if not fname.endswith(".md") or fname.lower() == "readme.md":
+            continue
+        name = fname[:-3]
+        path = os.path.join(SKILLS_DIR, fname)
+        summary = ""
+        try:
+            with open(path) as f:
+                for raw in f:
+                    s = raw.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    summary = s[:80]
+                    break
+        except OSError:
+            summary = "(unreadable)"
+        out.append((name, summary))
+    return out
+
+
+def _load_skill_text(name: str) -> str | None:
+    """Return the raw Markdown contents of <SKILLS_DIR>/<name>.md, or None."""
+    # Refuse anything that looks like a path traversal attempt — the name
+    # must be a plain filename stem.
+    if "/" in name or "\\" in name or name.startswith(".") or not name:
+        return None
+    path = os.path.join(SKILLS_DIR, name + ".md")
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        print(f"Warning: could not read skill {name}: {e}", file=sys.stderr)
+        return None
+
+
+def _active_skill_names(messages: list) -> list[str]:
+    """Names of skills currently injected into the session (in load order)."""
+    names = []
+    for m in messages:
+        if m.get("role") != "system":
+            continue
+        c = m.get("content", "")
+        if c.startswith(SKILL_MARKER_PREFIX):
+            end = c.find("]", len(SKILL_MARKER_PREFIX))
+            if end > 0:
+                names.append(c[len(SKILL_MARKER_PREFIX):end])
+    return names
 
 
 def _shutdown_ollama():
@@ -1983,8 +2060,18 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         print(_c(f"Memory: {n_p} preference(s), {n_l} lesson(s) loaded — type /memory to inspect.", "cyan"))
     else:
         print(_c("Memory: empty (long-term prefs & lessons accrue as you work).", "cyan"))
+    # Skills are loaded on demand. Count what's available so the user knows
+    # the feature exists; the model never sees any of them until /skill <name>.
+    n_skills = len(_list_skill_files())
+    if n_skills:
+        print(_c(f"Skills: {n_skills} available — type /skills to list, /skill <name> to load.", "cyan"))
 
-    print("\nType 'quit' to exit, 'save <dir>' to save last response. Type '/help' for more commands.")
+    # Big, hard-to-miss callout for slash commands. Users miss the inline
+    # mention at the bottom of the banner, so emphasise it with colour and a
+    # blank line.
+    print()
+    print(_c("Type /help to see all slash commands (memory, skills, shell, save, …).", "green"))
+    print("Type 'quit' to exit, or 'save <dir>' to save the last response.")
     print("-" * 60)
 
     last_response = ""
@@ -2007,13 +2094,16 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             print(
                 "\nofa interactive commands:\n"
                 "  quit | exit | q       — exit\n"
-                "  /clear                — reset conversation (keeps system prompt + plan)\n"
+                "  /clear                — reset conversation (keeps system prompt, drops loaded skills)\n"
                 "  /history              — show how many messages are in the session\n"
                 "  /cwd                  — show current working directory\n"
                 "  /retry                — re-prompt the model and demand a proper tool fence\n"
                 "  /memory               — show what's stored in long-term memory\n"
                 "  /remember <text>      — manually add a lesson to long-term memory\n"
                 "  /forget [prefs|lessons|all]  — clear stored memory (default: lessons)\n"
+                "  /skills               — list available skill files\n"
+                "  /skill <name>         — load a skill into this session\n"
+                "  /skill off <name>     — unload a skill (use 'all' to unload every skill)\n"
                 "  save <dir>            — save last assistant response into <dir>\n"
                 "  $ <shell command>     — run a shell command locally (cd persists)\n"
                 "  @<path>               — inline a file into your prompt (relative to cwd)\n"
@@ -2074,6 +2164,94 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                         print(_c(f"[memory] {ch} already empty", "yellow"), file=sys.stderr)
                 except OSError as e:
                     print(f"Could not clear {ch}: {e}", file=sys.stderr)
+            continue
+        if user_input.lower() == "/skills":
+            available = _list_skill_files()
+            active = set(_active_skill_names(messages))
+            print(_c(f"\nSkills directory: {SKILLS_DIR}", "cyan"), file=sys.stderr)
+            if not available:
+                print(
+                    "  (no .md skill files found — drop one in the directory above and try again)",
+                    file=sys.stderr,
+                )
+            else:
+                print(_c("Available skills:", "yellow"), file=sys.stderr)
+                for name, summary in available:
+                    flag = _c(" [LOADED]", "green") if name in active else ""
+                    print(f"  {name}{flag} — {summary}", file=sys.stderr)
+            print(
+                "\nUse `/skill <name>` to load, `/skill off <name>` to unload, "
+                "`/skill off all` to unload all.",
+                file=sys.stderr,
+            )
+            continue
+        if user_input.lower().startswith("/skill"):
+            arg = user_input[len("/skill"):].strip()
+            if not arg:
+                print(
+                    "Usage: /skill <name>           — load a skill into this session\n"
+                    "       /skill off <name>       — unload a previously loaded skill\n"
+                    "       /skill off all          — unload every loaded skill\n"
+                    "       /skills                 — list available skills",
+                    file=sys.stderr,
+                )
+                continue
+            # Unload path.
+            if arg.lower().startswith("off"):
+                target = arg[3:].strip()
+                if not target:
+                    print("Usage: /skill off <name>  (or /skill off all)", file=sys.stderr)
+                    continue
+                before = len(messages)
+                if target.lower() == "all":
+                    messages[:] = [
+                        m for m in messages
+                        if not (m.get("role") == "system"
+                                and m.get("content", "").startswith(SKILL_MARKER_PREFIX))
+                    ]
+                    removed = before - len(messages)
+                    if removed:
+                        print(_c(f"[skill] unloaded {removed} skill(s)", "magenta"), file=sys.stderr)
+                    else:
+                        print(_c("[skill] nothing to unload", "yellow"), file=sys.stderr)
+                else:
+                    marker = f"{SKILL_MARKER_PREFIX}{target}]"
+                    messages[:] = [
+                        m for m in messages
+                        if not (m.get("role") == "system"
+                                and m.get("content", "").startswith(marker))
+                    ]
+                    if len(messages) < before:
+                        print(_c(f"[skill] unloaded {target}", "magenta"), file=sys.stderr)
+                    else:
+                        print(_c(f"[skill] {target} was not loaded", "yellow"), file=sys.stderr)
+                save_session(messages)
+                continue
+            # Load path.
+            name = arg.split()[0]
+            if name in _active_skill_names(messages):
+                print(_c(f"[skill] {name} is already loaded", "yellow"), file=sys.stderr)
+                continue
+            text = _load_skill_text(name)
+            if text is None:
+                print(
+                    _c(f"[skill] no such skill: {name}  (try /skills to list)", "red"),
+                    file=sys.stderr,
+                )
+                continue
+            # Insert as a system message AFTER the primary system prompt so the
+            # base prompt's rules still take precedence on conflict.
+            skill_msg = {
+                "role": "system",
+                "content": f"{SKILL_MARKER_PREFIX}{name}]\n{text}",
+            }
+            insert_at = 1 if messages and messages[0].get("role") == "system" else 0
+            messages.insert(insert_at, skill_msg)
+            save_session(messages)
+            print(
+                _c(f"[skill] loaded {name} ({len(text)} chars). It will inform the next response.", "magenta"),
+                file=sys.stderr,
+            )
             continue
         if user_input.lower() == "/retry":
             # Manual nudge: append the tool-fence reminder and re-enter the

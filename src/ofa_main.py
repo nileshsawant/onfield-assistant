@@ -367,6 +367,73 @@ def _backup_existing(filepath: str) -> str | None:
         return None
 
 
+def _run_react_loop(messages: list, current_plan: str = "", *, extract_prefs: bool = False, tolerate_connect_error: bool = False) -> tuple[str, str]:
+    """The Plan → Execute → Observe loop shared by interactive_mode,
+    single_query and hpc_single_query.
+
+    Streams one assistant response, persists it to the session, updates the
+    tracked plan, dispatches any tool blocks, and (if any tool produced
+    output) feeds that output back as a user turn and repeats — until the
+    model produces a turn with no tool actions, at which point we hand
+    control back to the caller.
+
+    Parameters:
+      messages: the live message list. Mutated in place.
+      current_plan: the existing plan tracker string (may be "").
+      extract_prefs: when True, also scrape each assistant turn for
+        `=== PREFS ===` blocks and persist them. Interactive mode wants
+        this; the single-shot single_query path does not.
+      tolerate_connect_error: when True, a lost connection to the Ollama
+        daemon prints a warning and breaks out of the loop instead of
+        propagating. Interactive mode wants this; single-shot does not
+        (we'd rather fail visibly).
+
+    Returns: (last_assistant_response_text, updated_current_plan).
+    """
+    last_response = ""
+    while True:
+        last_response = ""
+        try:
+            for chunk in chat_stream(messages):
+                print(chunk, end="", flush=True)
+                last_response += chunk
+        except KeyboardInterrupt:
+            print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
+        except httpx.ConnectError:
+            print("\n[Error: Connection to Ollama server lost. The backend may have crashed.]", file=sys.stderr)
+            if tolerate_connect_error:
+                break
+            raise
+        print()
+
+        messages.append({"role": "assistant", "content": last_response})
+        save_session(messages)
+        manage_session_context(messages)
+        if extract_prefs:
+            extract_and_save_prefs(last_response)
+        new_plan = extract_plan(last_response)
+        if new_plan:
+            current_plan = new_plan
+
+        cmd_out = check_and_execute_bash(last_response)
+        if not cmd_out:
+            break
+
+        if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
+            truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
+        else:
+            truncated = cmd_out
+        inject_msg = f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."
+        if current_plan:
+            inject_msg += f"\n\n[SYSTEM REMINDER] Proceed with your active plan:\n```plan\n{current_plan}\n```\nEvaluate what is complete and trigger the next step."
+        messages.append({"role": "user", "content": inject_msg})
+        save_session(messages)
+        manage_session_context(messages)
+        print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
+
+    return last_response, current_plan
+
+
 # Files an @-reference will not be expanded for, even on a clean read attempt.
 _ATTACH_MAX_BYTES = 64 * 1024              # per-file cap
 _ATTACH_MAX_TOTAL = 256 * 1024             # combined cap per turn
@@ -1352,46 +1419,11 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
 
         messages.append({"role": "user", "content": augmented_input})
 
-        # Stream response
-        while True:
-            last_response = ""
-            try:
-                for chunk in chat_stream(messages):
-                    print(chunk, end="", flush=True)
-                    last_response += chunk
-            except KeyboardInterrupt:
-                print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
-                pass
-            except httpx.ConnectError:
-                print("\n[Error: Connection to Ollama server lost. The backend may have crashed.]", file=sys.stderr)
-                break
-            print()
-
-            messages.append({"role": "assistant", "content": last_response})
-            save_session(messages)
-            manage_session_context(messages)
-            extract_and_save_prefs(last_response)
-            new_plan = extract_plan(last_response)
-            if new_plan: current_plan = new_plan
-            
-            cmd_out = check_and_execute_bash(last_response)
-            if cmd_out:
-                # If command output is extremely large, truncate it to prevent LLM context collapse
-                if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
-                    truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
-                else:
-                    truncated = cmd_out
-                
-                inject_msg = f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."
-                if current_plan:
-                    inject_msg += f"\n\n[SYSTEM REMINDER] Proceed with your active plan:\n```plan\n{current_plan}\n```\nEvaluate what is complete and trigger the next step."
-                    
-                messages.append({"role": "user", "content": inject_msg})
-                save_session(messages)
-                manage_session_context(messages)
-                print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
-            else:
-                break
+        last_response, current_plan = _run_react_loop(
+            messages, current_plan,
+            extract_prefs=True,
+            tolerate_connect_error=True,
+        )
 
         # Auto-save if --save was specified
         if save_dir:
@@ -2018,41 +2050,7 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
-    while True:
-        response = ""
-        try:
-            for chunk in chat_stream(messages):
-                print(chunk, end="", flush=True)
-                response += chunk
-        except KeyboardInterrupt:
-            print("\n[AI generation interrupted by user (Ctrl+C)]", file=sys.stderr)
-            pass
-        print("\n")
-        messages.append({"role": "assistant", "content": response})
-        save_session(messages)
-        manage_session_context(messages)
-        
-        new_plan = extract_plan(response)
-        if new_plan: current_plan = new_plan
-        
-        cmd_out = check_and_execute_bash(response)
-        if cmd_out:
-            if len(cmd_out) > TOOL_OUTPUT_MAX_CHARS:
-                truncated = cmd_out[:TOOL_OUTPUT_HEAD_TAIL] + "\n...[OUTPUT TRUNCATED]...\n" + cmd_out[-TOOL_OUTPUT_HEAD_TAIL:]
-            else:
-                truncated = cmd_out
-                
-            inject_msg = f"Output from executed commands:\n```text\n{truncated}\n```\nPlease continue to assist the user using this information."
-            if current_plan:
-                inject_msg += f"\n\n[SYSTEM REMINDER] Proceed with your active plan:\n```plan\n{current_plan}\n```\nEvaluate what is complete and trigger the next step."
-                
-            messages.append({"role": "user", "content": inject_msg})
-            save_session(messages)
-            manage_session_context(messages)
-            print(_c("\n[AI is analyzing the output...]", "dim", "cyan"), flush=True)
-        else:
-            break
-            
+    _run_react_loop(messages, current_plan)
     return
 
 

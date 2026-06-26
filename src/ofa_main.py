@@ -128,6 +128,12 @@ _reframe_src_collection = None
 
 _ollama_proc = None
 
+# Module-scope "logical" current working directory. Updated by
+# _run_with_cwd_tracking() so that `cd` in one bash block carries over to the
+# next. We deliberately avoid os.chdir() (which would also change the parent
+# Python process's CWD) — instead every subprocess gets `cwd=_current_cwd`.
+_current_cwd = os.getcwd()
+
 SESSION_FILE = os.path.join(OFA_SCRATCH, ".ofa_session.json")
 
 def save_session(messages):
@@ -309,8 +315,8 @@ def _warn_if_outside_cwd(filepath: str) -> str:
     working directory tree, otherwise empty string. Soft warning only — we
     do not block, since users legitimately edit prompts/configs elsewhere."""
     try:
-        abs_path = os.path.abspath(filepath)
-        cwd = os.path.abspath(os.getcwd())
+        abs_path = os.path.abspath(os.path.join(_current_cwd, filepath))
+        cwd = os.path.abspath(_current_cwd)
         if not abs_path.startswith(cwd + os.sep) and abs_path != cwd:
             return _c(f"  WARNING: {abs_path} is outside the current working directory ({cwd}).", "yellow")
     except Exception:
@@ -366,11 +372,14 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
     Python process so `cd` in one block carries over to the next.
 
     Wraps the user command with a trailer that records `pwd` to a temp file,
-    then chdir's Python (and therefore every subsequent subprocess inheritor)
-    to that directory.
+    then updates `_current_cwd` (a module-scope mutable global) which we pass
+    as the `cwd=` argument to every subsequent subprocess invocation. This
+    avoids calling `os.chdir()`, which would change the Python process's CWD
+    globally and break any threaded callers.
 
     Returns (captured_output: str, returncode: int).
     """
+    global _current_cwd
     import tempfile
     pwd_fd, pwd_path = tempfile.mkstemp(prefix="ofa_pwd_", suffix=".txt")
     os.close(pwd_fd)
@@ -383,6 +392,7 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
                 wrapped, shell=True, text=True,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, bufsize=1, universal_newlines=True,
+                cwd=_current_cwd,
             )
             for line in proc.stdout:
                 print(line, end="", flush=True)
@@ -393,16 +403,19 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
             res = subprocess.run(
                 wrapped, shell=True, text=True, capture_output=True,
                 stdin=subprocess.DEVNULL,
+                cwd=_current_cwd,
             )
             captured = (res.stdout or "") + (res.stderr or "")
             rc = res.returncode
-        # Sync Python's CWD with wherever the shell ended up so the next block
-        # inherits it (POSIX subprocess inherits parent CWD by default).
+        # Track wherever the shell ended up so the next block inherits it.
+        # We update a module-scope variable instead of calling os.chdir() so
+        # the parent Python process's CWD stays fixed (safer for threading
+        # and for any library code that caches getcwd()).
         try:
             with open(pwd_path) as f:
                 new_cwd = f.read().strip()
-            if new_cwd and os.path.isdir(new_cwd) and new_cwd != os.getcwd():
-                os.chdir(new_cwd)
+            if new_cwd and os.path.isdir(new_cwd):
+                _current_cwd = new_cwd
         except Exception:
             pass
         return captured, rc
@@ -1219,7 +1232,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             print(f"[Session has {len(messages)} messages, ~{sum(len(m.get('content','')) for m in messages)} chars total]", file=sys.stderr)
             continue
         if user_input.lower() == "/cwd":
-            print(os.getcwd(), file=sys.stderr)
+            print(_current_cwd, file=sys.stderr)
             continue
         if user_input.lower().startswith("save "):
             dirname = user_input[5:].strip()

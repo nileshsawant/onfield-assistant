@@ -2350,6 +2350,42 @@ def _is_bash_block_executable(cmd: str) -> bool:
     return True
 
 
+# Heuristics: a bash block where the majority of non-empty lines look like a
+# numbered or bulleted plan ("1. do X", "  - foo", "// plan", etc.) is the
+# model accidentally pasting prose into a ```bash``` fence. Run-on-the-shell
+# would produce dozens of "command not found" errors for "1.", "-", etc. and
+# is not what the user intended.
+_PLAN_LINE_RE = re.compile(
+    r"^\s*("
+    r"//[ \t]*plan\b"           # literal '// plan' header
+    r"|/?\*[ \t]*plan\b"        # /* plan */
+    r"|#[ \t]*plan\b"           # '# plan' header
+    r"|[0-9]+\s*[.)]\s+\S"      # '1. Foo', '12) Bar'
+    r"|[-*+•]\s+\S"             # '- foo', '* bar', '• baz'
+    r"|step\s+[0-9]+\s*[:.]"    # 'step 1:'
+    r")",
+    re.IGNORECASE,
+)
+
+def _looks_like_plan_pasted_as_bash(cmd: str) -> bool:
+    """Return True if `cmd` looks like a planning narrative (numbered list,
+    bullets, '// plan' header) rather than a real shell script. A lone
+    '// plan' (or '# plan' / '/* plan */') header counts as plenty of
+    signal on its own. Otherwise we require >= 2 list/bullet lines making
+    up the majority of non-empty lines.
+    """
+    raw_lines = [l for l in cmd.split('\n') if l.strip()]
+    if len(raw_lines) < 2:
+        return False
+    # Header form: any of the first 3 non-empty lines looks like a 'plan'
+    # header (the model started narrating instead of scripting).
+    _HEADER_RE = re.compile(r"^\s*(?:(?://|/?\*|#)\s*plan\b)", re.IGNORECASE)
+    if any(_HEADER_RE.match(l) for l in raw_lines[:3]):
+        return True
+    plan_lines = sum(1 for l in raw_lines if _PLAN_LINE_RE.match(l))
+    return plan_lines >= 2 and plan_lines / len(raw_lines) > 0.5
+
+
 def _is_command_dangerous(lower_cmd: str) -> bool:
     return any(bad in lower_cmd for bad in ["rm -rf", "mkfs", "dd if=", "> /dev/sda", "mv /"])
 
@@ -2482,6 +2518,12 @@ _CATASTROPHIC_PATTERNS = [
     r"\brm\b[^|]*\s+/\s*$",                              # rm /
     # rm targeting a protected prefix (any flags)
     r"\brm\b[^|]*\s(?:" + "|".join(re.escape(p) for p in _DEFAULT_PROTECTED_PREFIXES) + r")(?:/|\s|$)",
+    # cd into root or any protected prefix. Even if the cd itself is
+    # 'harmless', it positions every subsequent command (including
+    # rm/mkdir/make) at a dangerous location. Especially nasty because
+    # of our cwd-tracking: the BAD cwd survives across bash blocks.
+    r"\bcd\s+/\s*(?:$|\n|;|&&|\|\|)",                # cd /   (root, EOL/newline/chained)
+    r"\bcd\s+(?:" + "|".join(re.escape(p) for p in _DEFAULT_PROTECTED_PREFIXES) + r")(?:/|\s|$|\n|;|&&|\|\|)",
     # chmod/chown -R on root or protected prefix (note: cmd is lowercased
     # before this regex runs, so -R becomes -r — but we keep the [a-z] class
     # tight rather than relying on prior lowercasing of the input).
@@ -2567,6 +2609,27 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
         if "srun " in cmd and "--overlap" not in cmd:
             cmd = cmd.replace("srun ", "srun --overlap ")
         if not _is_bash_block_executable(cmd):
+            continue
+        # Refuse blocks that are obviously a planning narrative (numbered
+        # list, '// plan' header, bullets) accidentally wrapped in a ```bash
+        # fence. Running them produces dozens of 'command not found' errors
+        # for '1.', '-', etc., which is just noise the next turn has to wade
+        # through. Tell the model what happened so it resubmits cleanly.
+        if _looks_like_plan_pasted_as_bash(cmd):
+            msg = _c(
+                "\n[REFUSED] This bash block looks like a plan / numbered list, "
+                "not a shell script. Wrap the actual commands in a fresh ```bash``` "
+                "fence with no list prefixes (no '1.', no '-', no '// plan' header). "
+                "If you meant to share a plan, use a ```plan``` fence instead.",
+                "yellow",
+            )
+            print(_c("\n[System Command Suggested]", "yellow"))
+            print(f"> {cmd[:200]}{'...' if len(cmd) > 200 else ''}")
+            print(msg)
+            all_outputs.append(
+                "[Bash block refused: looks like a plan / numbered list, "
+                "not executable shell. Resubmit as a clean bash fence.]"
+            )
             continue
         catastrophic, cat_reason = _is_command_catastrophic(cmd)
         dangerous = _is_command_dangerous(cmd.lower())

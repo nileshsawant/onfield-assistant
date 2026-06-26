@@ -60,17 +60,6 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
         "thought_tags": [],
     },
-    # OpenAI gpt-oss — MoE, agent-tuned, emits <|channel|>analysis ... thinking.
-    "gpt-oss:120b": {
-        "temperature": 0.7, "top_p": 0.95, "top_k": 0,
-        "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
-        "thought_tags": [("<|channel|>analysis", "<|end|>")],
-    },
-    "gpt-oss:20b": {
-        "temperature": 0.7, "top_p": 0.95, "top_k": 0,
-        "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
-        "thought_tags": [("<|channel|>analysis", "<|end|>")],
-    },
     # Meta Llama 4 (MoE).
     "llama4:scout": {
         "temperature": 0.6, "top_p": 0.9, "top_k": 0,
@@ -141,8 +130,7 @@ def get_model_options():
 def get_model_thought_tags():
     """Native chat-template thinking tags for the currently-selected MODEL,
     used by make_thought_filter() to also hide upstream reasoning streams
-    (e.g. gpt-oss <|channel|>analysis...<|end|>) on top of our own
-    <thought>...</thought> convention."""
+    on top of our own <thought>...</thought> convention."""
     return MODEL_REGISTRY.get(MODEL, {}).get("thought_tags", [])
 
 def _is_model_pulled(model_id: str) -> bool:
@@ -354,9 +342,9 @@ def make_thought_filter(extra_tag_pairs=None):
 
     Always hides our own <thought>...</thought> convention. Additionally
     hides any (open_tag, close_tag) pairs in `extra_tag_pairs`, which the
-    caller typically gets from get_model_thought_tags() — e.g. for
-    gpt-oss, [("<|channel|>analysis", "<|end|>")] hides upstream
-    reasoning streams using the model's native chat-template tokens.
+    caller typically gets from get_model_thought_tags() — used for models
+    whose chat template emits a native reasoning channel that should not
+    be shown to the end user.
 
     The captured response string fed back to the caller stays intact, so
     the model retains continuity with its own scratchpad on the next turn.
@@ -838,6 +826,16 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
     os.close(pwd_fd)
     # POSIX-portable: run user cmd, save its exit code, write pwd, exit with saved code.
     wrapped = f"{cmd}\n__ofa_rc=$?\npwd > {pwd_path}\nexit $__ofa_rc"
+
+    # Build the file-deletion guard wrapper directory and prepend it to PATH
+    # for this subprocess. Any rm/rmdir/unlink/shred call — including ones
+    # spawned by descendant shells (make, cmake, configure, etc.) — will
+    # resolve to our wrapper, which refuses root/protected-prefix targets
+    # before delegating to the real binary.
+    guard_dir = _build_path_guard()
+    sub_env = os.environ.copy()
+    sub_env["PATH"] = guard_dir + os.pathsep + sub_env.get("PATH", "")
+
     captured = ""
     killed_for_destructive = False
     try:
@@ -849,6 +847,7 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, bufsize=1, universal_newlines=True,
                 cwd=_current_cwd, start_new_session=True,
+                env=sub_env,
             )
             for line in proc.stdout:
                 print(line, end="", flush=True)
@@ -874,6 +873,7 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
                 wrapped, shell=True, text=True, capture_output=True,
                 stdin=subprocess.DEVNULL,
                 cwd=_current_cwd,
+                env=sub_env,
             )
             captured = (res.stdout or "") + (res.stderr or "")
             rc = res.returncode
@@ -2258,6 +2258,107 @@ PROTECTED_PREFIXES = tuple(
     ).split(":") if p
 )
 
+
+# ---------------------------------------------------------------------------
+# Filesystem-call guard shim.
+#
+# The runtime stream-monitor catches destructive output AFTER `rm` has
+# started issuing syscalls. To intercept BEFORE the first delete (e.g. a
+# Makefile's `rm -f $(EMPTY_VAR)/*.o` that expands to `rm -f /*.o`), we
+# install a directory of wrapper scripts that shadow rm/rmdir/unlink/shred
+# in $PATH. The wrappers refuse to act on paths under PROTECTED_PREFIXES or
+# on absolute root globs, regardless of how the descendant shell was spawned.
+#
+# Generated once per Python process into a tempdir; that tempdir is prepended
+# to PATH for every command run through _run_with_cwd_tracking().
+# ---------------------------------------------------------------------------
+_GUARD_BIN_DIR: str | None = None  # set lazily
+
+def _build_path_guard():
+    """Create a per-process tempdir containing wrapper scripts for rm/rmdir/
+    unlink/shred and return the dir path. Each wrapper checks its arguments
+    against PROTECTED_PREFIXES and the root-glob patterns before delegating
+    to the real binary.
+    """
+    global _GUARD_BIN_DIR
+    if _GUARD_BIN_DIR and os.path.isdir(_GUARD_BIN_DIR):
+        return _GUARD_BIN_DIR
+    import tempfile
+    d = tempfile.mkdtemp(prefix="ofa_guard_")
+
+    # Resolve the real binary path for each wrapped tool once, so the wrapper
+    # doesn't recursively call itself via PATH.
+    import shutil
+    tools = {
+        "rm":     shutil.which("rm")     or "/bin/rm",
+        "rmdir":  shutil.which("rmdir")  or "/bin/rmdir",
+        "unlink": shutil.which("unlink") or "/usr/bin/unlink",
+        "shred":  shutil.which("shred")  or "/usr/bin/shred",
+    }
+    # Bash-prefix list for the wrapper scripts. Single quotes inside paths
+    # are not expected here.
+    prefix_array = " ".join(f"'{p}'" for p in PROTECTED_PREFIXES)
+
+    wrapper_template = """#!/bin/bash
+# ofa file-deletion guard wrapper — installed by ofa runtime.
+# Refuses to delete /, /*, or any path under a protected prefix.
+PROTECTED=({prefix_array})
+REAL={real}
+TOOL_NAME="{tool}"
+
+for arg in "$@"; do
+    case "$arg" in
+        -*)
+            # flag — skip
+            continue
+            ;;
+        /|/'*'|/'.'|/'..'|/'.*'|/*'/'|/* )
+            # Anything beginning with /. If user explicitly typed /tmp/foo
+            # that's their call IF /tmp isn't a protected prefix. Check below.
+            ;;
+        *)
+            continue
+            ;;
+    esac
+    # Reject root, root-glob, and dotted root patterns.
+    case "$arg" in
+        /|/'*'|'/.*'|'/..'|'/*')
+            echo "ofa-guard: refusing $TOOL_NAME on root '$arg'" >&2
+            exit 1
+            ;;
+    esac
+    # Reject any argument starting with a protected prefix.
+    for pref in "${{PROTECTED[@]}}"; do
+        if [[ "$arg" == "$pref" || "$arg" == "$pref"/* ]]; then
+            echo "ofa-guard: refusing $TOOL_NAME on protected path '$arg' (matches prefix '$pref')" >&2
+            exit 1
+        fi
+    done
+done
+
+exec "$REAL" "$@"
+"""
+
+    for tool, real in tools.items():
+        path = os.path.join(d, tool)
+        try:
+            with open(path, "w") as f:
+                f.write(wrapper_template.format(
+                    prefix_array=prefix_array,
+                    real=real,
+                    tool=tool,
+                ))
+            os.chmod(path, 0o755)
+        except OSError as e:
+            print(f"Warning: could not install {tool} guard at {path}: {e}", file=sys.stderr)
+
+    # Clean it up when the Python process exits.
+    import atexit, shutil as _sh
+    atexit.register(lambda p=d: _sh.rmtree(p, ignore_errors=True))
+    _GUARD_BIN_DIR = d
+    return d
+
+
 # Regex patterns describing commands so dangerous that the user must type a
 # literal confirmation phrase (not just 'y') to proceed. Matched against the
 # full *lower-cased* command text.
@@ -2597,7 +2698,7 @@ def main():
     parser.add_argument(
         "--model", "-m", metavar="ID",
         help="Override the LLM model id for this run (e.g. 'gemma4:31b', "
-             "'gpt-oss:120b', 'llama4:scout'). Wins over $OFA_MODEL. "
+             "'llama4:scout', 'llama3.3:70b'). Wins over $OFA_MODEL. "
              "See --list-models for what the registry knows about."
     )
     parser.add_argument(

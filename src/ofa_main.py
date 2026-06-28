@@ -176,42 +176,37 @@ def _print_model_registry():
 TESTED_MODELS = frozenset({"gemma4:31b"})
 
 def _print_active_model_banner():
-    """Print a short banner showing the active model, the menu of pulled
-    alternatives, and a loud warning if the active model is not in
-    TESTED_MODELS. Called once at interactive-mode startup."""
-    pulled = [n for n in sorted(MODEL_REGISTRY) if _is_model_pulled(n)]
-    not_pulled = [n for n in sorted(MODEL_REGISTRY) if not _is_model_pulled(n)]
+    """Print a short line showing the active model at startup.
 
+    When the active model is in TESTED_MODELS (the common case — the
+    default `gemma4:31b`) we print a single green line and stay quiet
+    about alternatives: showing a menu at startup invites users to try
+    untested models for no reason. The `/models` slash command exposes
+    the full registry on demand.
+
+    When the active model is NOT tested (the user opted into it via
+    `--model` or `$OFA_MODEL`) we keep the loud safety warning AND the
+    revert instructions, because silently hiding that risk would be
+    irresponsible — the user is actively in a state where the safety
+    guards have not been validated.
+    """
     active_is_tested = MODEL in TESTED_MODELS
     print()
     if active_is_tested:
-        print(_c(f"Active model: {MODEL}  [tested]", "bold", "green"))
-    else:
-        print(_c(f"Active model: {MODEL}  [UNTESTED — see warning below]", "bold", "red"))
+        print(_c(f"Active model: {MODEL}", "bold", "green"))
+        return
 
-    print(_c("\nAvailable (pulled):", "bold"))
-    for n in pulled:
-        marker = _c("✓ tested", "green") if n in TESTED_MODELS else _c("untested", "yellow")
-        print(f"  {n:<22} [{marker}]")
-    if not_pulled:
-        print(_c("\nKnown but not pulled (run `ofa --list-models` for full list).", "dim"))
-
-    print(_c(
-        "\nTo switch models:"
-        "\n  ofa --model <id>          (just this run, e.g. `ofa --model llama3.3:70b`)"
-        "\n  export OFA_MODEL=<id>     (persistent for the shell)"
-        "\n  ofa --list-models         (show all registered models + pulled status)",
-        "bold",
-    ))
-
+    # Untested-model branch: keep the original loud warning + switch back hint.
+    print(_c(f"Active model: {MODEL}  [UNTESTED — see warning below]", "bold", "red"))
     print(_c(
         "\n" + "!" * 66 + "\n"
         "ONLY gemma4:31b has been tested with the assistant's safety guards.\n"
-        "Any other model is EXPERIMENTAL. We've seen non-default models emit\n"
-        "Makefiles or shell commands that attempted to delete system paths\n"
-        "(e.g. rm -f /*). The destructive-command guards are designed to\n"
-        "catch those, but they are not infallible — review every approval\n"
-        "prompt carefully. To switch back: `ofa --model gemma4:31b`.\n"
+        "The model you selected is EXPERIMENTAL. We've seen non-default\n"
+        "models emit Makefiles or shell commands that attempted to delete\n"
+        "system paths (e.g. rm -f /*). The destructive-command guards are\n"
+        "designed to catch those, but they are not infallible — review\n"
+        "every approval prompt carefully.\n"
+        "To switch back: `ofa --model gemma4:31b` (or unset $OFA_MODEL).\n"
         + "!" * 66,
         "bold", "red",
     ))
@@ -2172,6 +2167,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 "  /skills               — list available skill files\n"
                 "  /skill <name>         — load a skill into this session\n"
                 "  /skill off <name>     — unload a skill (use 'all' to unload every skill)\n"
+                "  /models               — list pulled models and how to switch (advanced)\n"
                 "  save <dir>            — save last assistant response into <dir>\n"
                 "  $ <shell command>     — run a shell command locally (cd persists)\n"
                 "  @<path>               — inline a file into your prompt (relative to cwd)\n"
@@ -2191,6 +2187,43 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             continue
         if user_input.lower() == "/cwd":
             print(_current_cwd, file=sys.stderr)
+            continue
+        if user_input.lower() == "/models":
+            # Surface the model registry on demand (kept off the startup
+            # banner so users don't feel invited to switch to untested
+            # models — see _print_active_model_banner).
+            pulled = [n for n in sorted(MODEL_REGISTRY) if _is_model_pulled(n)]
+            not_pulled = [n for n in sorted(MODEL_REGISTRY) if not _is_model_pulled(n)]
+            print(_c(f"\nActive model: {MODEL}", "bold",
+                     "green" if MODEL in TESTED_MODELS else "red"),
+                  file=sys.stderr)
+            print(_c("\nAvailable (pulled):", "bold"), file=sys.stderr)
+            for n in pulled:
+                marker = (
+                    _c("tested", "green") if n in TESTED_MODELS
+                    else _c("untested — experimental", "yellow")
+                )
+                print(f"  {n:<22} [{marker}]", file=sys.stderr)
+            if not_pulled:
+                print(_c(
+                    "\nKnown but not pulled (run `ofa --list-models` outside the chat for full details).",
+                    "dim",
+                ), file=sys.stderr)
+            print(_c(
+                "\nTo switch (requires restart):"
+                "\n  ofa --model <id>          (just this run)"
+                "\n  export OFA_MODEL=<id>     (persistent for the shell)"
+                "\n  ofa --list-models         (full registry + pulled status)",
+                "bold",
+            ), file=sys.stderr)
+            if any(n not in TESTED_MODELS for n in pulled):
+                print(_c(
+                    "\nNote: only gemma4:31b has been validated against the safety guards. "
+                    "Other models are EXPERIMENTAL — they have produced commands that "
+                    "tried to delete system paths in the past. Review every approval "
+                    "prompt carefully.",
+                    "yellow",
+                ), file=sys.stderr)
             continue
         if user_input.lower() == "/memory":
             prefs = _read_memory_file("prefs")

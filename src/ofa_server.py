@@ -502,30 +502,61 @@ def serve(host: str = "127.0.0.1", port: int = 0,
     print(f"[ofa-serve] listening on http://{host}:{actual_port}", file=sys.stderr)
     print(f"[ofa-serve] models: {', '.join(_MODEL_MODES)}", file=sys.stderr)
     print(f"[ofa-serve] node={node} pid={os.getpid()}", file=sys.stderr)
-    # Big copy-pasteable connection block. Most users connect from a
-    # laptop; printing the exact ssh command (with the real compute-node
-    # hostname filled in) removes the most error-prone step.
+    # Big copy-pasteable connection block. Two ports are involved and
+    # users repeatedly conflate them; we label both explicitly to avoid
+    # confusion.
+    #   - REMOTE port = what `ofa --serve` binds on the Kestrel compute
+    #     node (this process). OS-assigned by default, or pinned via
+    #     --serve-port.
+    #   - LOCAL  port = what your laptop listens on. Random + persisted
+    #     by default, or pinned via --serve-local-port. This is the
+    #     number that goes in the VS Code BYOK URL.
     print("", file=sys.stderr)
     print(_c("=" * 72, "cyan"), file=sys.stderr)
-    print(_c("To connect from your laptop, run this in a new terminal:", "bold", "cyan"),
-          file=sys.stderr)
+    print(_c(" CONNECT FROM YOUR LAPTOP ", "bold", "cyan"), file=sys.stderr)
+    print(_c("=" * 72, "cyan"), file=sys.stderr)
     print("", file=sys.stderr)
+    print(_c(
+        f"  Kestrel compute node:  {node}", "dim",
+    ), file=sys.stderr)
+    print(_c(
+        f"  REMOTE port (this server):  {actual_port}", "dim",
+    ), file=sys.stderr)
+    print(_c(
+        f"  LOCAL  port (your laptop):  {local_port}", "dim",
+    ), file=sys.stderr)
+    print("", file=sys.stderr)
+    print(_c("Step 1 — run this in a new laptop terminal (leave it open):", "bold", "cyan"),
+          file=sys.stderr)
     print(_c(
         f"  ssh -N -o ExitOnForwardFailure=yes "
         f"-L {local_port}:{node}:{actual_port} kestrel.hpc.nrel.gov",
         "bold",
     ), file=sys.stderr)
     print("", file=sys.stderr)
-    print(_c("Then point VS Code BYOK or curl at:", "cyan"), file=sys.stderr)
-    print(_c(f"  {base_url}/v1/chat/completions", "bold"), file=sys.stderr)
+    print(_c("Step 2 — quick sanity check from the laptop:", "bold", "cyan"),
+          file=sys.stderr)
+    print(_c(f"  curl {base_url}/healthz", "bold"), file=sys.stderr)
+    print(_c("  (should print {\"status\":\"ok\"})", "dim"), file=sys.stderr)
+    print("", file=sys.stderr)
+    print(_c("Step 3 — paste these into VS Code chatLanguageModels.json:", "bold", "cyan"),
+          file=sys.stderr)
+    print(_c(f"  url    = {base_url}/v1/chat/completions", "bold"), file=sys.stderr)
     if not no_auth:
-        print(_c("Bearer token (paste as apiKey in chatLanguageModels.json):", "cyan"),
-              file=sys.stderr)
-        print(_c(f"  {token}", "bold"), file=sys.stderr)
-    print(_c(f"Quick check:  curl {base_url}/healthz", "cyan"), file=sys.stderr)
+        print(_c(f"  apiKey = {token}", "bold"), file=sys.stderr)
+    print("", file=sys.stderr)
+    print(_c("If Step 1 fails with 'Address already in use':", "yellow"), file=sys.stderr)
     print(_c(
-        f"Override the laptop port with --serve-local-port if {local_port} is busy "
-        f"on your machine (update the VS Code URL to match).",
+        f"  Something on your LAPTOP is holding {local_port}. Most often that's "
+        f"VS Code Remote-SSH's auto-forward. Pick a different number with",
+        "dim",
+    ), file=sys.stderr)
+    print(_c(
+        f"      ofa --serve --serve-local-port <N>",
+        "dim",
+    ), file=sys.stderr)
+    print(_c(
+        f"  (any free port works; update the VS Code BYOK URL to match).",
         "dim",
     ), file=sys.stderr)
     print(_c("=" * 72, "cyan"), file=sys.stderr)

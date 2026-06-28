@@ -3396,6 +3396,32 @@ def main():
         help="Print the model registry and exit. Shows which models are pulled "
              "locally vs only known to the registry."
     )
+    parser.add_argument(
+        "--serve", action="store_true",
+        help="Start an OpenAI-compatible HTTP server that exposes ofa as a "
+             "BYOK backend (for VS Code, Cursor, etc.). See --serve-host, "
+             "--serve-port, --serve-api-key-file."
+    )
+    parser.add_argument(
+        "--serve-host", default="127.0.0.1", metavar="ADDR",
+        help="Bind address for --serve (default 127.0.0.1; pair with an SSH "
+             "port-forward when reaching from a laptop)."
+    )
+    parser.add_argument(
+        "--serve-port", default=11435, type=int, metavar="N",
+        help="TCP port for --serve (default 11435)."
+    )
+    parser.add_argument(
+        "--serve-api-key-file", metavar="PATH",
+        help="Path to the bearer-token file for --serve. Auto-generated "
+             "with mode 0o600 on first run. Defaults to "
+             "$OFA_SCRATCH/.ofa_api_key."
+    )
+    parser.add_argument(
+        "--serve-no-auth", action="store_true",
+        help="Disable bearer-token auth on --serve. Local development only — "
+             "never use this on a shared node."
+    )
     args = parser.parse_args()
 
     # --model wins over the env var (which was already baked into the
@@ -3412,6 +3438,18 @@ def main():
     # Use default KeyboardInterrupt handling for SIGINT
     signal.signal(signal.SIGINT, signal.default_int_handler)
     signal.signal(signal.SIGTERM, handle_slurm_sigterm)
+
+    if args.serve:
+        # The server module handles its own ensure_ollama_running + _init_rag
+        # so we don't double-init. It blocks until Ctrl+C.
+        from ofa_server import serve
+        serve(
+            host=args.serve_host,
+            port=args.serve_port,
+            api_key_file=args.serve_api_key_file,
+            no_auth=args.serve_no_auth,
+        )
+        return
 
     ensure_ollama_running()
 

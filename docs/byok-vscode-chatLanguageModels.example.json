@@ -1,0 +1,50 @@
+[
+  {
+    "name": "OFA (Kestrel)",
+    "vendor": "customendpoint",
+    "apiKey": "ofa-PASTE_TOKEN_FROM_KEYFILE_HERE",
+    "apiType": "chat-completions",
+    "models": [
+      {
+        "id": "ofa-openfoam",
+        "name": "OFA \u00b7 OpenFOAM",
+        "url": "http://localhost:11435/v1/chat/completions",
+        "toolCalling": false,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-hpc",
+        "name": "OFA \u00b7 Kestrel HPC",
+        "url": "http://localhost:11435/v1/chat/completions",
+        "toolCalling": false,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-code",
+        "name": "OFA \u00b7 Code",
+        "url": "http://localhost:11435/v1/chat/completions",
+        "toolCalling": false,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-amrex",
+        "name": "OFA \u00b7 AMReX / MARBLES",
+        "url": "http://localhost:11435/v1/chat/completions",
+        "toolCalling": false,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-reframe",
+        "name": "OFA \u00b7 ReFrame (RHEL9)",
+        "url": "http://localhost:11435/v1/chat/completions",
+        "toolCalling": false,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      }
+    ]
+  }
+]

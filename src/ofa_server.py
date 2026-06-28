@@ -432,9 +432,51 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
     _Handler.api_key = token
     httpd = ThreadingHTTPServer((host, port), _Handler)
 
+    # Thin shim: delegate to ofa_main._c if present (which respects NO_COLOR
+    # and TTY detection); otherwise pass text through unchanged. Keeps the
+    # connection block readable without forcing colour codes into the log.
+    def _c(text: str, *styles: str) -> str:
+        fn = getattr(ofa_main, "_c", None)
+        return fn(text, *styles) if fn else text
+
+    node = os.uname().nodename
+    # Suggest a local laptop port one higher than the remote port. The
+    # default remote port (11435) clashes with VS Code Remote-SSH's
+    # auto-forward, so we steer users to 11436 on the laptop side.
+    local_port = port + 1
+    base_url = f"http://localhost:{local_port}"
+
     print(f"[ofa-serve] listening on http://{host}:{port}", file=sys.stderr)
     print(f"[ofa-serve] models: {', '.join(_MODEL_MODES)}", file=sys.stderr)
-    print(f"[ofa-serve] node={os.uname().nodename} pid={os.getpid()}", file=sys.stderr)
+    print(f"[ofa-serve] node={node} pid={os.getpid()}", file=sys.stderr)
+    # Big copy-pasteable connection block. Most users connect from a
+    # laptop; printing the exact ssh command (with the real compute-node
+    # hostname filled in) removes the most error-prone step.
+    print("", file=sys.stderr)
+    print(_c("=" * 72, "cyan"), file=sys.stderr)
+    print(_c("To connect from your laptop, run this in a new terminal:", "bold", "cyan"),
+          file=sys.stderr)
+    print("", file=sys.stderr)
+    print(_c(
+        f"  ssh -N -o ExitOnForwardFailure=yes "
+        f"-L {local_port}:{node}:{port} kestrel.hpc.nrel.gov",
+        "bold",
+    ), file=sys.stderr)
+    print("", file=sys.stderr)
+    print(_c("Then point VS Code BYOK or curl at:", "cyan"), file=sys.stderr)
+    print(_c(f"  {base_url}/v1/chat/completions", "bold"), file=sys.stderr)
+    if not no_auth:
+        print(_c("Bearer token (paste as apiKey in chatLanguageModels.json):", "cyan"),
+              file=sys.stderr)
+        print(_c(f"  {token}", "bold"), file=sys.stderr)
+    print(_c(f"Quick check:  curl {base_url}/healthz", "cyan"), file=sys.stderr)
+    print(_c(
+        "If port {p} is already in use on your laptop, swap it for any free "
+        "port and update the VS Code URL to match.".format(p=local_port),
+        "dim",
+    ), file=sys.stderr)
+    print(_c("=" * 72, "cyan"), file=sys.stderr)
+    print("", file=sys.stderr)
     print("[ofa-serve] Ctrl+C to stop.", file=sys.stderr)
     try:
         httpd.serve_forever()

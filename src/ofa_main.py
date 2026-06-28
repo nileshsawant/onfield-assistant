@@ -3441,8 +3441,20 @@ def main():
              "port-forward when reaching from a laptop)."
     )
     parser.add_argument(
-        "--serve-port", default=11435, type=int, metavar="N",
-        help="TCP port for --serve (default 11435)."
+        "--serve-port", default=0, type=int, metavar="N",
+        help="TCP port for --serve on the Kestrel side. Default 0 means "
+             "let the OS pick a free port (avoids collisions with Ollama "
+             "or another ofa session on the same node). The actual port "
+             "is printed at startup."
+    )
+    parser.add_argument(
+        "--serve-local-port", default=None, type=int, metavar="N",
+        help="Laptop-side port to suggest in the printed `ssh -L` line "
+             "and BYOK URL. Default: a random per-user port in 49200-64200 "
+             "(persisted to $OFA_SCRATCH/.ofa_serve_local_port so the VS "
+             "Code BYOK URL stays stable across --serve restarts). The "
+             "random range stays clear of 11434/11435/11436 which VS "
+             "Code Remote-SSH likes to auto-forward."
     )
     parser.add_argument(
         "--serve-api-key-file", metavar="PATH",
@@ -3481,6 +3493,7 @@ def main():
             port=args.serve_port,
             api_key_file=args.serve_api_key_file,
             no_auth=args.serve_no_auth,
+            local_port=args.serve_local_port,
         )
         return
 

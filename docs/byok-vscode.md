@@ -21,15 +21,19 @@ laptop                       Kestrel login node            Kestrel compute node
 +---------+    SSH (-L)     +-------------------+    SSH    +------------------+
 | VSCode  | <===========>   | sshd (port-fwd)   | <=======> | ofa --serve      |
 | BYOK    |   localhost:    |                   |  (compute | (Ollama localhost|
-| 11436   |   11435         |                   |  node has |  on the same node)
+| <Plap>  |   <Prem>        |                   |  node has |  on the same node)
 +---------+                 +-------------------+   GPUs)   +------------------+
 ```
 
 The SSH port-forward is the recommended way to reach the server from a
 laptop: nothing has to be opened to the network, and `ofa --serve`
-binds to `127.0.0.1` by default. The local laptop port is 11436 (one
-above the remote 11435) to avoid colliding with VS Code Remote-SSH's
-auto-forward of 11435.
+binds to `127.0.0.1` by default.
+
+Both ports (`<Plap>` and `<Prem>` above) are dynamic by default —
+`ofa --serve` prints the exact `ssh -L` command at startup with the
+actual numbers filled in. The laptop-side port is a random per-user
+port in **49200–64200**, persisted across restarts; the Kestrel-side
+port is OS-assigned each run. See the Setup section for overrides.
 
 ## Setup (one-time)
 
@@ -42,7 +46,9 @@ interactive allocation (the same one `ofa` would open for you):
 # Inside your salloc/sbatch session
 ml assistant
 ofa --serve                                        # blocks; Ctrl+C to stop
-# Optionally: ofa --serve --serve-port 11500
+# Optional overrides:
+#   ofa --serve --serve-port 11500          # pin the Kestrel-side port
+#   ofa --serve --serve-local-port 50001    # pin the laptop-side port
 ```
 
 The first run creates a bearer token at `$OFA_SCRATCH/.ofa_api_key`
@@ -50,8 +56,17 @@ The first run creates a bearer token at `$OFA_SCRATCH/.ofa_api_key`
 
 `ofa --serve` prints a connection block at startup with the **exact
 `ssh -N -L ...` command** to paste on your laptop (compute-node
-hostname already filled in), the BYOK URL, the bearer token, and a
-quick `curl` health-check. Copy that block.
+hostname and ports already filled in), the BYOK URL, the bearer token,
+and a quick `curl` health-check. Copy that block.
+
+By default both ports are dynamic:
+- The Kestrel-side port is OS-assigned (so two `ofa --serve` sessions
+  on the same node never collide with each other or with Ollama).
+- The laptop-side port is a random per-user port in **49200–64200**,
+  persisted to `$OFA_SCRATCH/.ofa_serve_local_port` so the VS Code
+  BYOK URL stays stable across `--serve` restarts. This range stays
+  clear of 11434/11435/11436 which VS Code Remote-SSH likes to
+  auto-forward.
 
 ### 2. On your laptop: paste the printed `ssh -L` command
 
@@ -59,19 +74,23 @@ It will look something like:
 
 ```bash
 ssh -N -o ExitOnForwardFailure=yes \
-    -L 11436:x3101c0s9b0n0:11435 kestrel.hpc.nrel.gov
+    -L 51823:x3101c0s9b0n0:39157 kestrel.hpc.nrel.gov
 ```
 
-Leave that terminal open. The local port defaults to **11436** (one
-above the default remote port) so VS Code's Remote-SSH auto-forward
-on 11435 doesn't collide. If 11436 is also taken on your laptop, swap
-in any free port — just update the VS Code URL in step 3 to match.
+Leave that terminal open. If the local port `ofa --serve` chose is
+already taken on your laptop, re-run on Kestrel with
+`--serve-local-port <N>` to pick a different one.
 
 ### 3. On your laptop: configure VS Code BYOK
 
 Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
 → pick the custom-endpoint provider. VS Code will open a
 `chatLanguageModels.json` file. Paste:
+
+> **Update `<LOCAL_PORT>` below to the port `ofa --serve` printed in
+> its "Then point VS Code BYOK at:" line.** Same number in all five
+> URLs. The persisted port file means you only do this once — the
+> URL stays valid across `--serve` restarts.
 
 ```json
 [
@@ -84,7 +103,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
       {
         "id": "ofa-openfoam",
         "name": "OFA · OpenFOAM",
-        "url": "http://localhost:11436/v1/chat/completions",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": false,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
@@ -92,7 +111,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
       {
         "id": "ofa-hpc",
         "name": "OFA · Kestrel HPC",
-        "url": "http://localhost:11436/v1/chat/completions",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": false,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
@@ -100,7 +119,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
       {
         "id": "ofa-code",
         "name": "OFA · Code",
-        "url": "http://localhost:11436/v1/chat/completions",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": false,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
@@ -108,7 +127,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
       {
         "id": "ofa-amrex",
         "name": "OFA · AMReX / MARBLES",
-        "url": "http://localhost:11436/v1/chat/completions",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": false,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
@@ -116,7 +135,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
       {
         "id": "ofa-reframe",
         "name": "OFA · ReFrame (RHEL9)",
-        "url": "http://localhost:11436/v1/chat/completions",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": false,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
@@ -135,12 +154,13 @@ chat as normal.
    running.
 2. From the laptop: paste the `ssh -N -L ...` line that `ofa --serve`
    printed in a spare terminal. It already has the compute-node
-   hostname and port (11436 → 11435) filled in.
+   hostname and both port numbers filled in.
 3. In VS Code, open Chat, pick `OFA · <mode>`, type.
 
 To stop: `Ctrl+C` the SSH forward, then `Ctrl+C` the `ofa --serve`
-process. The token in `$OFA_SCRATCH/.ofa_api_key` persists across runs
-so you only paste it into VS Code once.
+process. The bearer token in `$OFA_SCRATCH/.ofa_api_key` AND the
+laptop port in `$OFA_SCRATCH/.ofa_serve_local_port` persist across
+runs, so the VS Code BYOK URL and apiKey stay the same.
 
 ## Endpoints
 
@@ -174,12 +194,14 @@ it again.
 `ofa --serve` is bound to a different host/port than what your forward
 points at. Check the line `[ofa-serve] listening on http://<host>:<port>`.
 
-**`bind: Address already in use` on the laptop port** — usually because
-VS Code Remote-SSH already auto-forwarded port 11435. Use a different
-local port (the default 11436 already avoids this) or stop the
-auto-forward in VS Code: View → Ports → right-click → Stop Forwarding.
+**`bind: Address already in use` on the laptop port** — something else
+on your laptop is listening on the suggested local port (often VS Code
+Remote-SSH auto-forward). Re-run `ofa --serve --serve-local-port <N>`
+on Kestrel to pick a different port; the next printed `ssh -L` line
+will use it. You can also stop VS Code's auto-forward: View → Ports →
+right-click → Stop Forwarding.
 
-**`curl http://localhost:11436/healthz` hangs** — the TCP connection
+**`curl http://localhost:<port>/healthz` hangs** — the TCP connection
 reached *something*, but not `ofa --serve`. Almost always you're
 connected to the wrong host: `ofa --serve` is on a compute node and
 your tunnel terminates on the login node (or vice versa). Re-run the

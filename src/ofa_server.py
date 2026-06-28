@@ -390,9 +390,48 @@ class _Handler(BaseHTTPRequestHandler):
 
 # ---- public entry point --------------------------------------------------
 
-def serve(host: str = "127.0.0.1", port: int = 11435,
+def _default_local_port(scratch_dir: str) -> int:
+    """Return a stable laptop-side port suggestion.
+
+    First call generates a random port in the IANA dynamic/private range
+    (well clear of 11434/11435/11436 which VS Code Remote-SSH likes to
+    auto-forward) and persists it to ``$OFA_SCRATCH/.ofa_serve_local_port``.
+    Subsequent calls return the same port so the user's BYOK config URL
+    in VS Code does not have to change between ``ofa --serve`` runs.
+
+    If the persisted file is missing or unreadable we pick a fresh random
+    port. If it's unwritable we still return a port; we just can't
+    persist it (the user will see a different suggestion next run, no
+    correctness issue).
+    """
+    f = os.path.join(scratch_dir, ".ofa_serve_local_port")
+    if os.path.exists(f):
+        try:
+            with open(f) as fh:
+                port = int(fh.read().strip())
+            if 1024 <= port <= 65535:
+                return port
+        except (OSError, ValueError):
+            pass
+    # 49152-65535 is IANA dynamic/private range. Avoid the very top to
+    # leave headroom for ephemeral source ports.
+    port = 49200 + secrets.randbelow(15000)
+    try:
+        # 0o600 so a shared scratch can't leak this to other users.
+        fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, str(port).encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+    return port
+
+
+def serve(host: str = "127.0.0.1", port: int = 0,
           api_key_file: str | None = None,
-          no_auth: bool = False) -> None:
+          no_auth: bool = False,
+          local_port: int | None = None) -> None:
     """Start the BYOK server. Blocks until Ctrl+C.
 
     Parameters
@@ -403,12 +442,21 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
         where the network is already restricted (and never on a public
         login node).
     port:
-        TCP port. Default 11435 (one above Ollama's 11434 default).
+        TCP port on the *server* side. ``0`` (default) lets the OS pick a
+        free port — robust against conflicts with Ollama or other ofa
+        sessions on the same node. The actually-bound port is printed at
+        startup so the user knows what to put on the right-hand side of
+        ``ssh -L``.
     api_key_file:
         Path to the bearer-token file. Created with mode 0o600 on first
         run. Defaults to ``$OFA_SCRATCH/.ofa_api_key``.
     no_auth:
         Skip the Authorization check. ONLY for local testing.
+    local_port:
+        Suggested *laptop-side* port for the printed ``ssh -L`` line and
+        BYOK URL. ``None`` (default) uses a per-user-stable random port
+        in the 49200-64200 range (persisted to scratch so the VS Code
+        config doesn't have to change between runs).
     """
     global ofa_main
     import ofa_main as _ofa_main  # noqa: PLC0415 — deliberate lazy import
@@ -431,6 +479,9 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
 
     _Handler.api_key = token
     httpd = ThreadingHTTPServer((host, port), _Handler)
+    # When port=0 the OS picks; surface the actual bound port to the user
+    # and use it for the printed ssh -L line.
+    actual_port = httpd.server_port
 
     # Thin shim: delegate to ofa_main._c if present (which respects NO_COLOR
     # and TTY detection); otherwise pass text through unchanged. Keeps the
@@ -440,13 +491,15 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
         return fn(text, *styles) if fn else text
 
     node = os.uname().nodename
-    # Suggest a local laptop port one higher than the remote port. The
-    # default remote port (11435) clashes with VS Code Remote-SSH's
-    # auto-forward, so we steer users to 11436 on the laptop side.
-    local_port = port + 1
+    # Pick a per-user-stable laptop port (random first time, persisted)
+    # unless the caller pinned one. Random + persisted means the BYOK URL
+    # in VS Code stays the same across restarts without colliding with
+    # VS Code Remote-SSH's auto-forward of 11434/11435/11436.
+    if local_port is None:
+        local_port = _default_local_port(ofa_main.OFA_SCRATCH)
     base_url = f"http://localhost:{local_port}"
 
-    print(f"[ofa-serve] listening on http://{host}:{port}", file=sys.stderr)
+    print(f"[ofa-serve] listening on http://{host}:{actual_port}", file=sys.stderr)
     print(f"[ofa-serve] models: {', '.join(_MODEL_MODES)}", file=sys.stderr)
     print(f"[ofa-serve] node={node} pid={os.getpid()}", file=sys.stderr)
     # Big copy-pasteable connection block. Most users connect from a
@@ -459,7 +512,7 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
     print("", file=sys.stderr)
     print(_c(
         f"  ssh -N -o ExitOnForwardFailure=yes "
-        f"-L {local_port}:{node}:{port} kestrel.hpc.nrel.gov",
+        f"-L {local_port}:{node}:{actual_port} kestrel.hpc.nrel.gov",
         "bold",
     ), file=sys.stderr)
     print("", file=sys.stderr)
@@ -471,8 +524,8 @@ def serve(host: str = "127.0.0.1", port: int = 11435,
         print(_c(f"  {token}", "bold"), file=sys.stderr)
     print(_c(f"Quick check:  curl {base_url}/healthz", "cyan"), file=sys.stderr)
     print(_c(
-        "If port {p} is already in use on your laptop, swap it for any free "
-        "port and update the VS Code URL to match.".format(p=local_port),
+        f"Override the laptop port with --serve-local-port if {local_port} is busy "
+        f"on your machine (update the VS Code URL to match).",
         "dim",
     ), file=sys.stderr)
     print(_c("=" * 72, "cyan"), file=sys.stderr)

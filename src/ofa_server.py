@@ -197,12 +197,96 @@ def load_or_create_api_key(path: str) -> str:
     return token
 
 
+# ---- tool-calling passthrough -------------------------------------------
+#
+# When ``--serve-enable-tools`` is set, the server forwards the OpenAI
+# ``tools`` / ``tool_choice`` fields straight to Ollama's /api/chat and
+# translates the model's ``tool_calls`` response back to the OpenAI SSE
+# delta format VS Code's agent loop expects. Off by default because:
+#
+#   - VS Code Chat in Ask mode never sends ``tools``; this path is dead
+#     code for the common case.
+#   - Local 31B Gemma can be unreliable at emitting clean ``tool_calls``
+#     JSON for VS Code's complex agent tool schemas. We'd rather the
+#     opt-in user know they're trying experimental territory.
+
+def _ollama_chat_raw(messages, tools, tool_choice, options):
+    """Stream raw Ollama /api/chat response chunks (full dicts, not just
+    text). Bypasses ``ofa_main.chat_stream`` because we need ``tool_calls``
+    structure that ``chat_stream`` strips.
+
+    Yields one dict per Ollama chunk; the last has ``done=True``.
+    """
+    import httpx  # noqa: PLC0415 — lazy import so test fixtures can fake
+    payload = {
+        "model": ofa_main.MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": options,
+    }
+    if tools:
+        payload["tools"] = tools
+    # `tool_choice` is OpenAI's name; Ollama doesn't currently support
+    # forcing a specific tool, so we pass it through only for clients
+    # that might use future Ollama versions. Ollama silently ignores
+    # unknown fields.
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    with httpx.stream(
+        "POST",
+        f"{ofa_main.OLLAMA_HOST}/api/chat",
+        json=payload,
+        timeout=300.0,
+    ) as resp:
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            if data.get("error"):
+                raise RuntimeError(f"Ollama error: {data['error']}")
+            yield data
+            if data.get("done"):
+                break
+
+
+def _ollama_tool_call_to_openai(tc: dict, index: int) -> dict:
+    """Translate one Ollama ``tool_calls`` entry to OpenAI SSE delta format.
+
+    Ollama returns ``arguments`` as a parsed JSON object; OpenAI clients
+    expect it as a JSON-encoded string. We also synthesise an ``id``
+    because Ollama doesn't emit one and OpenAI clients usually need it
+    to correlate the eventual ``tool`` reply message.
+    """
+    fn = tc.get("function") or {}
+    args = fn.get("arguments")
+    if isinstance(args, (dict, list)):
+        args_str = json.dumps(args, ensure_ascii=False)
+    elif args is None:
+        args_str = ""
+    else:
+        args_str = str(args)
+    return {
+        "index": index,
+        "id": tc.get("id") or f"call_{uuid.uuid4().hex[:24]}",
+        "type": "function",
+        "function": {
+            "name": fn.get("name", ""),
+            "arguments": args_str,
+        },
+    }
+
+
 # ---- HTTP handler --------------------------------------------------------
 
 class _Handler(BaseHTTPRequestHandler):
     # Populated by ``serve()`` before the server starts accepting requests.
     api_key: str = ""
     expose_models: tuple[str, ...] = tuple(_MODEL_MODES)
+    # When True, forward `tools` / `tool_choice` from incoming requests
+    # to Ollama and translate Ollama's `tool_calls` responses back to
+    # OpenAI SSE format. Off by default because local 31B models can be
+    # unreliable at the tool-calling protocol VS Code expects.
+    enable_tools: bool = False
 
     # Quiet down the default per-request stderr line; we log our own.
     def log_message(self, format, *args):  # noqa: A003 (stdlib name)
@@ -325,6 +409,16 @@ class _Handler(BaseHTTPRequestHandler):
         if "top_p" in req:       opt_overrides["top_p"] = req["top_p"]
         if "max_tokens" in req:  opt_overrides["num_predict"] = req["max_tokens"]
 
+        # Tool-calling passthrough is opt-in (see --serve-enable-tools).
+        # When disabled, we silently drop `tools` so the model treats the
+        # request as plain chat — Ask-mode behaviour, regardless of what
+        # the client sent.
+        tools = req.get("tools") if self.enable_tools else None
+        tool_choice = req.get("tool_choice") if self.enable_tools else None
+        if not isinstance(tools, list) or not tools:
+            tools = None
+        use_tools = tools is not None
+
         # ---- build the message list ofa expects ----
         try:
             ofa_messages = _augment_messages(messages, mode)
@@ -334,7 +428,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         print(
             f"[ofa-serve] {model_id} ({mode}): {len(messages)} msg(s), "
-            f"stream={stream}",
+            f"stream={stream}, tools={'on' if use_tools else 'off'}",
             file=sys.stderr,
         )
 
@@ -342,11 +436,18 @@ class _Handler(BaseHTTPRequestHandler):
         created = int(time.time())
 
         if stream:
-            return self._handle_stream(model_id, completion_id, created, ofa_messages, opt_overrides)
-        return self._handle_blocking(model_id, completion_id, created, ofa_messages, opt_overrides)
+            return self._handle_stream(
+                model_id, completion_id, created, ofa_messages, opt_overrides,
+                tools, tool_choice,
+            )
+        return self._handle_blocking(
+            model_id, completion_id, created, ofa_messages, opt_overrides,
+            tools, tool_choice,
+        )
 
     # ---- streaming branch ----
-    def _handle_stream(self, model_id, completion_id, created, messages, opts):
+    def _handle_stream(self, model_id, completion_id, created, messages, opts,
+                       tools=None, tool_choice=None):
         # We send Connection: close because a) clients reading SSE with
         # blocking I/O (urllib, requests-without-streaming) would otherwise
         # wait forever for more bytes after [DONE], and b) we don't want
@@ -366,12 +467,41 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(_sse_chunk(model_id, completion_id, created, {"role": "assistant"}))
         self.wfile.flush()
 
+        finish_reason = "stop"
         try:
-            for chunk in ofa_main.chat_stream(messages, **opts):
-                if not chunk:
-                    continue
-                self.wfile.write(_sse_chunk(model_id, completion_id, created, {"content": chunk}))
-                self.wfile.flush()
+            if tools:
+                # Tools-on path: stream raw Ollama chunks so we can pull
+                # out tool_calls structure.
+                ollama_opts = dict(ofa_main.get_model_options())
+                ollama_opts.update(opts)
+                tool_index = 0
+                for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
+                    msg = chunk.get("message") or {}
+                    text = msg.get("content") or ""
+                    if text:
+                        self.wfile.write(_sse_chunk(model_id, completion_id, created,
+                                                    {"content": text}))
+                        self.wfile.flush()
+                    tcs = msg.get("tool_calls") or []
+                    for tc in tcs:
+                        openai_tc = _ollama_tool_call_to_openai(tc, tool_index)
+                        tool_index += 1
+                        self.wfile.write(_sse_chunk(
+                            model_id, completion_id, created,
+                            {"tool_calls": [openai_tc]},
+                        ))
+                        self.wfile.flush()
+                    if chunk.get("done"):
+                        finish_reason = "tool_calls" if tool_index > 0 else "stop"
+                        break
+            else:
+                # Existing text-only path.
+                for chunk in ofa_main.chat_stream(messages, **opts):
+                    if not chunk:
+                        continue
+                    self.wfile.write(_sse_chunk(model_id, completion_id, created,
+                                                {"content": chunk}))
+                    self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             # Client disconnected mid-stream — nothing to do.
             return
@@ -387,16 +517,41 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
         try:
-            self.wfile.write(_sse_chunk(model_id, completion_id, created, {}, finish_reason="stop"))
+            self.wfile.write(_sse_chunk(model_id, completion_id, created, {},
+                                        finish_reason=finish_reason))
             self.wfile.write(_sse_done())
             self.wfile.flush()
         except OSError:
             return
 
     # ---- non-streaming branch ----
-    def _handle_blocking(self, model_id, completion_id, created, messages, opts):
+    def _handle_blocking(self, model_id, completion_id, created, messages, opts,
+                         tools=None, tool_choice=None):
         try:
-            text = "".join(ofa_main.chat_stream(messages, **opts))
+            if tools:
+                ollama_opts = dict(ofa_main.get_model_options())
+                ollama_opts.update(opts)
+                text_parts: list[str] = []
+                tool_calls: list[dict] = []
+                tool_index = 0
+                for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
+                    msg = chunk.get("message") or {}
+                    if msg.get("content"):
+                        text_parts.append(msg["content"])
+                    for tc in msg.get("tool_calls") or []:
+                        tool_calls.append(_ollama_tool_call_to_openai(tc, tool_index))
+                        tool_index += 1
+                    if chunk.get("done"):
+                        break
+                text = "".join(text_parts)
+                message_payload = {"role": "assistant", "content": text or None}
+                if tool_calls:
+                    message_payload["tool_calls"] = tool_calls
+                finish_reason = "tool_calls" if tool_calls else "stop"
+            else:
+                text = "".join(ofa_main.chat_stream(messages, **opts))
+                message_payload = {"role": "assistant", "content": text}
+                finish_reason = "stop"
         except Exception as e:
             traceback.print_exc(file=sys.stderr)
             return self._send_error(500, f"model error: {e}", "server_error")
@@ -407,15 +562,15 @@ class _Handler(BaseHTTPRequestHandler):
             "model": model_id,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": text},
-                "finish_reason": "stop",
+                "message": message_payload,
+                "finish_reason": finish_reason,
             }],
             "usage": {
                 # ofa doesn't surface token counts from Ollama in the
                 # streaming path; report char counts as a coarse proxy.
-                "prompt_tokens": sum(len(m.get("content", "")) for m in messages) // 4,
-                "completion_tokens": len(text) // 4,
-                "total_tokens": (sum(len(m.get("content", "")) for m in messages) + len(text)) // 4,
+                "prompt_tokens": sum(len(m.get("content") or "") for m in messages) // 4,
+                "completion_tokens": len(text or "") // 4,
+                "total_tokens": (sum(len(m.get("content") or "") for m in messages) + len(text or "")) // 4,
             },
         })
 
@@ -463,7 +618,8 @@ def _default_local_port(scratch_dir: str) -> int:
 def serve(host: str = "0.0.0.0", port: int = 0,
           api_key_file: str | None = None,
           no_auth: bool = False,
-          local_port: int | None = None) -> None:
+          local_port: int | None = None,
+          enable_tools: bool = False) -> None:
     """Start the BYOK server. Blocks until Ctrl+C.
 
     Parameters
@@ -490,6 +646,13 @@ def serve(host: str = "0.0.0.0", port: int = 0,
         BYOK URL. ``None`` (default) uses a per-user-stable random port
         in the 49200-64200 range (persisted to scratch so the VS Code
         config doesn't have to change between runs).
+    enable_tools:
+        Forward OpenAI-format ``tools``/``tool_choice`` from incoming
+        requests to Ollama and translate ``tool_calls`` responses back
+        to OpenAI SSE format. Lets VS Code's Agent mode chain file
+        edits / terminal commands through one approval gate instead of
+        click-per-block. Off by default because local 31B models can
+        emit malformed JSON for VS Code's complex tool schemas.
     """
     global ofa_main
     import ofa_main as _ofa_main  # noqa: PLC0415 — deliberate lazy import
@@ -519,6 +682,14 @@ def serve(host: str = "0.0.0.0", port: int = 0,
         print(f"[ofa-serve] auth token in {api_key_file} (chmod 600)", file=sys.stderr)
 
     _Handler.api_key = token
+    _Handler.enable_tools = enable_tools
+    if enable_tools:
+        print(
+            "[ofa-serve] tool_calls passthrough is ENABLED (experimental). "
+            "VS Code Agent mode requests will see real `tool_calls` from "
+            "the model when it emits them.",
+            file=sys.stderr,
+        )
     httpd = ThreadingHTTPServer((host, port), _Handler)
     # When port=0 the OS picks; surface the actual bound port to the user
     # and use it for the printed ssh -L line.

@@ -3470,6 +3470,15 @@ def main():
         help="Disable bearer-token auth on --serve. Local development only — "
              "never use this on a shared node."
     )
+    parser.add_argument(
+        "--serve-enable-tools", action="store_true",
+        help="Experimental: forward OpenAI tools/tool_choice from incoming "
+             "requests to Ollama and translate tool_calls responses back to "
+             "OpenAI SSE format. Lets VS Code Agent mode chain file edits / "
+             "terminal commands through one approval gate instead of "
+             "click-per-block. OFF by default because local 31B models can "
+             "emit malformed JSON for VS Code's complex tool schemas."
+    )
     args = parser.parse_args()
 
     # --model wins over the env var (which was already baked into the
@@ -3497,6 +3506,7 @@ def main():
             api_key_file=args.serve_api_key_file,
             no_auth=args.serve_no_auth,
             local_port=args.serve_local_port,
+            enable_tools=args.serve_enable_tools,
         )
         return
 

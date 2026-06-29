@@ -266,15 +266,52 @@ All chat-completion requests must include
 `Authorization: Bearer <token>` unless the server was started with
 `--serve-no-auth` (local development only).
 
-## Why `toolCalling: false`
+## VS Code Agent mode and `--serve-enable-tools`
 
-VS Code's agent mode expects the model to emit OpenAI-format
-`tool_calls`. A 31B local model on a GPU node is not reliable enough at
-that protocol to drive VS Code's agent loop well. `ofa` already has its
-own carefully-tuned tool-fence convention for that — invoke it via the
-CLI when you need agent behaviour, and use the BYOK path here for chat,
-explanations, snippet generation, and "what does this Kestrel error
-mean?" type queries that benefit from `ofa`'s RAG.
+By default, `ofa --serve` ignores any `tools` array a client sends and
+returns plain text. VS Code Chat in **Ask** mode never sends `tools`,
+so this is invisible. In **Agent** mode VS Code DOES send a long list
+of tool definitions (file_edit, run_in_terminal, codebase_search, …)
+and expects the model to emit OpenAI-format `tool_calls` in reply.
+
+Without tools passthrough you still get a workable agent UX — VS Code
+detects code blocks in the model's prose, draws a box around them, and
+offers per-block apply/run buttons. The friction is one click per
+block.
+
+For a more native agent feel, opt in to **tool_calls passthrough**:
+
+```bash
+ofa --serve --serve-port 40933 --serve-enable-tools
+```
+
+This forwards `tools` / `tool_choice` to Ollama and translates
+`tool_calls` responses back to OpenAI SSE format. VS Code can then
+chain multiple actions through one approval gate and show diffs in
+proper diff editors instead of plain code blocks.
+
+**Caveat.** Local 31B Gemma can be unreliable at emitting clean
+`tool_calls` JSON for VS Code's complex agent tool schemas. Expect:
+
+- Occasional malformed JSON → VS Code shows a parsing error and you
+  have to retry.
+- Hallucinated tool names → VS Code rejects the call.
+- Partial chains → the model commits to fewer steps than a frontier
+  model would.
+
+The CLI `ofa --code` is still the most reliable agent surface; BYOK
+Agent mode is best for short, well-scoped requests where one or two
+tool calls suffice. The flag is off by default so the chat experience
+stays stable; the moment it misbehaves you can drop the flag and go
+back to the click-per-block fallback.
+
+## Why `toolCalling: true` in the BYOK config
+
+`chatLanguageModels.json` declares each model with `"toolCalling": true`
+even though the *server side* defaults to ignoring tools. The reason is
+purely cosmetic: VS Code's Chat model picker hides models that declare
+`"toolCalling": false` from the dropdown, so the entry would never
+appear. The actual tools behaviour is governed by `--serve-enable-tools`.
 
 ## Troubleshooting
 

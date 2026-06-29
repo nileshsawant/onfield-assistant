@@ -577,35 +577,30 @@ class _Handler(BaseHTTPRequestHandler):
 
 # ---- public entry point --------------------------------------------------
 
-def _default_local_port(scratch_dir: str) -> int:
-    """Return a stable laptop-side port suggestion.
+def _read_or_random_port(persist_path: str, port_min: int, port_span: int) -> int:
+    """Return a persisted port, or generate+persist a fresh random one.
 
-    First call generates a random port in the IANA dynamic/private range
-    (well clear of 11434/11435/11436 which VS Code Remote-SSH likes to
-    auto-forward) and persists it to ``$OFA_SCRATCH/.ofa_serve_local_port``.
-    Subsequent calls return the same port so the user's BYOK config URL
-    in VS Code does not have to change between ``ofa --serve`` runs.
+    Shared core for ``_default_serve_port`` and ``_default_local_port``.
+    On read failure or out-of-range value we generate a new port. On
+    write failure (e.g. read-only scratch) we still return a port; the
+    caller just won't get persistence (no correctness issue, just a
+    different port on the next run).
 
-    If the persisted file is missing or unreadable we pick a fresh random
-    port. If it's unwritable we still return a port; we just can't
-    persist it (the user will see a different suggestion next run, no
-    correctness issue).
+    Random pick uses ``secrets.randbelow`` so concurrent callers in the
+    same scratch dir are statistically unlikely to collide.
     """
-    f = os.path.join(scratch_dir, ".ofa_serve_local_port")
-    if os.path.exists(f):
+    if os.path.exists(persist_path):
         try:
-            with open(f) as fh:
+            with open(persist_path) as fh:
                 port = int(fh.read().strip())
             if 1024 <= port <= 65535:
                 return port
         except (OSError, ValueError):
             pass
-    # 49152-65535 is IANA dynamic/private range. Avoid the very top to
-    # leave headroom for ephemeral source ports.
-    port = 49200 + secrets.randbelow(15000)
+    port = port_min + secrets.randbelow(port_span)
     try:
         # 0o600 so a shared scratch can't leak this to other users.
-        fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(persist_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             os.write(fd, str(port).encode())
         finally:
@@ -615,7 +610,39 @@ def _default_local_port(scratch_dir: str) -> int:
     return port
 
 
-def serve(host: str = "0.0.0.0", port: int = 0,
+def _default_serve_port(scratch_dir: str) -> int:
+    """Return a stable Kestrel-side port for ``ofa --serve``.
+
+    Persisted to ``$OFA_SCRATCH/.ofa_serve_port`` so the user's BYOK URL
+    in VS Code stays valid across ``--serve`` restarts. Kestrel compute
+    nodes can host up to 4 users (quarter-node GPU allocations), so we
+    pick from a 10000-port range to keep the collision probability
+    near-zero (~0.04% for 4 users on a node).
+    """
+    return _read_or_random_port(
+        os.path.join(scratch_dir, ".ofa_serve_port"),
+        port_min=40000,
+        port_span=10000,
+    )
+
+
+def _default_local_port(scratch_dir: str) -> int:
+    """Return a stable laptop-side port suggestion.
+
+    First call generates a random port in the IANA dynamic/private range
+    (well clear of 11434/11435/11436 which VS Code Remote-SSH likes to
+    auto-forward) and persists it to ``$OFA_SCRATCH/.ofa_serve_local_port``.
+    Subsequent calls return the same port so the user's BYOK config URL
+    in VS Code does not have to change between ``ofa --serve`` runs.
+    """
+    return _read_or_random_port(
+        os.path.join(scratch_dir, ".ofa_serve_local_port"),
+        port_min=49200,
+        port_span=15000,
+    )
+
+
+def serve(host: str = "0.0.0.0", port: int | None = None,
           api_key_file: str | None = None,
           no_auth: bool = False,
           local_port: int | None = None,
@@ -631,11 +658,14 @@ def serve(host: str = "0.0.0.0", port: int = 0,
         keeps this safe on Kestrel's internal network. Pass ``127.0.0.1``
         only when client + server run on the same machine.
     port:
-        TCP port on the *server* side. ``0`` (default) lets the OS pick a
-        free port — robust against conflicts with Ollama or other ofa
-        sessions on the same node. The actually-bound port is printed at
-        startup so the user knows what to put on the right-hand side of
-        ``ssh -L``.
+        TCP port on the *server* side. ``None`` (default) uses a
+        per-user-stable random port in 40000-49999 (persisted to
+        ``$OFA_SCRATCH/.ofa_serve_port`` so the BYOK URL stays valid
+        across restarts). Kestrel compute nodes can host up to 4 users
+        (quarter-node GPU allocations), so picking from a 10000-port
+        range keeps the collision probability near-zero. Pass ``0`` to
+        let the OS pick (different port each restart) or a specific
+        integer to pin.
     api_key_file:
         Path to the bearer-token file. Created with mode 0o600 on first
         run. Defaults to ``$OFA_SCRATCH/.ofa_api_key``.
@@ -662,6 +692,9 @@ def serve(host: str = "0.0.0.0", port: int = 0,
     print("[ofa-serve] loading RAG index…", file=sys.stderr)
     ofa_main._init_rag()
     print("[ofa-serve] RAG ready.", file=sys.stderr)
+
+    if port is None:
+        port = _default_serve_port(ofa_main.OFA_SCRATCH)
 
     if no_auth:
         token = ""

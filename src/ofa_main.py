@@ -3444,11 +3444,14 @@ def main():
              "client + server run on the same machine."
     )
     parser.add_argument(
-        "--serve-port", default=0, type=int, metavar="N",
-        help="TCP port for --serve on the Kestrel side. Default 0 means "
-             "let the OS pick a free port (avoids collisions with Ollama "
-             "or another ofa session on the same node). The actual port "
-             "is printed at startup."
+        "--serve-port", default=None, type=int, metavar="N",
+        help="TCP port for --serve on the Kestrel side. Default: a "
+             "per-user random port in 40000-49999 persisted to "
+             "$OFA_SCRATCH/.ofa_serve_port so the BYOK URL stays valid "
+             "across restarts. Kestrel compute nodes are shared across "
+             "up to 4 users (quarter-node allocations), so picking from "
+             "a 10000-port range keeps collisions near-zero. Pass 0 to "
+             "let the OS pick instead, or an integer to pin."
     )
     parser.add_argument(
         "--serve-local-port", default=None, type=int, metavar="N",

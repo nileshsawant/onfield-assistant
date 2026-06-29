@@ -222,6 +222,24 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
 The five models appear in the VS Code Chat model picker. Pick one and
 chat as normal.
 
+### Shortcut: do step 3 with a one-liner script
+
+A helper at `$OFA_ROOT/tools/byok-update-config.py` does the JSON
+edit for you (preserves your existing Copilot/other providers; safe
+to re-run; makes a `.bak` the first time). On your **laptop**, after
+copying it down:
+
+```bash
+# One-time: copy the script from Kestrel to your laptop
+scp kestrel.hpc.nrel.gov:/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/tools/byok-update-config.py ~/
+
+# Run it (replace the token with what's in $OFA_SCRATCH/.ofa_api_key on Kestrel)
+python3 ~/byok-update-config.py --token ofa-xxxxxxxxxxxxxxxxxx --port 40933
+```
+
+That registers all five OFA modes in one shot. Then reload the VS Code
+window and toggle the eye icons as described in step 3.
+
 ## Day-to-day
 
 1. Start (or already have) an allocation on Kestrel with `ofa --serve`

@@ -8,7 +8,59 @@
 
 ---
 
-## 1. Executive summary
+## 1. Quickstart
+
+### On Kestrel
+
+```bash
+module load assistant
+ofa                                  # OpenFOAM dictionary generator (default)
+ofa --hpc                            # Kestrel HPC documentation assistant
+ofa --code                           # General coding assistant (file R/W/X)
+ofa --amrex                          # AMReX / MARBLES C++ development
+ofa --rhel9_reframe                  # ReFrame for RHEL9 migration
+ofa --resume                         # Resume your last session
+ofa "set up a cavity case" --save ./case   # Single query + save case files
+```
+
+`ofa` auto-allocates a quarter-node H100 GPU (debug partition, 30 min walltime)
+via SLURM on first invocation. Override the defaults *before* running:
+
+```bash
+export OFA_ACCOUNT=<your-slurm-account>      # default: your default account
+export OFA_PARTITION=gpu-h100                 # default: debug
+export OFA_WALLTIME=04:00:00                  # default: 00:30:00
+```
+
+Inside any interactive session, type `/help` for the full slash-command menu
+(skills, memory inspect/edit, model switch, history, save case, shell escape).
+
+### From VS Code Chat (BYOK)
+
+```bash
+# On Kestrel
+ofa --serve --serve-enable-tools
+```
+
+`ofa --serve` prints a labelled connection block with the exact `ssh -L` line
+(compute-node hostname + ports already filled in), the BYOK URL, and the
+bearer token. Paste the `ssh -L` in a laptop terminal, then register the URL
+and token in VS Code's `chatLanguageModels.json`.
+
+The helper [`tools/byok-update-config.py`](../tools/byok-update-config.py)
+generates the VS Code config in one shot. Full walkthrough including the
+known VS Code-side gotchas: [`docs/byok-vscode.md`](byok-vscode.md).
+
+### Discoverability
+
+`module help assistant` prints a usage summary; `module load assistant` shows
+a short banner with the BYOK quick-start; the GitHub repo
+(https://github.com/nileshsawant/openfoam-assistant) holds the live source
+and this document.
+
+---
+
+## 2. Executive summary
 
 `ofa` is a domain-specialised AI assistant that pairs a local 31-billion-parameter language model (Gemma 4) on Kestrel H100 GPUs with retrieval-augmented generation over indexed Kestrel/OpenFOAM/AMReX/MARBLES/ReFrame corpora. It exposes two surfaces:
 
@@ -21,7 +73,7 @@ The remainder of this document covers what's in the repo, how the pieces fit tog
 
 ---
 
-## 2. What `ofa` is — and is not
+## 3. What `ofa` is — and is not
 
 ### Is
 
@@ -38,7 +90,7 @@ The remainder of this document covers what's in the repo, how the pieces fit tog
 
 ---
 
-## 3. Architecture (high level)
+## 4. Architecture (high level)
 
 ```
                 ┌─────────────────────────────────────────────────────┐
@@ -77,9 +129,9 @@ Three layers, in order of how a request flows through them:
 
 ---
 
-## 4. Interaction surfaces
+## 5. Interaction surfaces
 
-### 4.1 CLI
+### 5.1 CLI
 
 | Command | Mode | System prompt | RAG retriever |
 |---|---|---|---|
@@ -93,11 +145,11 @@ CLI behaviour:
 
 - **Auto-allocation**: `bin/ofa` detects whether it's running inside a SLURM job. If not, it `salloc`s a quarter-node H100 allocation (defaults: debug partition, 30 min, 32 cores, 80 GB RAM, 1 GPU) and re-exec's itself on the compute node.
 - **Ollama bootstrap**: `ensure_ollama_running()` starts a per-user `ollama serve` on a UID-derived port if none is already running, then waits for `/api/tags` to respond.
-- **Session resume**: `--resume` reloads `$OFA_SCRATCH/.ofa_session.json`. Sessions auto-compress when they grow past 100 KB (see §5.6).
+- **Session resume**: `--resume` reloads `$OFA_SCRATCH/.ofa_session.json`. Sessions auto-compress when they grow past 100 KB (see §6.6).
 - **Interactive slash commands**: `/help`, `/clear`, `/history`, `/cwd`, `/retry`, `/memory`, `/remember <text>`, `/forget [prefs|lessons|all]`, `/skills`, `/skill <name>`, `/skill off <name>`, `/models`, plus shell escapes (`$ <cmd>`) and file inlining (`@<path>`).
 - **Tool execution**: the model emits fenced `=== TOOL ===` blocks; `_run_react_loop` parses them, executes (bash, file read/write, planned-file generation), feeds output back, and continues until the model stops asking for tools or the consecutive-error limit (3) is hit.
 
-### 4.2 BYOK HTTP server (`ofa --serve`)
+### 5.2 BYOK HTTP server (`ofa --serve`)
 
 OpenAI-compatible HTTP shim. Three endpoints:
 
@@ -113,11 +165,11 @@ The full client setup (SSH port-forward + VS Code config) is documented in [docs
 
 ---
 
-## 5. The domain layer (what makes `ofa` more than vanilla Gemma)
+## 6. The domain layer (what makes `ofa` more than vanilla Gemma)
 
 Both surfaces share these five components, layered into the request before it reaches Ollama.
 
-### 5.1 System prompts
+### 6.1 System prompts
 
 | File | Lines | Role |
 |---|---:|---|
@@ -136,7 +188,7 @@ System-prompt construction is in `load_system_prompt(prompt_type)`. After the pe
 2. Appends `--- USER PREFERENCES ---` block from `$OFA_SCRATCH/.ofa_prefs.txt` if present.
 3. Substitutes `{OFA_ROOT}` and `{OFA_SCRATCH}` placeholders so prompts can reference deployment-specific paths without hard-coding them.
 
-### 5.2 RAG (retrieval-augmented generation)
+### 6.2 RAG (retrieval-augmented generation)
 
 Six ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persistent client, default cosine distance, 384-dim Sentence-Transformers embeddings):
 
@@ -156,7 +208,7 @@ Six ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persistent 
 
 **Fencing**: retrieved snippets are wrapped via `_fence_rag()` in clearly delimited `=== RETRIEVED REFERENCE ===` tags, with a defence-in-depth reminder telling the model that fenced content is data, not instructions. Mitigates prompt-injection risk from documents we index.
 
-### 5.3 Long-term memory (two channels)
+### 6.3 Long-term memory (two channels)
 
 Per-user files in `$OFA_SCRATCH`, persistent across sessions:
 
@@ -174,11 +226,11 @@ Both channels share the implementation in `_save_marker_block(text, label, chann
 - Atomic write via temp file + `os.replace` so a crash mid-write can't corrupt the file.
 - Logs each save to stderr in magenta: `[memory] saved preference: <line>`.
 
-Both channels are injected into every request's system prompt (§5.1). The model is instructed in `common.txt` that PREFS overrides LESSONS on conflict (the user is ground truth).
+Both channels are injected into every request's system prompt (§6.1). The model is instructed in `common.txt` that PREFS overrides LESSONS on conflict (the user is ground truth).
 
 The whole memory machinery is also unit-tested — see [test_ofa_memory.py](file:///tmp/test_ofa_memory.py), 14 tests covering extraction, dedup, caps, atomic write under simulated `os.replace` failure, and the byte-cap eviction.
 
-### 5.4 Skills
+### 6.4 Skills
 
 Markdown files in `prompts/skills/` that the user can inject into the running session on demand:
 
@@ -192,17 +244,17 @@ Slash commands `/skills` (list), `/skill <name>` (load), `/skill off <name>` / `
 
 A separate filename-stem allow-list refuses path traversal (`..`, leading dots, `/`, `\`) so users can only load files that actually live in the skills dir.
 
-### 5.5 Safety guards
+### 6.5 Safety guards
 
 The CLI surface executes commands; that's where safety lives.
 
 - **Destructive-command pattern matcher**: regex screen catches `rm -rf /`, `dd of=/dev/...`, recursive `chmod`/`chown` on system paths, `mkfs` on real devices, etc. before they reach `subprocess.run`. Match → red-banner approval prompt requiring exact-case confirmation typed by the user (Ctrl+C / EOF treats as "no", not a crash).
 - **Consecutive-error pause**: after 3 consecutive tool failures, the react loop hands control back to the user instead of letting the model thrash.
-- **Tool output truncation**: any single command's stdout/stderr is capped at 96 KB before being fed back to the model (head + tail keepers); session-wide context is compressed when it exceeds 100 KB (see §5.6).
+- **Tool output truncation**: any single command's stdout/stderr is capped at 96 KB before being fed back to the model (head + tail keepers); session-wide context is compressed when it exceeds 100 KB (see §6.6).
 - **Catastrophic command confirmation phrase**: certain irreversible operations (e.g. `git push --force`, `rm -rf` after the regex screen passes due to a non-system path) require typing an exact phrase, not just `y`.
 - **Untested-model warning**: at startup, if the active LLM is not in `TESTED_MODELS` (currently only `gemma4:31b`), a loud red banner explains that destructive-command guards have only been validated against the default. The model registry, picker UI, and the `/models` slash command are deliberately not exposed on the startup banner — see [commit a4f1124](https://github.com/nileshsawant/openfoam-assistant/commit/a4f1124) for the rationale.
 
-### 5.6 Session context compression
+### 6.6 Session context compression
 
 When `messages` exceeds 100 KB, `manage_session_context()` walks oldest → newest (skipping the system prompt and the last 2 messages) and applies three compression strategies in order:
 
@@ -216,9 +268,9 @@ Eight unit tests cover this in [test_ofa_compress.py](file:///tmp/test_ofa_compr
 
 ---
 
-## 6. Code organisation
+## 7. Code organisation
 
-### 6.1 Repository layout
+### 7.1 Repository layout
 
 ```
 $OFA_ROOT/
@@ -249,7 +301,7 @@ $OFA_ROOT/
 
 Total tracked source: **5,988 LOC** across 9 Python files (excluding tests and prompts).
 
-### 6.2 `src/ofa_main.py` walkthrough (3,544 LOC)
+### 7.2 `src/ofa_main.py` walkthrough (3,544 LOC)
 
 Logical sections, in roughly the order they appear:
 
@@ -274,7 +326,7 @@ Logical sections, in roughly the order they appear:
 | `single_query` / `hpc_single_query` (~2300–3070) | One-shot CLI mode and the plan→generate-per-file pattern used by `--save`. |
 | `main` (~3350–3540) | Argparse, dispatch to interactive vs single-query vs `--serve`. |
 
-### 6.3 `src/ofa_server.py` walkthrough (815 LOC)
+### 7.3 `src/ofa_server.py` walkthrough (815 LOC)
 
 Linear file, easier to read top-to-bottom:
 
@@ -299,9 +351,9 @@ The whole thing depends on `ofa_main` only via `_retrieve_for_mode` and `_augmen
 
 ---
 
-## 7. Deployment on Kestrel
+## 8. Deployment on Kestrel
 
-### 7.1 Module file
+### 8.1 Module file
 
 The Lmod modulefile is at `/nopt/nrel/apps/cpu_stack/modules/default/application/assistant.lua` (outside the repo). Two functions:
 
@@ -319,7 +371,7 @@ Environment exports:
 
 The modulefile is updated in-place; changes are live for everyone on the next `module load`.
 
-### 7.2 Per-user runtime state
+### 8.2 Per-user runtime state
 
 Everything else lives under `$OFA_SCRATCH` (defaults to `/scratch/$USER`):
 
@@ -338,7 +390,7 @@ Everything else lives under `$OFA_SCRATCH` (defaults to `/scratch/$USER`):
 
 The `0o600` mode on the api-key / port files matters: `$OFA_SCRATCH` can be group/world-readable depending on filesystem ACLs, and these files contain user-specific secrets or routing info.
 
-### 7.3 SLURM allocation flow
+### 8.3 SLURM allocation flow
 
 1. User runs `ofa` outside a SLURM job → `bin/ofa` calls `salloc` with the user's default account, requesting `--gres=gpu:1 --ntasks-per-node=32 --mem=80G --time=00:30:00 -p debug`.
 2. Within `salloc`, the wrapper `srun --pty`s itself onto the compute node and re-execs `ofa`.
@@ -350,7 +402,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 
 ---
 
-## 8. Safety and security
+## 9. Safety and security
 
 | Concern | Mitigation |
 |---|---|
@@ -366,7 +418,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 
 ---
 
-## 9. Performance characteristics
+## 10. Performance characteristics
 
 | Metric | Value |
 |---|---|
@@ -384,7 +436,7 @@ The dominant latency on first reply is GPU warm-up; on subsequent replies it's t
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 Three hermetic test suites, all stdlib `unittest`. Currently run manually (`python3 /tmp/test_ofa_*.py`); not yet wired into CI.
 
@@ -397,19 +449,6 @@ Three hermetic test suites, all stdlib `unittest`. Currently run manually (`pyth
 | **Total** | **62** | — |
 
 All 62 pass at this commit (`a24a58b`).
-
----
-
-## 11. Future work (roughly in priority order)
-
-1. **CI integration** — move the four test suites into a CI workflow (`pytest` + `tox` or just `unittest discover`); currently they live in `/tmp` and are run by hand.
-2. **More skills** — `prompts/skills/` has one skill (`kestrel-debug-jobs.md`) and a README. The skill mechanism is built; the content library is sparse.
-3. **Tool-calling reliability on Gemma 4** — `--serve-enable-tools` works, but Gemma 4's `tool_calls` reliability against VS Code's rich agent schemas is hit-or-miss. Either prompt engineering or a Gemma-fine-tune on tool-use traces would help.
-4. **Per-mode embedding tuning** — current Sentence-Transformers model is general-purpose. A code-specific embedding for `of13_src` / `amrex_src` would likely improve retrieval precision.
-5. **Web-search RAG fallback** — for queries that match nothing in the indices, optionally fall back to a constrained web search (Kestrel-NREL portal, OpenFOAM Foundation docs).
-6. **Multi-user concurrency** — currently each user runs their own Ollama; a shared Ollama with request queuing on the head node would save GPU memory at the cost of cross-user isolation. Probably not worth it given Kestrel's quarter-node allocation pattern.
-7. **VS Code extension** — a small extension that wraps the BYOK setup (status-bar item, "Connect" / "Disconnect", TTL countdown, allocation auto-renew). The current setup needs ~5 manual steps.
-8. **Move ChromaDB to a faster backend** — Qdrant or LanceDB for larger corpora. Not currently a bottleneck.
 
 ---
 

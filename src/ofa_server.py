@@ -226,11 +226,41 @@ class _Handler(BaseHTTPRequestHandler):
     def _auth_ok(self) -> bool:
         if not self.api_key:
             return True  # auth disabled (server started with --no-auth)
+        # Accept multiple common auth header conventions: BYOK clients
+        # vary in what they send.
+        #   - OpenAI standard:  Authorization: Bearer <token>
+        #   - Some clients omit "Bearer ":  Authorization: <token>
+        #   - Azure / some custom endpoints:  api-key: <token>
+        #   - Older OpenAI SDKs:  x-api-key: <token>, openai-api-key: <token>
+        # We accept any of them as long as the value matches; constant-time
+        # comparison prevents timing leaks.
+        candidates = []
         auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
-            return False
-        # constant-time comparison
-        return secrets.compare_digest(auth[len("Bearer "):].strip(), self.api_key)
+        if auth.startswith("Bearer "):
+            candidates.append(auth[len("Bearer "):].strip())
+        elif auth:
+            candidates.append(auth.strip())
+        for hdr in ("api-key", "x-api-key", "openai-api-key"):
+            v = self.headers.get(hdr, "")
+            if v:
+                candidates.append(v.strip())
+        return any(secrets.compare_digest(c, self.api_key) for c in candidates if c)
+
+    def _log_auth_failure(self) -> None:
+        """Log a redacted summary of any auth-like headers we received.
+
+        Helps diagnose why VS Code / curl / etc. got a 401 without leaking
+        the token to logs.
+        """
+        seen = []
+        for hdr in ("Authorization", "api-key", "x-api-key", "openai-api-key"):
+            v = self.headers.get(hdr, "")
+            if v:
+                redacted = v[:8] + "..." if len(v) > 8 else v
+                seen.append(f"{hdr}={redacted}")
+        msg = ", ".join(seen) if seen else "no auth-like headers received"
+        print(f"[ofa-serve] auth failed ({self.client_address[0]}): {msg}",
+              file=sys.stderr)
 
     # ---- routes ----
     def do_GET(self):  # noqa: N802 (stdlib name)
@@ -238,6 +268,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"status": "ok"})
         if self.path == "/v1/models":
             if not self._auth_ok():
+                self._log_auth_failure()
                 return self._send_error(401, "missing or invalid Authorization header", "invalid_api_key")
             return self._send_json(200, {
                 "object": "list",
@@ -257,6 +288,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/v1/chat/completions":
             return self._send_error(404, f"no route for POST {self.path}", "not_found")
         if not self._auth_ok():
+            self._log_auth_failure()
             return self._send_error(401, "missing or invalid Authorization header", "invalid_api_key")
 
         # ---- parse request body ----
@@ -428,7 +460,7 @@ def _default_local_port(scratch_dir: str) -> int:
     return port
 
 
-def serve(host: str = "127.0.0.1", port: int = 0,
+def serve(host: str = "0.0.0.0", port: int = 0,
           api_key_file: str | None = None,
           no_auth: bool = False,
           local_port: int | None = None) -> None:
@@ -437,10 +469,11 @@ def serve(host: str = "127.0.0.1", port: int = 0,
     Parameters
     ----------
     host:
-        Address to bind. Use 127.0.0.1 (default) when reaching the server
-        via SSH port-forward (recommended). Use 0.0.0.0 only on a node
-        where the network is already restricted (and never on a public
-        login node).
+        Address to bind. Default ``0.0.0.0`` so that an ``ssh -L`` through
+        Kestrel's login node can reach the compute-node socket
+        (``127.0.0.1`` is unreachable across that hop). The bearer token
+        keeps this safe on Kestrel's internal network. Pass ``127.0.0.1``
+        only when client + server run on the same machine.
     port:
         TCP port on the *server* side. ``0`` (default) lets the OS pick a
         free port — robust against conflicts with Ollama or other ofa
@@ -469,8 +502,16 @@ def serve(host: str = "127.0.0.1", port: int = 0,
 
     if no_auth:
         token = ""
-        print("[ofa-serve] WARNING: started with --no-auth, all requests accepted",
-              file=sys.stderr)
+        if host == "0.0.0.0":
+            print(
+                "[ofa-serve] WARNING: --serve-no-auth combined with host=0.0.0.0 means "
+                "ANY USER on Kestrel's internal network can use your GPU allocation. "
+                "Use only for short debugging sessions; prefer auth-on for normal use.",
+                file=sys.stderr,
+            )
+        else:
+            print("[ofa-serve] WARNING: started with --no-auth, all requests accepted",
+                  file=sys.stderr)
     else:
         if api_key_file is None:
             api_key_file = os.path.join(ofa_main.OFA_SCRATCH, ".ofa_api_key")

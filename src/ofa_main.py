@@ -3436,9 +3436,12 @@ def main():
              "--serve-port, --serve-api-key-file."
     )
     parser.add_argument(
-        "--serve-host", default="127.0.0.1", metavar="ADDR",
-        help="Bind address for --serve (default 127.0.0.1; pair with an SSH "
-             "port-forward when reaching from a laptop)."
+        "--serve-host", default="0.0.0.0", metavar="ADDR",
+        help="Bind address for --serve. Default 0.0.0.0 so that ssh -L "
+             "through Kestrel's login node can reach the compute-node "
+             "socket. Bearer-token auth is enabled by default so this is "
+             "still safe on the internal network. Use 127.0.0.1 only when "
+             "client + server run on the same machine."
     )
     parser.add_argument(
         "--serve-port", default=0, type=int, metavar="N",

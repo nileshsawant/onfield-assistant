@@ -14,6 +14,50 @@ The model picker in VS Code shows five entries — one per `ofa` mode —
 so you can switch context (system prompt + RAG retriever) without
 restarting the server.
 
+## Heads up — setup is fiddly the first time
+
+Several things are non-obvious and the first run almost always hits at
+least one of them. Read this before you start so you know what's coming.
+
+1. **`ofa --serve` must bind `0.0.0.0`, not `127.0.0.1`.** Default since
+   2026-06-28 — but earlier docs said otherwise. The login node's sshd
+   cannot reach the compute node's loopback when forwarding `-L`, so
+   `127.0.0.1` looks like it works (curl from inside the node succeeds)
+   but `ssh -L` traffic is refused.
+
+2. **VS Code Remote-SSH auto-forwards every listening socket** it sees
+   on the remote, racing your manual `ssh -L` for the local port. If
+   you're connecting from a VS Code window that has Remote-SSH attached
+   to Kestrel, **disable auto-forward**: settings → search
+   `remote.autoForwardPorts` → set to `false`. Reload window. Otherwise
+   you'll keep hitting `bind: Address already in use` on whatever
+   laptop port you pick.
+
+3. **`toolCalling: true` is required in the BYOK config** — even though
+   our backend doesn't actually do tool calls. VS Code's Chat model
+   picker hides models that declare `toolCalling: false`, so the entry
+   never appears in the dropdown. Set it to `true` and pretend; the
+   docs below already do.
+
+4. **The model must be explicitly "shown" in the picker.** After
+   pasting the BYOK config, open `Cmd-Shift-P → "Chat: Manage Language
+   Models"`, find each `OFA ·` row, and toggle its eye icon to
+   "visible". Otherwise the row stays hidden even though it's
+   registered.
+
+5. **Use Chat in "Ask" mode, not "Agent" mode.** Agent mode tries to
+   drive the model with `tool_calls` JSON, which a 31B local Gemma
+   doesn't produce reliably. You'll see "show but don't run" behaviour
+   — the model describes bash commands, VS Code doesn't execute them.
+   That's expected with BYOK; use the `ofa` CLI when you want the
+   agent loop.
+
+6. **First chat reply is slow** (30–60 s) while Ollama loads the model
+   into GPU memory. Subsequent replies are fast.
+
+If a step doesn't work, the [Troubleshooting](#troubleshooting) section
+at the bottom of this file maps every symptom we've seen to its fix.
+
 ## What runs where (and what each port is for)
 
 ```
@@ -21,7 +65,7 @@ restarting the server.
                           +-----------+                  +---------------------+
   VS Code Chat (BYOK) --> | localhost | -- ssh -L -->    | ofa --serve         |
                           | :LOCAL    |   (through       | listening on        |
-                          +-----------+   login node)    | 127.0.0.1:REMOTE    |
+                          +-----------+   login node)    | 0.0.0.0:REMOTE      |
                                                          +---------------------+
                                           ^                    |
                                           |                    v
@@ -134,7 +178,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
         "id": "ofa-openfoam",
         "name": "OFA · OpenFOAM",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": false,
+        "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
       },
@@ -142,7 +186,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
         "id": "ofa-hpc",
         "name": "OFA · Kestrel HPC",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": false,
+        "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
       },
@@ -150,7 +194,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
         "id": "ofa-code",
         "name": "OFA · Code",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": false,
+        "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
       },
@@ -158,7 +202,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
         "id": "ofa-amrex",
         "name": "OFA · AMReX / MARBLES",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": false,
+        "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
       },
@@ -166,7 +210,7 @@ Open the Command Palette → `Chat: Manage Language Models` → `Add Models`
         "id": "ofa-reframe",
         "name": "OFA · ReFrame (RHEL9)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": false,
+        "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
       }

@@ -32,6 +32,13 @@ for var in $(env | grep -E "^(SLURM_STEP|SLURM_SRUN|PMI|PMIX)_" | cut -d= -f1); 
 done
 unset SLURM_STEPID SLURM_TASK_PID SLURM_PROCID SLURM_LOCALID SLURM_GTIDS SLURM_NODEID SLURM_TASKS_PER_NODE
 
+# Source the system profile so MODULEPATH (and the rest of the login-shell
+# environment) is populated. Without this, subprocess.run(cmd, shell=True)
+# inside ofa runs a non-login bash that skips /etc/profile.d/*, so things
+# like `module load pytorch` fail because GPU-stack module paths are not in
+# MODULEPATH — even on a GPU node.
+source /etc/profile 2>/dev/null || true
+
 export OLLAMA_MODELS="${OFA_ROOT}/models"
 export OFA_VECTORDB="${OFA_ROOT}/vectordb"
 

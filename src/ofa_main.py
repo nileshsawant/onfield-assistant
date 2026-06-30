@@ -2954,6 +2954,23 @@ PROTECTED_PREFIXES = tuple(
     ).split(":") if p
 )
 
+# Path-anchored regexes for each protected prefix. A prefix counts as
+# "referenced" only when it appears at a real path boundary — at the start
+# of the command, or preceded by whitespace, a quote, `=`, `(`, `:`, `;`,
+# `|`, or `&` — and is followed by `/`, whitespace, end-of-string, or a
+# closing quote/separator. This stops the false-positive where ordinary
+# relative paths like `my_torch/bin/activate` or expanded env vars like
+# `${CONDA_PREFIX}/lib/python3.13/...` trip the catastrophic-command guard
+# just because they contain `/bin` or `/lib` as a substring.
+_PROTECTED_PREFIX_RES = tuple(
+    re.compile(
+        r"(?:^|[\s'\"=(:;|&])"
+        + re.escape(prefix)
+        + r"(?=/|\s|$|['\"|;&)])"
+    )
+    for prefix in PROTECTED_PREFIXES
+)
+
 
 # ---------------------------------------------------------------------------
 # Filesystem-call guard shim.
@@ -3104,9 +3121,19 @@ def _is_command_catastrophic(cmd: str) -> tuple[bool, str]:
     # Look for explicit references to protected prefixes alongside any of the
     # write-class commands. This catches forms the regex misses, like
     # `cd /etc && rm something` or backticked variables that expand to root.
+    #
+    # We anchor the prefix at real path boundaries so that ordinary relative
+    # paths that happen to contain a protected segment do NOT trip the
+    # guard:
+    #     my_torch_MPI_NCCL/bin/activate  ->  /bin appears mid-path, NOT a hit
+    #     ${CONDA_PREFIX}/lib/python3.13  ->  /lib follows '}', NOT a hit
+    #     cp file /etc/foo                ->  /etc preceded by space, IS a hit
+    #     echo bad > /usr/local           ->  /usr preceded by space, IS a hit
     write_verbs = (" rm ", " rmdir ", " unlink ", " chmod ", " chown ", " mv ", " > ")
-    for prefix in PROTECTED_PREFIXES:
-        if prefix in cmd and any(v in (" " + lowered + " ") for v in write_verbs):
+    if not any(v in (" " + lowered + " ") for v in write_verbs):
+        return False, ""
+    for prefix, prefix_re in zip(PROTECTED_PREFIXES, _PROTECTED_PREFIX_RES):
+        if prefix_re.search(cmd):
             return True, f"references protected prefix '{prefix}' from a write-class command"
     return False, ""
 

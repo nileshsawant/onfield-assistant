@@ -37,7 +37,16 @@ unset SLURM_STEPID SLURM_TASK_PID SLURM_PROCID SLURM_LOCALID SLURM_GTIDS SLURM_N
 # inside ofa runs a non-login bash that skips /etc/profile.d/*, so things
 # like `module load pytorch` fail because GPU-stack module paths are not in
 # MODULEPATH — even on a GPU node.
+#
+# Caveat: some Kestrel profile-d scripts call `module purge` which clears
+# OFA_ROOT (set by `setenv` in the assistant modulefile). We re-establish
+# OFA_ROOT from this script's own path immediately afterwards so the rest
+# of the wrapper sees the right value regardless of what the profile chain
+# did.
 source /etc/profile 2>/dev/null || true
+_OFA_SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+OFA_ROOT="$(cd "$(dirname "$_OFA_SCRIPT")/.." && pwd)"
+export OFA_ROOT
 
 export OLLAMA_MODELS="${OFA_ROOT}/models"
 export OFA_VECTORDB="${OFA_ROOT}/vectordb"

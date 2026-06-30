@@ -3109,18 +3109,55 @@ _CATASTROPHIC_PATTERNS = [
 ]
 _CATASTROPHIC_RE = re.compile("|".join(_CATASTROPHIC_PATTERNS), re.IGNORECASE)
 
-def _is_command_catastrophic(cmd: str) -> tuple[bool, str]:
-    """Return (True, reason) if the literal command text would cause
-    irreversible damage to system or HPC-app filesystems. The check is
-    pattern-based — it cannot see what a Makefile or sub-shell will do,
-    but it catches the literal cases an LLM is most likely to emit by
-    accident (rm /*, rm -rf /, dd of=/dev/sdX, etc.)."""
+def _split_into_subcommands(cmd: str) -> list[str]:
+    """Best-effort split of a bash command into subcommand pieces.
+
+    Splits on top-level newlines, `;`, `&&`, and `||`. Does NOT understand
+    heredocs, escaped newlines inside quoted strings, or pipelines —
+    those are uncommon enough in LLM-emitted commands that the value of
+    a clean per-subcommand catastrophic-guard check (no cross-line
+    false positives) outweighs the rare miss. Line-continuations
+    (``\\\\n``) are joined into a single subcommand.
+
+    The primary _CATASTROPHIC_RE still runs against the full command, so
+    a genuinely catastrophic pattern that happens to span our naive
+    splits is still caught.
+    """
+    # Join line continuations first.
+    joined = re.sub(r"\\\n", " ", cmd)
+    # Split on \n, ;, &&, ||
+    pieces = re.split(r"[\n;]|\&\&|\|\|", joined)
+    return [p.strip() for p in pieces if p.strip()]
+
+
+def _is_command_catastrophic(cmd: str) -> tuple[bool, str, str]:
+    """Return ``(catastrophic, reason, evidence)``.
+
+    - ``catastrophic`` — True if the literal command text would cause
+      irreversible damage to system or HPC-app filesystems.
+    - ``reason`` — human-readable description of which check fired.
+    - ``evidence`` — the offending subcommand or matched snippet, so the
+      user can see *which* part of a multi-line block tripped the guard.
+      Empty when ``catastrophic`` is False.
+
+    The check is pattern-based — it cannot see what a Makefile or
+    sub-shell will do, but it catches the literal cases an LLM is most
+    likely to emit by accident (``rm /*``, ``rm -rf /``, ``dd of=/dev/sdX``,
+    etc.).
+    """
     lowered = cmd.lower()
-    if _CATASTROPHIC_RE.search(lowered):
-        return True, "matches a catastrophic-deletion pattern"
+    m = _CATASTROPHIC_RE.search(lowered)
+    if m:
+        # Take a window around the match in the *original* casing so the
+        # evidence the user sees matches what they typed/the model emitted.
+        s, e = m.start(), m.end()
+        snippet = cmd[max(0, s - 20):min(len(cmd), e + 40)].strip()
+        return True, "matches a catastrophic-deletion pattern", snippet
     # Look for explicit references to protected prefixes alongside any of the
-    # write-class commands. This catches forms the regex misses, like
-    # `cd /etc && rm something` or backticked variables that expand to root.
+    # write-class commands, on a PER-SUBCOMMAND basis so that a write verb
+    # in one line and a protected prefix in another do NOT combine into a
+    # false positive (this was the bug behind the torchParallel.tar.gz +
+    # ${CONDA_PREFIX}/lib echo redirect refusal).
     #
     # We anchor the prefix at real path boundaries so that ordinary relative
     # paths that happen to contain a protected segment do NOT trip the
@@ -3130,12 +3167,18 @@ def _is_command_catastrophic(cmd: str) -> tuple[bool, str]:
     #     cp file /etc/foo                ->  /etc preceded by space, IS a hit
     #     echo bad > /usr/local           ->  /usr preceded by space, IS a hit
     write_verbs = (" rm ", " rmdir ", " unlink ", " chmod ", " chown ", " mv ", " > ")
-    if not any(v in (" " + lowered + " ") for v in write_verbs):
-        return False, ""
-    for prefix, prefix_re in zip(PROTECTED_PREFIXES, _PROTECTED_PREFIX_RES):
-        if prefix_re.search(cmd):
-            return True, f"references protected prefix '{prefix}' from a write-class command"
-    return False, ""
+    for piece in _split_into_subcommands(cmd):
+        piece_lowered = piece.lower()
+        if not any(v in (" " + piece_lowered + " ") for v in write_verbs):
+            continue
+        for prefix, prefix_re in zip(PROTECTED_PREFIXES, _PROTECTED_PREFIX_RES):
+            if prefix_re.search(piece):
+                return (
+                    True,
+                    f"references protected prefix '{prefix}' from a write-class command",
+                    piece,
+                )
+    return False, "", ""
 
 # Runtime stream monitor: if a running subprocess prints any of these patterns,
 # it is actively attempting destructive operations on system paths. We SIGKILL
@@ -3205,7 +3248,7 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
                 "not executable shell. Resubmit as a clean bash fence.]"
             )
             continue
-        catastrophic, cat_reason = _is_command_catastrophic(cmd)
+        catastrophic, cat_reason, cat_evidence = _is_command_catastrophic(cmd)
         dangerous = _is_command_dangerous(cmd.lower())
         runs_make = bool(re.search(r"\b(?:make|cmake|ninja|nmake)\b", cmd))
         print(_banner("\n[System Command Suggested]", "yellow"))
@@ -3215,8 +3258,13 @@ def _handle_bash_blocks(bash_blocks, all_outputs):
             # Type-the-exact-phrase confirmation, not just y/N. We want a
             # palpable speed bump for the LLM-induced bad day.
             confirm_phrase = "I HAVE READ THIS COMMAND"
+            evidence_line = (
+                f"Triggered by this part of the command:\n  >>> {cat_evidence}\n\n"
+                if cat_evidence else ""
+            )
             print(_c(
-                f"\nCATASTROPHIC OPERATION DETECTED — {cat_reason}.\n"
+                f"\nCATASTROPHIC OPERATION DETECTED — {cat_reason}.\n\n"
+                + evidence_line +
                 f"This command can irreversibly damage system or HPC-app files.\n"
                 f"Protected prefixes (set via $OFA_PROTECTED_PREFIXES):\n  "
                 + " ".join(PROTECTED_PREFIXES) +

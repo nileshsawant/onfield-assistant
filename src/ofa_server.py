@@ -115,14 +115,63 @@ def _augment_user_message(content: str, mode: str) -> str:
     )
 
 
+def _split_content(content) -> tuple[str, list[str]]:
+    """Split an OpenAI-format content field into (text, images).
+
+    Accepts either the classic string form (returned as ``(str, [])``) or
+    the multimodal array form::
+
+        [{"type": "text",      "text": "..."},
+         {"type": "image_url", "image_url": {"url": "data:image/png;base64,..." }}]
+
+    Image URLs are extracted as raw base64 payloads for Ollama's
+    ``messages[].images`` field. Only ``data:...;base64,...`` URLs are
+    decoded here; ``https://`` URLs are skipped with a warning because
+    fetching them would require outbound HTTP from the Kestrel compute
+    node (usually blocked). Users should base64-encode client-side.
+    """
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return "", []
+    texts: list[str] = []
+    images: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            texts.append(str(part.get("text", "")))
+        elif ptype == "image_url":
+            url_obj = part.get("image_url")
+            url = url_obj.get("url", "") if isinstance(url_obj, dict) else (url_obj or "")
+            if isinstance(url, str) and url.startswith("data:"):
+                _, _, payload = url.partition("base64,")
+                if payload:
+                    images.append(payload)
+            elif isinstance(url, str) and url.startswith(("http://", "https://")):
+                print(
+                    f"[ofa-serve] skipping image at {url[:60]}...: fetching "
+                    "HTTP(S) URLs from the compute node is disabled; "
+                    "base64-encode client-side instead",
+                    file=sys.stderr,
+                )
+    return "\n".join(texts), images
+
+
 def _augment_messages(messages: list[dict], mode: str) -> list[dict]:
     """Return a new message list with RAG injected on the last user msg
     and an ofa system prompt prepended (replacing any inbound system msg).
 
-    We replace inbound system messages on purpose: VS Code's agent harness
-    sends its own system prompt that knows nothing about Kestrel/OpenFOAM,
-    and our system prompt + memory injection is the whole point of routing
-    through ofa.
+    Handles both classic string ``content`` and the OpenAI multimodal
+    array form. Extracted images are attached to the resulting message
+    under an ``images`` key (Ollama's format), which ``chat_stream`` and
+    ``_ollama_chat_raw`` forward untouched to ``/api/chat``.
+
+    We replace inbound system messages on purpose: BYOK clients often
+    ship their own system prompt that knows nothing about Kestrel /
+    OpenFOAM, and our system prompt + memory injection is the whole
+    point of routing through ofa.
     """
     out = [{"role": "system", "content": ofa_main.load_system_prompt(mode)}]
     last_user_idx = None
@@ -132,13 +181,15 @@ def _augment_messages(messages: list[dict], mode: str) -> list[dict]:
     for i, m in enumerate(messages):
         role = m.get("role")
         if role == "system":
-            # Drop inbound system messages — ours wins. We surface this in
-            # a debug header so the client side can confirm.
+            # Drop inbound system messages — ours wins.
             continue
-        content = m.get("content", "")
+        content, images = _split_content(m.get("content", ""))
         if role == "user" and i == last_user_idx:
             content = _augment_user_message(content, mode)
-        out.append({"role": role, "content": content})
+        omsg: dict = {"role": role, "content": content}
+        if images:
+            omsg["images"] = images
+        out.append(omsg)
     return out
 
 

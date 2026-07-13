@@ -163,6 +163,88 @@ The model ID in the request body selects the mode → system prompt → RAG retr
 
 The full client setup (SSH port-forward + VS Code config) is documented in [docs/byok-vscode.md](byok-vscode.md). A helper at [tools/byok-update-config.py](../tools/byok-update-config.py) generates the VS Code `chatLanguageModels.json` provider entry in one shot.
 
+### 5.3 Python client (`ofa_client`)
+
+For calling ofa from inside a user's own code (typically a simulation
+loop that wants AI summaries of plots, log snippets, or config
+files), `src/ofa_client.py` is a stdlib-only client that talks to a
+running `ofa --serve` on the same node. `module load assistant` adds
+`$OFA_ROOT/src` to `PYTHONPATH`, so it imports cleanly from any Python
+environment (venv, conda, bare interpreter) — the client has no third
+-party dependencies and doesn't import anything from `ofa_main` or
+`ofa_server`.
+
+Two API entry points:
+
+- `ask(prompt, ...)` — stateless one-shot; the natural fit for a sim
+  loop where each summary is independent.
+- `Session(model=...)` — accumulates a message history client-side and
+  sends the whole thing on each `.ask()`; the natural fit for multi
+  -turn scripts (code diagnosis, exploratory back-and-forth).
+
+Usage:
+
+```python
+from ofa_client import ask, Session
+
+# 1. Plain text
+text = ask("what is a good turbulence model for cavity flow at Re=1e4?")
+
+# 2. Text with inline context
+text = ask(
+    "diagnose this run",
+    context="Simulation was cavity flow, Re=1000. Diverged at step 4200.",
+)
+
+# 3. Attach a file (tail-reads last 32 KB by default; full_file=True to
+#    override — useful for huge solver logs)
+text = ask("why is this crashing?", file="output/solver.log")
+
+# 4. Attach an image (base64-encoded and sent as OpenAI image_url)
+text = ask("describe this plot", image="output/step_0100_pressure.png")
+
+# 5. All at once + explicit model
+text = ask(
+    "diagnose this simulation",
+    image="output/step_4200_pressure.png",
+    file="output/solver.log",
+    context="Re=1000, cavity flow, k-omega SST turbulence model.",
+    model="ofa-code",
+    timeout=60,
+)
+
+# Multi-turn
+sess = Session(model="ofa-code")
+sess.ask("what turbulence model for cavity flow at Re=1e4?")
+sess.ask("show me a controlDict for that")   # sees the previous turn
+```
+
+Auto-detection order for URL and bearer token:
+
+1. Explicit `url=` / `token=` kwargs to `ask` / `Session`.
+2. `$OFA_BYOK_URL` and `$OFA_BYOK_TOKEN` environment variables.
+3. `$OFA_SCRATCH/.ofa_serve_port` and `$OFA_SCRATCH/.ofa_api_key`.
+4. `/scratch/$USER/.ofa_serve_port` and `/scratch/$USER/.ofa_api_key`.
+
+Raises `RuntimeError` with a clear message if no server is reachable —
+sim loops should wrap the call in try/except so a slow model or
+expired allocation skips the summary rather than crashes the sim:
+
+```python
+try:
+    summary = ask(f"Summarise pressure field at step {step}", image=fname,
+                  timeout=60)
+    with open("output/ai_summary.log", "a") as f:
+        f.write(f"[step {step}] {summary}\n")
+except Exception as e:
+    print(f"[ai summary skipped: {e}]")
+```
+
+Any of the five `ofa` modes (`ofa-openfoam`, `ofa-hpc`, `ofa-code`,
+`ofa-amrex`, `ofa-reframe`) can be passed as `model=`. Images pair
+with any mode — Gemma 4's vision head handles them regardless of
+which system prompt is loaded.
+
 ---
 
 ## 6. The domain layer (what makes `ofa` more than vanilla Gemma)
@@ -276,8 +358,9 @@ Eight unit tests cover this in [test_ofa_compress.py](file:///tmp/test_ofa_compr
 $OFA_ROOT/
 ├── bin/ofa                      # SLURM-aware shell wrapper
 ├── src/
-│   ├── ofa_main.py             # ~3,500 LOC: CLI, agent loop, RAG, memory
-│   ├── ofa_server.py           # ~ 815 LOC: BYOK HTTP shim
+│   ├── ofa_main.py             # ~3,600 LOC: CLI, agent loop, RAG, memory
+│   ├── ofa_server.py           # ~ 870 LOC: BYOK HTTP shim
+│   ├── ofa_client.py           # ~ 360 LOC: stdlib-only Python client
 │   ├── build_index.py          # legacy index builder
 │   ├── build_index_v2.py       # current index builder
 │   ├── ingest_amrex.py         # AMReX source ingestion
@@ -299,7 +382,7 @@ $OFA_ROOT/
 └── README.md
 ```
 
-Total tracked source: **5,988 LOC** across 9 Python files (excluding tests and prompts).
+Total tracked source: **~6,500 LOC** across 10 Python files (excluding tests and prompts).
 
 ### 7.2 `src/ofa_main.py` walkthrough (3,544 LOC)
 

@@ -48,6 +48,7 @@ $ ofa --serve --serve-enable-tools   # Also forward OpenAI tool_calls to Ollama 
 * **`src/ofa_main.py`**: The central python controller. Handles Ollama binary lifecycle management via `subprocess`, processes ChromaDB interactions (`_hybrid_search`), loops user input, captures output, and dictates the strict regex parsing logic for the tool-calling mechanism.
 * **`src/ofa_server.py`**: OpenAI-compatible HTTP shim used by `ofa --serve` — exposes ofa's system prompts + RAG + memory + multimodal (vision) at `/v1/chat/completions` for VS Code BYOK, `curl`, and the Python client below.
 * **`src/ofa_client.py`**: Zero-dependency (stdlib-only) Python client. `from ofa_client import ask, Session` — see the next section.
+* **`examples/`**: Worked end-to-end scripts users can copy verbatim. Currently ships `fit_and_ask.py` — a `curve_fit` demo that shows the `Session` + JSON-extraction patterns in ~230 LOC.
 * **`prompts/`**: Directory configuring the personas. `common.txt` establishes the global rules for the agent, establishing the planning pipeline, code syntax standards, and environment constraints. `code.txt`, `hpc.txt`, and others inject the role-specific capabilities.
 * **`vectordb/`**: The persistent storage directory for the offline ChromaDB ingestors, containing chunked embeddings for Kestrel's manuals, OpenFOAM examples, and RHEL module stacks.
 
@@ -186,9 +187,26 @@ def extract_json(text):
     return None
 ```
 
-See `scratch/testAgent/fit_and_ask.py` for a worked example (fit a
-damped sinusoid, ask ofa to critique the fit, refit with LLM-suggested
-initial guesses).
+See [`examples/fit_and_ask.py`](examples/fit_and_ask.py) for a worked
+end-to-end example: fits a noisy damped sinusoid + harmonic (a function
+where `scipy.optimize.curve_fit` genuinely gets trapped in a local
+minimum from a bad initial guess), sends the plot + fit summary to
+`ofa` inside a `Session`, asks for a prose critique on turn 1 and a
+strict-JSON refit suggestion on turn 2, extracts the JSON with the
+fallback ladder above, and reruns the fit. A typical successful run
+prints:
+
+```
+RMS: 0.5370 -> 0.11xx  (IMPROVED, delta -0.42)
+```
+
+Run it in-place:
+
+```bash
+module load assistant
+ofa --serve > /tmp/ofa-serve.log 2>&1 &
+cd $OFA_ROOT/examples && python3 fit_and_ask.py
+```
 
 ### Auto-detection order
 

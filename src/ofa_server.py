@@ -346,12 +346,23 @@ class _Handler(BaseHTTPRequestHandler):
     # ---- helpers ----
     def _send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected before we could finish writing the
+            # response. This is normal (e.g. user Ctrl+C'd their sim,
+            # or a slow model made the client time out on its end).
+            # Log one line instead of the 30-line socketserver traceback.
+            print(
+                f"[ofa-serve] client {self.client_address[0]} disconnected "
+                f"before response; nothing to do",
+                file=sys.stderr,
+            )
 
     def _send_error(self, status: int, message: str, type_: str = "invalid_request_error") -> None:
         self._send_json(status, {

@@ -197,7 +197,32 @@ def _build_content(
 # HTTP transport
 # ---------------------------------------------------------------------------
 
+def _healthz(url: str, timeout: float = 3.0) -> None:
+    """Quick GET /healthz — fail fast with a clear message if the server
+    is unreachable *or* answering-but-broken.
+
+    Called once per _post so a stale port file (server died, file left
+    behind) or a killed allocation produces an immediate, actionable
+    RuntimeError instead of a 120-second hang on urlopen(timeout=default).
+    """
+    try:
+        with urllib.request.urlopen(f"{url}/healthz", timeout=timeout) as resp:
+            if resp.status != 200:
+                raise RuntimeError(
+                    f"ofa server at {url} answered /healthz with HTTP "
+                    f"{resp.status} — is it fully started?"
+                )
+    except urllib.error.URLError as e:
+        raise RuntimeError(
+            f"no ofa server responding at {url} (checked /healthz: {e.reason}). "
+            f"Likely causes: the `ofa --serve` process is not running, its "
+            f"SLURM allocation ended, or the .ofa_serve_port file is stale. "
+            f"Restart the server and retry."
+        ) from e
+
+
 def _post(url: str, token: str, body: dict, timeout: float) -> dict:
+    _healthz(url)
     req = urllib.request.Request(
         f"{url}/v1/chat/completions",
         data=json.dumps(body).encode("utf-8"),

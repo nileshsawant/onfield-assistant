@@ -52,6 +52,14 @@
         "toolCalling": true,
         "maxInputTokens": 32000,
         "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-quantum-computing",
+        "name": "OFA \u00b7 Quantum Computing",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
+        "toolCalling": true,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
       }
     ]
   }

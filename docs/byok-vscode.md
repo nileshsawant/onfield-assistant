@@ -87,6 +87,9 @@ customendpoint`). Replace `<LOCAL_PORT>` and the apiKey:
         "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-reframe", "name": "OFA · ReFrame (RHEL9)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
+        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+      { "id": "ofa-quantum-computing", "name": "OFA · Quantum Computing",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 }
     ]
   }

@@ -19,6 +19,7 @@ ofa --hpc                            # Kestrel HPC documentation assistant
 ofa --code                           # General coding assistant (file R/W/X)
 ofa --amrex                          # AMReX C++ framework
 ofa --marbles                        # MARBLES (LBM thermal solver on AMReX)
+ofa --quantum-computing              # Quantum computing (rigorous gate / matrix verification)
 ofa --rhel9_reframe                  # ReFrame for RHEL9 migration
 ofa --resume                         # Resume your last session
 ofa "set up a cavity case" --save ./case   # Single query + save case files
@@ -63,9 +64,9 @@ and this document.
 
 ## 2. Executive summary
 
-`ofa` is a domain-specialised AI assistant that pairs a local 31-billion-parameter language model (Gemma 4) on Kestrel H100 GPUs with retrieval-augmented generation over indexed Kestrel/OpenFOAM/AMReX/MARBLES/ReFrame corpora. It exposes two surfaces:
+`ofa` is a domain-specialised AI assistant that pairs a local 31-billion-parameter language model (Gemma 4) on Kestrel H100 GPUs with retrieval-augmented generation over indexed Kestrel/OpenFOAM/AMReX/MARBLES/ReFrame/quantum-computing corpora. It exposes two surfaces:
 
-- **Interactive CLI** (`ofa`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
+- **Interactive CLI** (`ofa`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --quantum-computing`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
 - **OpenAI-compatible HTTP server** (`ofa --serve`) — a Bring-Your-Own-Key (BYOK) endpoint so VS Code Chat, `opencode`, or any OpenAI-compatible client can route requests through the same domain layer.
 
 The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). All inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NREL's network. 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
@@ -141,6 +142,7 @@ Three layers, in order of how a request flows through them:
 | `ofa --code` | general code R/W/X | `prompts/code.txt` + `prompts/cpp.txt` | `retrieve_hpc_context` |
 | `ofa --amrex` | AMReX C++ framework | `prompts/amrex.txt` | `retrieve_amrex_context` (AMReX source only) |
 | `ofa --marbles` | MARBLES LBM thermal solver | `prompts/marbles.txt` | `retrieve_marbles_context` (MARBLES primary + light AMReX) |
+| `ofa --quantum-computing` | Quantum computing (code + papers, rigorous math verification) | `prompts/quantum-computing.txt` | `retrieve_quantum_computing_context` |
 | `ofa --rhel9_reframe` | ReFrame for RHEL9 | `prompts/reframe.txt` | `_get_reframe_rag` + `retrieve_hpc_context` |
 
 CLI behaviour:
@@ -158,7 +160,7 @@ OpenAI-compatible HTTP shim. Three endpoints:
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/healthz` | none | Liveness probe; returns `{"status":"ok"}`. |
-| GET | `/v1/models` | bearer | Lists six model IDs (`ofa-openfoam`, `ofa-hpc`, `ofa-code`, `ofa-amrex`, `ofa-marbles`, `ofa-reframe`). |
+| GET | `/v1/models` | bearer | Lists seven model IDs (`ofa-openfoam`, `ofa-hpc`, `ofa-code`, `ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`). |
 | POST | `/v1/chat/completions` | bearer | OpenAI format; supports `stream: true` SSE; optional `tools` / `tool_choice` passthrough when `--serve-enable-tools` is set. |
 
 The model ID in the request body selects the mode → system prompt → RAG retriever. Inbound system messages from the client are dropped (the BYOK client's own prompt would override ofa's domain knowledge). RAG retrieval is applied only to the most recent user message.
@@ -243,7 +245,7 @@ except Exception as e:
 ```
 
 Any of the five `ofa` modes (`ofa-openfoam`, `ofa-hpc`, `ofa-code`,
-`ofa-amrex`, `ofa-marbles`, `ofa-reframe`) can be passed as `model=`. Images pair
+`ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`) can be passed as `model=`. Images pair
 with any mode — Gemma 4's vision head handles them regardless of
 which system prompt is loaded.
 
@@ -264,6 +266,7 @@ Both surfaces share these five components, layered into the request before it re
 | `prompts/cpp.txt` | 29 | Layered onto `code.txt` for C++ work. |
 | `prompts/amrex.txt` | 8 | AMReX C++ framework. |
 | `prompts/marbles.txt` | 10 | MARBLES lattice-Boltzmann thermal solver (built on AMReX). |
+| `prompts/quantum-computing.txt` | 27 | Quantum computing; enforces per-answer verification of gate matrices, tensor ordering, and unitarity. |
 | `prompts/reframe.txt` | 10 | ReFrame RHEL9 migration. |
 | `prompts/plan.txt` | 6 | Plan-stage prompt used by `plan_file_list()` in OpenFOAM mode. |
 
@@ -285,9 +288,10 @@ Six ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persistent 
 | `hpc_docs` | 953 | Kestrel documentation (Markdown) |
 | `reframe_src` | 875 | ReFrame source tree (RHEL9 migration tests) |
 | `marbles_src` | 151 | MARBLES source |
+| `quantum_computing` | 0† | Quantum-computing code + papers (populated by `src/rebuild_indices.py` when `repos/quantum-code/` and `repos/quantum-papers/` are populated) |
 | **Total** | **27,573** | — |
 
-**Hybrid retrieval**: each retriever combines dense (ChromaDB embedding similarity) and sparse (BM25 over tokens) scores. BM25 indices are pre-built at startup via `_init_rag()` and cached in memory for the session — first-query latency was prohibitive before the prebuild was introduced. The merge weights are tuned per retriever (see `retrieve_context`, `retrieve_hpc_context`, `retrieve_amrex_context`, `retrieve_marbles_context`, `_get_reframe_rag`).
+**Hybrid retrieval**: each retriever combines dense (ChromaDB embedding similarity) and sparse (BM25 over tokens) scores. BM25 indices are pre-built at startup via `_init_rag()` and cached in memory for the session — first-query latency was prohibitive before the prebuild was introduced. The merge weights are tuned per retriever (see `retrieve_context`, `retrieve_hpc_context`, `retrieve_amrex_context`, `retrieve_marbles_context`, `retrieve_quantum_computing_context`, `_get_reframe_rag`).
 
 **Greeting bypass**: retrieval is skipped for trivial queries (`hi`, `hello`, `thanks`, etc.) to avoid spending tokens on irrelevant context.
 
@@ -406,7 +410,7 @@ Logical sections, in roughly the order they appear:
 | `_run_react_loop` (~920–1100) | The CLI agent loop: stream response → save prefs/lessons → execute tool calls → loop. |
 | Tool-fence parsing (~1100–1700) | `check_and_execute_bash`, `extract_plan`, `_looks_like_unfenced_tool_intent` + nudge. |
 | Ollama bootstrap (~1330–1700) | `ensure_ollama_running`, `_shutdown_ollama`. |
-| RAG retrievers (~1770–2580) | `retrieve_context` (OpenFOAM), `retrieve_hpc_context` (Kestrel docs), `retrieve_amrex_context` (AMReX-only), `retrieve_marbles_context` (MARBLES + light AMReX), `_get_reframe_rag`. Hybrid dense+BM25. |
+| RAG retrievers (~1770–2680) | `retrieve_context` (OpenFOAM), `retrieve_hpc_context` (Kestrel docs), `retrieve_amrex_context` (AMReX-only), `retrieve_marbles_context` (MARBLES + light AMReX), `retrieve_quantum_computing_context` (quantum code + papers), `_get_reframe_rag`. Hybrid dense+BM25. |
 | `chat_stream` (~1820–1870) | The Ollama API call. All chat traffic flows through here. |
 | `interactive_mode` (~2100–2300) | Banner, slash-command dispatch, REPL loop. |
 | `single_query` / `hpc_single_query` (~2300–3070) | One-shot CLI mode and the plan→generate-per-file pattern used by `--save`. |
@@ -570,6 +574,7 @@ All 62 pass at this commit (`a24a58b`).
 | `--code` | General coding assistant. |
 | `--amrex` | AMReX C++ framework assistant. |
 | `--marbles` | MARBLES (LBM thermal solver on AMReX) assistant. |
+| `--quantum-computing` | Quantum-computing assistant (rigorous math verification). |
 | `--rhel9_reframe` | ReFrame testing for RHEL9 migration. |
 | `--resume` | Reload `.ofa_session.json`. |
 | `--save DIR` | Write the assistant's `=== FILE ===` blocks into `DIR`. |

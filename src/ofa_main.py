@@ -457,22 +457,79 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
                     total_len -= saved
                     freed += saved
 
+    # ---- Tier 2: breadcrumb collapse (only if Tier 1 wasn't enough) -------
+    #
+    # If Tier 1 stripping didn't get us to target, replace older
+    # user/assistant messages with short breadcrumbs that preserve the
+    # topic thread (first ~150 chars of the user's actual question,
+    # first ~200 chars of the assistant's answer) while dropping the
+    # bulk. Keeps last two full pairs (4 messages) intact so the
+    # immediate context is untouched. This bounds session growth to
+    # roughly `system_prompt + a few recent turns` no matter how long
+    # the conversation runs.
+    tier2_freed = 0
+    if total_len > target_chars:
+        MAX_OLD_USER = 220
+        MAX_OLD_ASST = 260
+        protected_tail_pairs = 4  # last 2 full user->assistant pairs
+        tier2_end = max(1, len(messages) - protected_tail_pairs)
+        for i in range(1, tier2_end):
+            if total_len <= target_chars:
+                break
+            m = messages[i]
+            content = m.get("content", "")
+            if not content or content.startswith("[earlier "):
+                continue  # already collapsed on a previous pass
+            role = m.get("role")
+            if role == "user":
+                # Recover the user's actual prose from a RAG-augmented
+                # message so the breadcrumb reads as their question.
+                prose = content
+                if "User request:" in content:
+                    prose = content.split("User request:", 1)[1].strip()
+                prose_head = prose[:MAX_OLD_USER - 30].strip().replace("\n", " ")
+                if len(prose) > MAX_OLD_USER - 30:
+                    prose_head += "..."
+                new_content = f'[earlier user turn: "{prose_head}"]'
+                if len(new_content) < len(content):
+                    saved = len(content) - len(new_content)
+                    m["content"] = new_content
+                    total_len -= saved
+                    tier2_freed += saved
+            elif role == "assistant":
+                if len(content) <= MAX_OLD_ASST:
+                    continue
+                snippet = content[:MAX_OLD_ASST - 25].strip().replace("\n", " ")
+                new_content = f"[earlier answer]: {snippet}..."
+                saved = len(content) - len(new_content)
+                m["content"] = new_content
+                total_len -= saved
+                tier2_freed += saved
+    freed += tier2_freed
+
     if freed > 0:
+        detail = ""
+        if tier2_freed > 0:
+            detail = f" — collapsed old turns to breadcrumbs to fit"
         print(
             _c(
                 f"\n[System: compressed session history {before_len} → {total_len} chars "
-                f"(freed {freed:,}, target ≤ {int(target_chars):,}).]",
+                f"(freed {freed:,}, target ≤ {int(target_chars):,}){detail}.]",
                 "dim", "cyan",
             ),
             file=sys.stderr,
         )
+        # After Tier 2, if we're STILL over target the only remaining
+        # options are user-facing: /clear or /remember-then-/clear. Even
+        # then, don't nag on every turn — the warning fires once per
+        # actual excess event, since the next turn will likely be under
+        # threshold after Tier 2 collapse.
         if total_len > max_chars:
             print(
                 _c(
-                    "[System: still above the compression threshold — "
-                    "try /compact for a tighter pass, or /clear to reset. "
-                    "Use /remember <insight> first if you want to carry a "
-                    "specific takeaway forward.]",
+                    "[System: session still above threshold after auto-compression. "
+                    "Use /remember <one-line insight> to persist any takeaway, "
+                    "then /clear when convenient.]",
                     "yellow",
                 ),
                 file=sys.stderr,

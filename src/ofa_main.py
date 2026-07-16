@@ -2643,6 +2643,41 @@ def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
     return "\n\n---\n\n".join(context_parts)
 
 
+# Cap per-pin so a doc that's later expanded to book size doesn't
+# devour the context budget. The two current pins are well under this.
+_PINNED_KESTREL_DOC_MAX_BYTES = 50_000
+
+
+def _read_pinned_kestrel_doc(relpath: str, label: str) -> str:
+    """Return a fenced context slice for a Kestrel HPC docs page pinned
+    to a mode retriever, or empty string on any failure.
+
+    Some Kestrel docs pages are the authoritative build / module / Slurm
+    cheatsheet for a specific mode (e.g. LBMcfd.md for --marbles,
+    quantum_computing.md for --quantum-computing). RAG retrieval alone
+    routinely loses them: the mode's own source/paper collection
+    saturates the top-k, and even the small hpc_docs slice inside
+    the mode retriever misses them if the user's query didn't happen
+    to overlap the page's exact wording.
+
+    Reading from disk (rather than querying hpc_docs by exact
+    filepath) keeps the pin independent of the vector-store state:
+    a fresh `git pull` under repos/HPC is picked up on the next call
+    without waiting for rebuild_indices.py to re-embed.
+    """
+    path = os.path.join(OFA_ROOT, "repos/HPC/docs/Documentation", relpath)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read(_PINNED_KESTREL_DOC_MAX_BYTES + 1)
+    except OSError:
+        return ""
+    if not text.strip():
+        return ""
+    if len(text) > _PINNED_KESTREL_DOC_MAX_BYTES:
+        text = text[:_PINNED_KESTREL_DOC_MAX_BYTES] + "\n\n[... truncated ...]"
+    return f"[{label} — {relpath}]\n{text.strip()}\n"
+
+
 def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
     """MARBLES-focused retrieval.
 
@@ -2694,6 +2729,16 @@ def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
         except Exception:
             pass
 
+    # Pinned mode-authoritative Kestrel build / module / Slurm doc. Always
+    # included so build & environment questions get a grounded answer even
+    # when the retriever's hpc_docs top-2 slice misses it.
+    pinned = _read_pinned_kestrel_doc(
+        "Applications/LBMcfd.md",
+        label="Kestrel MARBLES build & environment doc (authoritative)",
+    )
+    if pinned:
+        context_parts.append(pinned)
+
     # HPC docs for module paths / Slurm.
     hpc_ctx = retrieve_hpc_context(query, top_k=2)
     if hpc_ctx:
@@ -2738,6 +2783,14 @@ def retrieve_quantum_computing_context(query: str, top_k: int = 7) -> str:
                 context_parts.append(f"{header}\n{s_doc}\n")
         except Exception:
             pass
+
+    # Pinned mode-authoritative Kestrel build / module / Slurm doc.
+    pinned = _read_pinned_kestrel_doc(
+        "Applications/quantum_computing.md",
+        label="Kestrel quantum-computing build & environment doc (authoritative)",
+    )
+    if pinned:
+        context_parts.append(pinned)
 
     # HPC docs for module paths / Slurm on Kestrel.
     hpc_ctx = retrieve_hpc_context(query, top_k=2)

@@ -185,13 +185,52 @@ def walk_pdfs(root: Path) -> Iterable[Path]:
 # Per-source-file processing
 # ---------------------------------------------------------------------------
 
+def _extract_notebook_text(path: Path) -> str:
+    """Extract only ``source`` from code + markdown cells of a Jupyter
+    notebook, dropping all cell outputs.
+
+    Raw ``.ipynb`` JSON embeds base64-encoded output images and long
+    stdout dumps that would waste embedding compute and pollute
+    retrieval with noise chunks. This keeps the semantically useful
+    parts (the code the author wrote and their markdown narrative)
+    and discards everything else.
+
+    Returns the joined text, or empty string on malformed notebooks
+    (a warning is printed but doesn't kill the ingestion).
+    """
+    import json
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            nb = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[!] notebook {path}: {e}", file=sys.stderr)
+        return ""
+    parts: list[str] = []
+    for i, cell in enumerate(nb.get("cells", [])):
+        ct = cell.get("cell_type", "")
+        if ct not in ("code", "markdown"):
+            continue
+        src = cell.get("source", "")
+        if isinstance(src, list):
+            src = "".join(src)
+        src = src.strip()
+        if not src:
+            continue
+        tag = "code" if ct == "code" else "md"
+        parts.append(f"# --- cell {i} ({tag}) ---\n{src}")
+    return "\n\n".join(parts)
+
+
 def process_code_file(path: Path, root: Path, collection: str) -> list[tuple[str, str, dict]]:
     """Read a text/code file, return list of ``(chunk_id, doc, metadata)`` tuples."""
-    try:
-        text = path.read_text(errors="replace")
-    except OSError as e:
-        print(f"[!] {path}: {e}", file=sys.stderr)
-        return []
+    if path.suffix.lower() == ".ipynb":
+        text = _extract_notebook_text(path)
+    else:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError as e:
+            print(f"[!] {path}: {e}", file=sys.stderr)
+            return []
     if not text.strip():
         return []
     relpath = path.relative_to(root).as_posix()

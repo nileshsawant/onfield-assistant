@@ -31,7 +31,15 @@
       },
       {
         "id": "ofa-amrex",
-        "name": "OFA \u00b7 AMReX / MARBLES",
+        "name": "OFA \u00b7 AMReX",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
+        "toolCalling": true,
+        "maxInputTokens": 32000,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "ofa-marbles",
+        "name": "OFA \u00b7 MARBLES (LBM)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,

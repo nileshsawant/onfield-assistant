@@ -798,6 +798,13 @@ def load_system_prompt(prompt_type="openfoam"):
             prompt = "You are a ReFrame testing assistant for Kestrel."
     elif prompt_type == "amrex":
         with open(os.path.join(OFA_ROOT, "prompts", "amrex.txt")) as f: prompt = f.read().strip()
+    elif prompt_type == "marbles":
+        marbles_prompt_path = os.path.join(OFA_ROOT, "prompts", "marbles.txt")
+        if os.path.exists(marbles_prompt_path):
+            with open(marbles_prompt_path) as f: prompt = f.read().strip()
+        else:
+            # Sensible fallback if the file was deleted post-deployment.
+            prompt = "You are a MARBLES (lattice-Boltzmann on AMReX) assistant."
     else:
         with open(OPENFOAM_PROMPT_PATH) as f: prompt = f.read().strip()
         
@@ -2083,7 +2090,7 @@ def save_case(response_text: str, output_dir: str):
         print(f"  Written: {fpath}", file=sys.stderr)
 
 
-def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
+def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False):
     """Run interactive chat loop."""
     current_plan = ""
     try:
@@ -2096,7 +2103,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = load_system_prompt("reframe") if reframe_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam"))))
+    system_prompt = load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam")))))
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -2408,12 +2415,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                     base_context = retrieve_hpc_context(user_input)
                     context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
                 else:
-                    context = retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))
+                    context = retrieve_marbles_context(user_input) if marbles_mode else (retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)))
             if context:
-                fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode) else "OPENFOAM")
+                fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode or marbles_mode) else "OPENFOAM")
                 if reframe_mode:
                     augmented_input = f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{fenced}\n\n---\n\nUser request: {user_input}"
-                elif hpc_mode or code_mode or amrex_mode:
+                elif hpc_mode or code_mode or amrex_mode or marbles_mode:
                     augmented_input = f"Here is relevant context for your reference:\n\n{fenced}\n\n---\n\nUser request: {user_input}"
                 else:
                     augmented_input = (
@@ -2602,21 +2609,14 @@ def _get_reframe_rag(query: str, top_k: int = 5):
     return f"{static_rh9}\n\n{dynamic_rh9}".strip()
 
 def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
+    """AMReX-only retrieval. Grabs top-k results from ``amrex_src`` plus a
+    small slice of ``hpc_docs`` (module paths / SLURM) so the model has
+    Kestrel context for a real build/run. Does NOT touch ``marbles_src`` —
+    use :func:`retrieve_marbles_context` for that mode."""
     _init_rag()
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
-    
-    # Try Marbles
-    if _marbles_src_collection is not None:
-        try:
-            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_marbles_src_collection, coll_name="marbles_src", top_k=top_k)
-            for s_doc, s_meta in zip(docs, metas):
-                s_header = f"[MARBLES thermal C++ Source Code - src/{s_meta.get('filepath', '?')}]"
-                context_parts.append(f"{s_header}\n{s_doc}\n")
-        except Exception:
-            pass
 
-    # Try AMReX
     if _amrex_src_collection is not None:
         try:
             docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_src_collection, coll_name="amrex_src", top_k=top_k)
@@ -2626,7 +2626,54 @@ def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
         except Exception:
             pass
 
-    # Also grab generic Kestrel HPC docs so it knows about module paths / Slurm
+    # Also grab generic Kestrel HPC docs so it knows about module paths / Slurm.
+    hpc_ctx = retrieve_hpc_context(query, top_k=2)
+    if hpc_ctx:
+        context_parts.append(hpc_ctx)
+
+    return "\n\n---\n\n".join(context_parts)
+
+
+def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
+    """MARBLES-focused retrieval.
+
+    Queries ``marbles_src`` primarily (top-k), with a smaller ``amrex_src``
+    slice (top-2) because MARBLES is a lattice-Boltzmann solver built on
+    top of AMReX — its users legitimately need to trace into
+    ``MultiFab`` / ``ParallelFor`` / ``BoxArray`` details for anything
+    non-trivial. Also grabs light HPC docs for module paths / SLURM.
+
+    Split introduced when the old combined --amrex mode was factored
+    into pure --amrex and --marbles modes; keeping the AMReX slice in
+    the marbles path preserves the useful behaviour of the old mode
+    for LBM developers.
+    """
+    _init_rag()
+    query_embedding = _embed_model.encode([query])[0].tolist()
+    context_parts = []
+
+    if _marbles_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_marbles_src_collection, coll_name="marbles_src", top_k=top_k)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[MARBLES thermal C++ Source Code - src/{s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+
+    # Smaller AMReX slice — MARBLES developers need to reach into the
+    # underlying framework often, but the primary results should be from
+    # the MARBLES codebase itself.
+    if _amrex_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_src_collection, coll_name="amrex_src", top_k=2)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[AMReX Core Source Code (framework under MARBLES) - {s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+
+    # HPC docs for module paths / Slurm.
     hpc_ctx = retrieve_hpc_context(query, top_k=2)
     if hpc_ctx:
         context_parts.append(hpc_ctx)
@@ -3418,7 +3465,7 @@ def check_and_execute_bash(response_text):
     return "\n".join(all_outputs) if all_outputs else None
 
 
-def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, reframe_mode: bool = False):
+def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False):
     current_plan = ""
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
@@ -3427,14 +3474,14 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
         base_context = retrieve_hpc_context(query) if not is_greeting else ""
         context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}" if not is_greeting else ""
     else:
-        context = (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query)) if not is_greeting else ""
+        context = (retrieve_marbles_context(query) if marbles_mode else (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query))) if not is_greeting else ""
 
     augmented = f"Context Information:\n---\n{_fence_rag(context, label='HPC_DOCS')}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": load_system_prompt("reframe") if reframe_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc")))}]
+        messages = [{"role": "system", "content": load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc"))))}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
@@ -3475,7 +3522,13 @@ def main():
     )
     parser.add_argument(
         "--amrex", action="store_true",
-        help="Use AMReX/MARBLES assistant mode"
+        help="AMReX-focused assistant mode (queries the amrex_src RAG index)."
+    )
+    parser.add_argument(
+        "--marbles", action="store_true",
+        help="MARBLES (LBM thermal) assistant mode. Primary retrieval from "
+             "marbles_src, with a smaller AMReX slice since MARBLES is "
+             "built on AMReX."
     )
     parser.add_argument(
         "--code", action="store_true",
@@ -3602,6 +3655,8 @@ def main():
     if args.query:
         if args.rhel9_reframe:
             hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=False, amrex_mode=False, reframe_mode=True)
+        elif args.marbles:
+            hpc_single_query(" ".join(args.query), resume=args.resume, marbles_mode=True)
         elif args.amrex:
             hpc_single_query(" ".join(args.query), resume=args.resume, amrex_mode=True)
         elif args.code:
@@ -3612,7 +3667,7 @@ def main():
         else:
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
-        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, reframe_mode=args.rhel9_reframe)
+        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, marbles_mode=args.marbles, reframe_mode=args.rhel9_reframe)
 
 
 if __name__ == "__main__":

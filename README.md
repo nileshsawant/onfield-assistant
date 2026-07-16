@@ -28,7 +28,8 @@ $ ofa "Write the blockMeshDict for a backward facing step"
 # Specialized Agent Modes
 $ ofa --code            # General coding assistant and software engineering
 $ ofa --hpc             # Kestrel HPC, SLURM documentation, and topology expert
-$ ofa --amrex           # AMReX and MARBLES codebase assistant
+$ ofa --amrex           # AMReX C++ framework assistant
+$ ofa --marbles         # MARBLES (LBM thermal solver on AMReX) assistant
 $ ofa --rhel9_reframe   # ReFrame integration expert strictly adhering to the Kestrel RHEL9 software stack
 
 # Additional Flags
@@ -107,7 +108,7 @@ text = ask(
     image="output/step_4200_pressure.png",
     file="output/solver.log",
     context="Re=1000, cavity flow, k-omega SST turbulence model.",
-    model="ofa-code",          # ofa-openfoam | ofa-hpc | ofa-code | ofa-amrex | ofa-reframe
+    model="ofa-code",          # ofa-openfoam | ofa-hpc | ofa-code | ofa-amrex | ofa-marbles | ofa-reframe
     timeout=60,
 )
 ```

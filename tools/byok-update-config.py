@@ -36,7 +36,8 @@ MODES = [
     ("ofa-openfoam", "OFA \u00b7 OpenFOAM"),
     ("ofa-hpc",      "OFA \u00b7 Kestrel HPC"),
     ("ofa-code",     "OFA \u00b7 Code"),
-    ("ofa-amrex",    "OFA \u00b7 AMReX / MARBLES"),
+    ("ofa-amrex",    "OFA \u00b7 AMReX"),
+    ("ofa-marbles",  "OFA \u00b7 MARBLES (LBM)"),
     ("ofa-reframe",  "OFA \u00b7 ReFrame (RHEL9)"),
 ]
 

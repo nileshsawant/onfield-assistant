@@ -59,6 +59,7 @@ _MODEL_MODES = {
     "ofa-hpc":      "hpc",
     "ofa-code":     "code",
     "ofa-amrex":    "amrex",
+    "ofa-marbles":  "marbles",
     "ofa-reframe":  "reframe",
 }
 
@@ -81,6 +82,8 @@ def _retrieve_for_mode(query: str, mode: str) -> str:
         )
     if mode == "amrex":
         return ofa_main.retrieve_amrex_context(query)
+    if mode == "marbles":
+        return ofa_main.retrieve_marbles_context(query)
     if mode in ("hpc", "code"):
         return ofa_main.retrieve_hpc_context(query)
     return ofa_main.retrieve_context(query)
@@ -101,13 +104,13 @@ def _augment_user_message(content: str, mode: str) -> str:
         return content
     label = (
         "RHEL9_STACK+HPC" if mode == "reframe"
-        else "HPC_DOCS" if mode in ("hpc", "code", "amrex")
+        else "HPC_DOCS" if mode in ("hpc", "code", "amrex", "marbles")
         else "OPENFOAM"
     )
     fenced = ofa_main._fence_rag(rag, label=label)
     if mode == "reframe":
         return f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{fenced}\n\n---\n\nUser request: {content}"
-    if mode in ("hpc", "code", "amrex"):
+    if mode in ("hpc", "code", "amrex", "marbles"):
         return f"Here is relevant context for your reference:\n\n{fenced}\n\n---\n\nUser request: {content}"
     return (
         f"Here are relevant OpenFOAM example files for reference:\n\n"

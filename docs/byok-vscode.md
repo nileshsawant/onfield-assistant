@@ -43,9 +43,9 @@ Sanity-check from another laptop terminal:
 curl http://localhost:<LOCAL>/healthz   # expect {"status":"ok"}
 ```
 
-### 3. On your laptop: register the five OFA models in VS Code
+### 3. On your laptop: register the six OFA models in VS Code
 
-Easiest path uses the helper script (registers all five modes, makes
+Easiest path uses the helper script (registers all six modes, makes
 a `.bak` of your existing config the first time, safe to re-run):
 
 ```bash
@@ -79,7 +79,10 @@ customendpoint`). Replace `<LOCAL_PORT>` and the apiKey:
       { "id": "ofa-code", "name": "OFA · Code",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
-      { "id": "ofa-amrex", "name": "OFA · AMReX / MARBLES",
+      { "id": "ofa-amrex", "name": "OFA · AMReX",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
+        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+      { "id": "ofa-marbles", "name": "OFA · MARBLES (LBM)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-reframe", "name": "OFA · ReFrame (RHEL9)",

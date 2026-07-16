@@ -72,8 +72,11 @@ path       = "repos/marblesThermal"
 type       = "code"
 extensions = [".H", ".cpp", ".h", ".py"]
 [[collections.marbles_src.sources]]
-path       = "repos/marbles-papers"
-type       = "pdf"
+path         = "repos/marbles-papers"
+type         = "pdf"
+keep_missing = true   # source PDFs may be stripped from disk after ingestion;
+                      # protect their chunks from the orphan sweep even when
+                      # the code source(s) above are pruned normally.
 
 # ---------------------------------------------------------------------------
 # Quantum computing. Drop code repos into repos/quantum-code/ and PDFs
@@ -87,6 +90,7 @@ path       = "repos/quantum-code"
 type       = "code"
 extensions = [".py", ".cpp", ".h", ".ipynb", ".md"]
 [[collections.quantum_computing.sources]]
-path       = "repos/quantum-papers"
-type       = "pdf"
+path         = "repos/quantum-papers"
+type         = "pdf"
+keep_missing = true   # see marbles-papers above.
 

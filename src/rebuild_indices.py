@@ -317,12 +317,20 @@ def rebuild_collection(
         state["collections"].pop(name, None)
 
     # Gather all (path, kind, root) entries across configured sources.
+    # keep_missing_roots tracks source roots that opted out of the
+    # orphan sweep on a per-source basis (see collections.toml docs).
     entries: list[tuple[Path, str, Path]] = []
+    keep_missing_roots: list[Path] = []
     for src in cinfo.get("sources", []):
         rel = src.get("path")
         src_type = src.get("type", "code")
         # Absolute paths pass through; relative paths resolve against OFA_ROOT.
         root = Path(rel) if rel.startswith("/") else (OFA_ROOT / rel)
+        # Note: keep_missing must be registered *before* the is_dir()
+        # check so it applies even when the whole source directory
+        # is currently absent from disk.
+        if src.get("keep_missing", False):
+            keep_missing_roots.append(root.resolve() if root.exists() else root)
         if not root.is_dir():
             print(f"  [~] source '{rel}' not present; skipping", file=sys.stderr)
             continue
@@ -385,20 +393,41 @@ def rebuild_collection(
     # Orphan sweep — remove chunks for files that used to be indexed
     # but are gone from disk (deleted / moved out of source root).
     #
-    # Skipped in incremental mode: use this when source files were
-    # deliberately removed from disk (e.g. copyrighted PDFs stripped
-    # from a git-visible folder) but their embeddings should stay in
-    # the store. New files added later still get picked up normally,
-    # and the existing chunks remain queryable.
+    # Two opt-outs suppress the delete for a given cached path:
+    #   * --incremental (CLI, global): skip the sweep entirely for this run
+    #   * keep_missing=true (per-source, in collections.toml): skip the
+    #     sweep for cached paths that live under a source root marked
+    #     keep_missing (typical use: papers/PDFs stripped from disk after
+    #     ingestion for copyright reasons, while sibling code sources
+    #     in the SAME collection still get their orphans swept normally)
+    def _under_keep_missing(cached_path: str) -> bool:
+        if not keep_missing_roots:
+            return False
+        try:
+            p = Path(cached_path).resolve()
+        except OSError:
+            p = Path(cached_path)
+        for root in keep_missing_roots:
+            try:
+                p.relative_to(root)
+                return True
+            except ValueError:
+                continue
+        return False
+
     removed = 0
+    all_missing = [k for k in list(coll_state) if k not in seen_paths]
     if incremental:
-        kept_missing = [k for k in coll_state if k not in seen_paths]
-        if kept_missing:
-            print(f"  [~] --incremental: keeping {len(kept_missing)} file entries "
+        if all_missing:
+            print(f"  [~] --incremental: keeping {len(all_missing)} file entries "
                   f"whose source is no longer on disk")
     else:
-        gone = [k for k in list(coll_state) if k not in seen_paths]
-        for k in gone:
+        kept_by_config = [k for k in all_missing if _under_keep_missing(k)]
+        to_sweep = [k for k in all_missing if k not in set(kept_by_config)]
+        if kept_by_config:
+            print(f"  [~] keep_missing: retaining {len(kept_by_config)} file entries "
+                  f"under sources marked keep_missing=true")
+        for k in to_sweep:
             n = coll_state[k].get("n_chunks", 0)
             # stable_id is deterministic in the ORIGINAL path, so we can
             # regenerate the code chunks' IDs and delete them. PDF-derived

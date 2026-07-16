@@ -250,7 +250,43 @@ def process_code_file(path: Path, root: Path, collection: str) -> list[tuple[str
     return out
 
 
-def process_pdf_file(path: Path, root: Path, collection: str) -> list[tuple[str, str, dict]]:
+def _parse_page_range(spec) -> tuple[int, int | None]:
+    """Parse a per-file page-range spec from ``collections.toml``.
+
+    Accepts (all 1-based, inclusive):
+      * ``int``      \u2014 single page.
+      * ``"N"``      \u2014 same as int.
+      * ``"N-"``     \u2014 from page N through end.
+      * ``"-M"``     \u2014 from page 1 through M.
+      * ``"N-M"``    \u2014 inclusive range.
+      * ``[N, M]``   \u2014 list form; ``0`` or ``null`` for M means end.
+
+    Returns ``(start_page, end_page_or_None)``.
+    """
+    if isinstance(spec, int):
+        return (max(1, spec), spec)
+    if isinstance(spec, list):
+        start = int(spec[0]) if len(spec) > 0 and spec[0] else 1
+        end_raw = spec[1] if len(spec) > 1 else None
+        end = int(end_raw) if end_raw else None
+        return (start, end)
+    if isinstance(spec, str):
+        s = spec.strip()
+        if "-" in s:
+            lhs, rhs = s.split("-", 1)
+            start = int(lhs.strip()) if lhs.strip() else 1
+            end = int(rhs.strip()) if rhs.strip() else None
+            return (start, end)
+        n = int(s)
+        return (n, n)
+    raise ValueError(f"unrecognised page-range spec: {spec!r}")
+
+
+def process_pdf_file(
+    path: Path, root: Path, collection: str,
+    *,
+    page_ranges: dict | None = None,
+) -> list[tuple[str, str, dict]]:
     """Extract a PDF, return list of ``(chunk_id, doc, metadata)`` tuples.
 
     Each PDF page becomes at least one chunk. Long pages are split
@@ -265,9 +301,20 @@ def process_pdf_file(path: Path, root: Path, collection: str) -> list[tuple[str,
         from pdf_extract import extract_pages
 
     relpath = path.relative_to(root).as_posix()
+    # Look up any per-file page-range override for this PDF.
+    start_page, end_page = 1, None
+    if page_ranges and relpath in page_ranges:
+        try:
+            start_page, end_page = _parse_page_range(page_ranges[relpath])
+        except (ValueError, TypeError) as e:
+            print(f"  [!] {relpath}: bad page_ranges spec ({e}); "
+                  f"falling back to full document", file=sys.stderr)
+            start_page, end_page = 1, None
     out = []
     chunk_idx = 0
-    for page_num, page_text in extract_pages(path):
+    for page_num, page_text in extract_pages(
+        path, start_page=start_page, end_page=end_page,
+    ):
         for sub_chunk in chunk_text(page_text, PAPER_CHUNK, PAPER_OVERLAP):
             prefix = f"[{root.name} paper - {relpath}, page {page_num}]"
             out.append((
@@ -316,10 +363,12 @@ def rebuild_collection(
             pass  # didn't exist yet
         state["collections"].pop(name, None)
 
-    # Gather all (path, kind, root) entries across configured sources.
+    # Gather all (path, kind, root, extra) entries across configured
+    # sources, where 'extra' is a per-source-config dict passed to the
+    # per-file processor (currently used for PDF page_ranges).
     # keep_missing_roots tracks source roots that opted out of the
     # orphan sweep on a per-source basis (see collections.toml docs).
-    entries: list[tuple[Path, str, Path]] = []
+    entries: list[tuple[Path, str, Path, dict]] = []
     keep_missing_roots: list[Path] = []
     for src in cinfo.get("sources", []):
         rel = src.get("path")
@@ -334,13 +383,16 @@ def rebuild_collection(
         if not root.is_dir():
             print(f"  [~] source '{rel}' not present; skipping", file=sys.stderr)
             continue
+        # extra carries fields the file-processor may consult (e.g.
+        # page_ranges dict for PDF sources). Unused keys are ignored.
+        extra = {"page_ranges": src.get("page_ranges", {})}
         if src_type == "code":
             exts = src.get("extensions", [".txt", ".md"])
             for p in walk_code(root, exts):
-                entries.append((p, "code", root))
+                entries.append((p, "code", root, extra))
         elif src_type == "pdf":
             for p in walk_pdfs(root):
-                entries.append((p, "pdf", root))
+                entries.append((p, "pdf", root, extra))
         else:
             print(f"  [!] unknown source type '{src_type}' in {name}",
                   file=sys.stderr)
@@ -360,7 +412,7 @@ def rebuild_collection(
     pending_docs: list[str] = []
     pending_metas: list[dict] = []
 
-    for path, kind, root in entries:
+    for path, kind, root, extra in entries:
         try:
             mtime = path.stat().st_mtime
         except OSError:
@@ -378,7 +430,10 @@ def rebuild_collection(
         if kind == "code":
             chunks = process_code_file(path, root, name)
         else:
-            chunks = process_pdf_file(path, root, name)
+            chunks = process_pdf_file(
+                path, root, name,
+                page_ranges=extra.get("page_ranges"),
+            )
         if not chunks:
             continue
 

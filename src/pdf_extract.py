@@ -26,12 +26,22 @@ from typing import Iterator
 _MIN_PAGE_CHARS = 20   # skip pages with less usable text than this
 
 
-def extract_pages(pdf_path: Path) -> Iterator[tuple[int, str]]:
+def extract_pages(
+    pdf_path: Path,
+    *,
+    start_page: int = 1,
+    end_page: int | None = None,
+) -> Iterator[tuple[int, str]]:
     """Yield ``(page_number, text)`` tuples for each non-empty page of *pdf_path*.
 
     ``page_number`` is 1-indexed to match how humans (and citations)
     refer to PDF pages. ``text`` is UTF-8 with layout roughly preserved
     (``pdfplumber``'s default extract_text output).
+
+    ``start_page`` (1-based, inclusive) skips pages before it. ``end_page``
+    (1-based, inclusive; ``None`` = read to end) stops after it. Use these
+    to ingest only a chapter or appendix of a large textbook without
+    embedding its front-matter, table of contents, or unrelated chapters.
 
     Raises ``ImportError`` if pdfplumber isn't installed. Raises
     ``FileNotFoundError`` if the PDF doesn't exist. Per-page extraction
@@ -57,6 +67,10 @@ def extract_pages(pdf_path: Path) -> Iterator[tuple[int, str]]:
 
     try:
         for i, page in enumerate(pdf.pages, start=1):
+            if i < start_page:
+                continue
+            if end_page is not None and i > end_page:
+                break
             try:
                 text = page.extract_text() or ""
             except Exception as e:

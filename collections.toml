@@ -93,4 +93,8 @@ extensions = [".py", ".cpp", ".h", ".ipynb", ".md"]
 path         = "repos/quantum-papers"
 type         = "pdf"
 keep_missing = true   # see marbles-papers above.
+# Per-file page ranges: filename (relative to `path` above) -> range spec.
+# Accepted forms: integer, "N", "N-", "-M", "N-M", or [N, M] (0/null = end).
+# Use to skip front-matter / unrelated chapters of a large textbook.
+page_ranges  = { "TheLatticeBoltzmannEquationForComplexStatesOfFlowingMatter_succiLatticeBoltzmannEquation2018a.pdf" = "646-" }
 

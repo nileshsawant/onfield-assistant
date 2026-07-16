@@ -1,0 +1,92 @@
+# ofa RAG collection configuration
+#
+# Declarative source-to-collection mapping consumed by
+# ``src/rebuild_indices.py``. When you add / update / remove RAG sources,
+# edit this file and re-run:
+#
+#     python3 $OFA_ROOT/src/rebuild_indices.py
+#     python3 $OFA_ROOT/src/rebuild_indices.py --collection <name>
+#     python3 $OFA_ROOT/src/rebuild_indices.py --dry-run
+#     python3 $OFA_ROOT/src/rebuild_indices.py --force
+#     python3 $OFA_ROOT/src/rebuild_indices.py --clear --collection X
+#     python3 $OFA_ROOT/src/rebuild_indices.py --list
+#
+# Scope: this file lists the collections whose sources are git-pullable
+# repos or PDF drop-folders under $OFA_ROOT/repos/. The OpenFOAM tutorial
+# and source-tree collections (``openfoam``, ``of13_src``) are NOT listed
+# here because they use special case-dict-aware chunking that lives in
+# ``build_index_v2.py`` — use that script to rebuild them.
+#
+# Path resolution:
+#   * Paths starting with "/" are absolute.
+#   * All others are resolved relative to $OFA_ROOT.
+#   * Missing directories are skipped with a warning, so you can list a
+#     source ahead of dropping content into it.
+#
+# Sources may mix code and PDFs in the same collection — chunks are
+# tagged with source_type ("code" or "pdf") in metadata so retrievers /
+# prompts can distinguish them.
+
+# ---------------------------------------------------------------------------
+# NREL Kestrel HPC docs (git-cloned under repos/HPC).
+# ---------------------------------------------------------------------------
+
+[collections.hpc_docs]
+description = "NREL Kestrel documentation."
+[[collections.hpc_docs.sources]]
+path       = "repos/HPC/docs"
+type       = "code"
+extensions = [".md", ".rst", ".txt"]
+
+# ---------------------------------------------------------------------------
+# AMReX source (github.com/amrex-codes/amrex, cloned into repos/amrex).
+# ---------------------------------------------------------------------------
+
+[collections.amrex_src]
+description = "AMReX core source tree."
+[[collections.amrex_src.sources]]
+path       = "repos/amrex"
+type       = "code"
+extensions = [".H", ".cpp", ".h", ".f90"]
+
+# ---------------------------------------------------------------------------
+# ReFrame test framework.
+# ---------------------------------------------------------------------------
+
+[collections.reframe_src]
+description = "ReFrame + universal test framework sources."
+[[collections.reframe_src.sources]]
+path       = "repos/reframe-universal"
+type       = "code"
+extensions = [".py", ".sh", ".md"]
+
+# ---------------------------------------------------------------------------
+# MARBLES — code + user's thesis + supporting LBM papers.
+# Drop PDFs into repos/marbles-papers/ and re-run the rebuild.
+# ---------------------------------------------------------------------------
+
+[collections.marbles_src]
+description = "MARBLES LBM thermal solver — source code plus indexed papers/thesis."
+[[collections.marbles_src.sources]]
+path       = "repos/marblesThermal"
+type       = "code"
+extensions = [".H", ".cpp", ".h", ".py"]
+[[collections.marbles_src.sources]]
+path       = "repos/marbles-papers"
+type       = "pdf"
+
+# ---------------------------------------------------------------------------
+# Quantum computing. Drop code repos into repos/quantum-code/ and PDFs
+# (textbooks, papers, notes) into repos/quantum-papers/, then rebuild.
+# ---------------------------------------------------------------------------
+
+[collections.quantum_computing]
+description = "Quantum computing — curated code repositories, textbooks, and papers."
+[[collections.quantum_computing.sources]]
+path       = "repos/quantum-code"
+type       = "code"
+extensions = [".py", ".cpp", ".h", ".ipynb", ".md"]
+[[collections.quantum_computing.sources]]
+path       = "repos/quantum-papers"
+type       = "pdf"
+

@@ -50,9 +50,38 @@ $ ofa --serve --serve-enable-tools   # Also forward OpenAI tool_calls to Ollama 
 * **`src/ofa_main.py`**: The central python controller. Handles Ollama binary lifecycle management via `subprocess`, processes ChromaDB interactions (`_hybrid_search`), loops user input, captures output, and dictates the strict regex parsing logic for the tool-calling mechanism.
 * **`src/ofa_server.py`**: OpenAI-compatible HTTP shim used by `ofa --serve` — exposes ofa's system prompts + RAG + memory + multimodal (vision) at `/v1/chat/completions` for VS Code BYOK, `curl`, and the Python client below.
 * **`src/ofa_client.py`**: Zero-dependency (stdlib-only) Python client. `from ofa_client import ask, Session` — see the next section.
+* **`src/rebuild_indices.py`**: Config-driven RAG (re)ingester. Reads `collections.toml` and refreshes the ChromaDB collections declared there. See [Updating the RAG indices](#updating-the-rag-indices).
+* **`collections.toml`**: Declarative source-to-collection mapping consumed by the rebuild script (extend it when you add a new source or a new collection).
 * **`examples/`**: Worked end-to-end scripts users can copy verbatim. Currently ships `fit_and_ask.py` — a `curve_fit` demo that shows the `Session` + JSON-extraction patterns in ~230 LOC.
 * **`prompts/`**: Directory configuring the personas. `common.txt` establishes the global rules for the agent, establishing the planning pipeline, code syntax standards, and environment constraints. `code.txt`, `hpc.txt`, and others inject the role-specific capabilities.
 * **`vectordb/`**: The persistent storage directory for the offline ChromaDB ingestors, containing chunked embeddings for Kestrel's manuals, OpenFOAM examples, and RHEL module stacks.
+
+## Updating the RAG indices
+
+The vector store under `vectordb/` is populated from source directories declared in `collections.toml` at the repo root. To keep the indices current when you `git pull` a source repo, add a new source, or drop new documents into an existing one, run the rebuild script:
+
+```bash
+python3 $OFA_ROOT/src/rebuild_indices.py                             # rebuild all configured collections
+python3 $OFA_ROOT/src/rebuild_indices.py --collection <name>         # scope to one collection
+python3 $OFA_ROOT/src/rebuild_indices.py --list                      # show configured collections (no model load)
+python3 $OFA_ROOT/src/rebuild_indices.py --dry-run                   # preview additions / skips / orphans
+python3 $OFA_ROOT/src/rebuild_indices.py --force                     # ignore mtime cache; re-embed everything
+python3 $OFA_ROOT/src/rebuild_indices.py --clear --collection <name> # drop and rebuild from scratch
+```
+
+Behaviour:
+
+* **Idempotent.** Chunk IDs are SHA-256 of `collection + relative path + chunk index`, so re-runs upsert rather than duplicate. Per-file mtime is cached in `vectordb/.rebuild_state.json`; unchanged files are skipped (embedding is by far the slow step).
+* **Mixed content per collection.** Each collection can list code directories, PDF directories, or both. Each chunk is tagged with a `source_type` metadata field so retrievers can distinguish source files from documents and cite PDF page numbers.
+* **Missing source directories are logged and skipped.** You can declare a source path in `collections.toml` ahead of populating it — the collection activates as soon as content lands.
+* **Notebook handling.** `.ipynb` files are parsed as JSON and stripped of cell outputs before chunking, so base64-encoded plot outputs and long stdout dumps don't pollute retrieval.
+* **Orphan sweep.** Code files that were previously indexed but no longer exist on disk are removed from the collection on the next rebuild.
+
+Run the rebuild inside a Kestrel GPU allocation so the embedding model uses the H100 — the login node's CUDA driver is older and falls back to CPU, which is considerably slower. Typical wall-times on H100 are a few tens of seconds per thousand chunks.
+
+When rebuilding a collection that was previously indexed by an older ingester, use `--clear` on the first pass so its stale chunk IDs (from the older scheme) are dropped rather than left alongside the new ones. Subsequent rebuilds don't need `--clear`.
+
+Edit `collections.toml` to add a new collection or a new source directory. Paths starting with `/` are absolute; others resolve relative to `$OFA_ROOT`. See the header comment inside that file for the schema.
 
 ## Memory & Session Context
 

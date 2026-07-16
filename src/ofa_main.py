@@ -385,8 +385,11 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
     freed = 0
     protected_tail = 2  # keep last 2 messages fully intact (assistant + tool output)
     # ``_FENCE_RE`` matches ``` ... ``` blocks (any language tag) lazily so
-    # multiple blocks in one message each get caught.
+    # multiple blocks in one message each get caught. ``_RAG_RE`` matches
+    # the RAG-context envelope produced by _fence_rag(); the biggest
+    # single fossil in a long session.
     _FENCE_RE = re.compile(r"```[a-zA-Z0-9_+-]*\n.*?```", re.DOTALL)
+    _RAG_RE = re.compile(r"<rag\b[^>]*>.*?</rag>", re.DOTALL)
 
     for i in range(1, max(1, len(messages) - protected_tail)):
         if total_len <= target_chars:
@@ -407,6 +410,28 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
                 content = new_content  # so the user-msg branch below can re-check
 
         if role == "user":
+            # RAG blocks (`<rag label="...">...</rag>`) are the biggest
+            # single fossil in a long conversation: every turn injects
+            # 20-30 KB of retrieved chunks that were only relevant to
+            # answering *that* turn. Strip them from older user messages
+            # first — this reclaims the most bytes with the least
+            # information loss, since the model's answer to that turn
+            # already stands on its own without re-seeing the evidence.
+            if "<rag" in content and "</rag>" in content:
+                def _rag_shrink(match):
+                    tag = match.group(0)
+                    open_tag = tag.split(">", 1)[0] + ">"  # preserve label
+                    return (open_tag
+                            + "\n[Older retrieved-context block omitted by system "
+                              "to preserve context memory; ask again if you need it.]\n"
+                              "</rag>")
+                new_content = _RAG_RE.sub(_rag_shrink, content)
+                if len(new_content) < len(content):
+                    saved = len(content) - len(new_content)
+                    msg["content"] = new_content
+                    total_len -= saved
+                    freed += saved
+                    content = new_content
             if "Output from executed commands:" in content and len(content) > 400:
                 placeholder = "[Older terminal output omitted by system to preserve context memory.]"
                 saved = len(content) - len(placeholder)
@@ -444,8 +469,10 @@ def manage_session_context(messages, max_chars=SESSION_COMPRESS_AT_CHARS):
         if total_len > max_chars:
             print(
                 _c(
-                    "[System: still above the compression threshold — consider "
-                    "/clear to reset history if responses start to degrade.]",
+                    "[System: still above the compression threshold — "
+                    "try /compact for a tighter pass, or /clear to reset. "
+                    "Use /remember <insight> first if you want to carry a "
+                    "specific takeaway forward.]",
                     "yellow",
                 ),
                 file=sys.stderr,
@@ -2174,7 +2201,8 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                 "\nofa interactive commands:\n"
                 "  quit | exit | q       — exit\n"
                 "  /clear                — reset conversation (keeps system prompt, drops loaded skills)\n"
-                "  /history              — show how many messages are in the session\n"
+                "  /compact              — aggressively compress history now (strips old RAG/tool blocks, keeps prose + last 2 turns intact)\n"
+                "  /history              — show session size with a per-bucket breakdown\n"
                 "  /cwd                  — show current working directory\n"
                 "  /retry                — re-prompt the model and demand a proper tool fence\n"
                 "  /memory               — show what's stored in long-term memory\n"
@@ -2198,8 +2226,44 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             save_session(messages)
             print("[Conversation cleared. System prompt retained.]", file=sys.stderr)
             continue
+        if user_input.lower() == "/compact":
+            # Manual compression pass with an aggressive target (half the
+            # default) so users can reclaim space *before* the auto
+            # trigger fires — useful when the session is dense with RAG
+            # context you no longer need, but the topical thread is
+            # still worth keeping.
+            before = sum(len(m.get("content", "")) for m in messages)
+            manage_session_context(messages, max_chars=int(SESSION_COMPRESS_AT_CHARS * 0.5))
+            after = sum(len(m.get("content", "")) for m in messages)
+            save_session(messages)
+            if before == after:
+                print(_c(f"[/compact: nothing to strip (session {after:,} chars)]", "yellow"),
+                      file=sys.stderr)
+            else:
+                print(_c(f"[/compact: {before:,} → {after:,} chars (freed {before-after:,})]", "magenta"),
+                      file=sys.stderr)
+            continue
         if user_input.lower() == "/history":
-            print(f"[Session has {len(messages)} messages, ~{sum(len(m.get('content','')) for m in messages)} chars total]", file=sys.stderr)
+            # Break down where the bytes live so the user can decide
+            # whether /compact would help or /clear is warranted.
+            total = sum(len(m.get("content", "")) for m in messages)
+            sys_bytes = sum(len(m.get("content", "")) for m in messages if m.get("role") == "system")
+            user_bytes = sum(len(m.get("content", "")) for m in messages if m.get("role") == "user")
+            asst_bytes = sum(len(m.get("content", "")) for m in messages if m.get("role") == "assistant")
+            rag_bytes = 0
+            for m in messages:
+                if m.get("role") == "user":
+                    c = m.get("content", "")
+                    for match in re.finditer(r"<rag\b[^>]*>.*?</rag>", c, re.DOTALL):
+                        rag_bytes += len(match.group(0))
+            print(
+                f"[Session: {len(messages)} messages, {total:,} chars total\n"
+                f"   system   : {sys_bytes:>9,} chars\n"
+                f"   user     : {user_bytes:>9,} chars  (of which RAG envelopes: {rag_bytes:,})\n"
+                f"   assistant: {asst_bytes:>9,} chars\n"
+                f"   auto-compress trigger at {SESSION_COMPRESS_AT_CHARS:,} chars]",
+                file=sys.stderr,
+            )
             continue
         if user_input.lower() == "/cwd":
             print(_current_cwd, file=sys.stderr)

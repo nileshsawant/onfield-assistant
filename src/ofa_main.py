@@ -2665,7 +2665,19 @@ def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
         try:
             docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_marbles_src_collection, coll_name="marbles_src", top_k=top_k)
             for s_doc, s_meta in zip(docs, metas):
-                s_header = f"[MARBLES thermal C++ Source Code - src/{s_meta.get('filepath', '?')}]"
+                # Source-type-aware header so PDFs (papers / thesis) are
+                # not mislabelled as C++ source. Falls back to the
+                # historical label for legacy chunks that pre-date the
+                # rebuild_indices.py schema (which added source_type).
+                fp = s_meta.get("filepath", "?")
+                stype = s_meta.get("source_type")
+                if stype == "pdf":
+                    page = s_meta.get("page", "?")
+                    s_header = f"[MARBLES paper - {fp}, page {page}]"
+                elif stype == "code":
+                    s_header = f"[MARBLES source - {fp}]"
+                else:
+                    s_header = f"[MARBLES thermal C++ Source Code - src/{fp}]"
                 context_parts.append(f"{s_header}\n{s_doc}\n")
         except Exception:
             pass

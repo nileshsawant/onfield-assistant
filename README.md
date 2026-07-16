@@ -67,6 +67,7 @@ python3 $OFA_ROOT/src/rebuild_indices.py --list                      # show conf
 python3 $OFA_ROOT/src/rebuild_indices.py --dry-run                   # preview additions / skips / orphans
 python3 $OFA_ROOT/src/rebuild_indices.py --force                     # ignore mtime cache; re-embed everything
 python3 $OFA_ROOT/src/rebuild_indices.py --clear --collection <name> # drop and rebuild from scratch
+python3 $OFA_ROOT/src/rebuild_indices.py --incremental               # additive-only: keep chunks in the store even if their source files were removed
 ```
 
 Behaviour:
@@ -75,7 +76,7 @@ Behaviour:
 * **Mixed content per collection.** Each collection can list code directories, PDF directories, or both. Each chunk is tagged with a `source_type` metadata field so retrievers can distinguish source files from documents and cite PDF page numbers.
 * **Missing source directories are logged and skipped.** You can declare a source path in `collections.toml` ahead of populating it — the collection activates as soon as content lands.
 * **Notebook handling.** `.ipynb` files are parsed as JSON and stripped of cell outputs before chunking, so base64-encoded plot outputs and long stdout dumps don't pollute retrieval.
-* **Orphan sweep.** Code files that were previously indexed but no longer exist on disk are removed from the collection on the next rebuild.
+* **Orphan sweep.** Code files that were previously indexed but no longer exist on disk are removed from the collection on the next rebuild. Pass `--incremental` to disable the sweep and retain existing chunks even when source files have been removed (useful for corpora where the source cannot be redistributed but the embeddings should stay queryable). New files dropped in later are still picked up normally.
 
 Run the rebuild inside a Kestrel GPU allocation so the embedding model uses the H100 — the login node's CUDA driver is older and falls back to CPU, which is considerably slower. Typical wall-times on H100 are a few tens of seconds per thousand chunks.
 

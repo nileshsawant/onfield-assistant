@@ -299,6 +299,7 @@ def rebuild_collection(
     dry_run: bool = False,
     force: bool = False,
     clear: bool = False,
+    incremental: bool = False,
 ) -> None:
     """Rebuild one collection according to its config entry.
 
@@ -383,24 +384,35 @@ def rebuild_collection(
 
     # Orphan sweep — remove chunks for files that used to be indexed
     # but are gone from disk (deleted / moved out of source root).
-    gone = [k for k in list(coll_state) if k not in seen_paths]
-    for k in gone:
-        n = coll_state[k].get("n_chunks", 0)
-        # We can't easily know the individual chunk IDs after a re-run
-        # without tracking them, but stable_id is deterministic given
-        # the ORIGINAL path — so we can regenerate the IDs and delete.
-        ids_to_drop = [stable_id(name, k, i) for i in range(n)]
-        # PDF-derived stable_ids used a ":pN" suffix in the path arg, so
-        # this simple regeneration will miss PDF chunks. That's fine for
-        # the common case of code-file renames / deletes; a stale PDF
-        # will be caught by re-running with --force.
-        try:
-            if ids_to_drop and not dry_run:
-                coll.delete(ids=ids_to_drop)
-        except Exception as e:
-            print(f"  [!] orphan sweep for {k}: {e}", file=sys.stderr)
-        removed += n
-        del coll_state[k]
+    #
+    # Skipped in incremental mode: use this when source files were
+    # deliberately removed from disk (e.g. copyrighted PDFs stripped
+    # from a git-visible folder) but their embeddings should stay in
+    # the store. New files added later still get picked up normally,
+    # and the existing chunks remain queryable.
+    removed = 0
+    if incremental:
+        kept_missing = [k for k in coll_state if k not in seen_paths]
+        if kept_missing:
+            print(f"  [~] --incremental: keeping {len(kept_missing)} file entries "
+                  f"whose source is no longer on disk")
+    else:
+        gone = [k for k in list(coll_state) if k not in seen_paths]
+        for k in gone:
+            n = coll_state[k].get("n_chunks", 0)
+            # stable_id is deterministic in the ORIGINAL path, so we can
+            # regenerate the code chunks' IDs and delete them. PDF-derived
+            # stable_ids used a ":pN" suffix, so this simple regeneration
+            # misses PDF chunks — a stale PDF entry will be caught by
+            # re-running with --force.
+            ids_to_drop = [stable_id(name, k, i) for i in range(n)]
+            try:
+                if ids_to_drop and not dry_run:
+                    coll.delete(ids=ids_to_drop)
+            except Exception as e:
+                print(f"  [!] orphan sweep for {k}: {e}", file=sys.stderr)
+            removed += n
+            del coll_state[k]
 
     if dry_run:
         print(f"  [dry-run] would add/upsert {added} chunks, "
@@ -449,6 +461,12 @@ def main():
                     help="drop the collection before rebuilding (use once when "
                          "migrating a collection previously built by a different "
                          "indexer, to avoid stale duplicate chunks)")
+    ap.add_argument("--incremental", action="store_true",
+                    help="skip the orphan sweep: keep chunks in the store even "
+                         "if their source files have been removed from disk. "
+                         "Use when you deliberately stripped source files (e.g. "
+                         "copyrighted PDFs) but want their embeddings retained. "
+                         "New files dropped in later are still added normally.")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -484,6 +502,7 @@ def main():
             rebuild_collection(
                 name, cinfo, embed_model, chroma_client, state,
                 dry_run=args.dry_run, force=args.force, clear=args.clear,
+                incremental=args.incremental,
             )
     finally:
         if not args.dry_run:

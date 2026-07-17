@@ -3,7 +3,7 @@
 **Project**: OnField Assistant 🌵 (`ofa`)
 **Deployment**: NLR Kestrel HPC
 **Module**: `assistant` (Lmod)
-**Repo**: https://github.com/nileshsawant/openfoam-assistant
+**Repo**: https://github.com/nileshsawant/onfield-assistant
 **Document date**: June 2026
 
 ---
@@ -58,7 +58,7 @@ known VS Code-side gotchas: [`docs/byok-vscode.md`](byok-vscode.md).
 
 `module help assistant` prints a usage summary; `module load assistant` shows
 a short banner with the BYOK quick-start; the GitHub repo
-(https://github.com/nileshsawant/openfoam-assistant) holds the live source
+(https://github.com/nileshsawant/onfield-assistant) holds the live source
 and this document.
 
 ---
@@ -343,7 +343,7 @@ The CLI surface executes commands; that's where safety lives.
 - **Consecutive-error pause**: after 3 consecutive tool failures, the react loop hands control back to the user instead of letting the model thrash.
 - **Tool output truncation**: any single command's stdout/stderr is capped at 96 KB before being fed back to the model (head + tail keepers); session-wide context is compressed when it exceeds 100 KB (see §6.6).
 - **Catastrophic command confirmation phrase**: certain irreversible operations (e.g. `git push --force`, `rm -rf` after the regex screen passes due to a non-system path) require typing an exact phrase, not just `y`.
-- **Untested-model warning**: at startup, if the active LLM is not in `TESTED_MODELS` (currently only `gemma4:31b`), a loud red banner explains that destructive-command guards have only been validated against the default. The model registry, picker UI, and the `/models` slash command are deliberately not exposed on the startup banner — see [commit a4f1124](https://github.com/nileshsawant/openfoam-assistant/commit/a4f1124) for the rationale.
+- **Untested-model warning**: at startup, if the active LLM is not in `TESTED_MODELS` (currently only `gemma4:31b`), a loud red banner explains that destructive-command guards have only been validated against the default. The model registry, picker UI, and the `/models` slash command are deliberately not exposed on the startup banner — see [commit a4f1124](https://github.com/nileshsawant/onfield-assistant/commit/a4f1124) for the rationale.
 
 ### 6.6 Session context compression
 
@@ -353,7 +353,7 @@ When `messages` exceeds 100 KB, `manage_session_context()` walks oldest → newe
 2. Replace old `Output from executed commands: …` user messages with a short placeholder.
 3. For any other old user message > 8 KB containing fenced code blocks, replace each ` ``` … ``` ` body with `[Older code/output block omitted by system to preserve context memory.]` — keeps the language tag (`​```python` etc.) so the model knows what kind of content was there.
 
-Compression stops when below target (75 % of cap). If progress is made but the result is still over cap, a yellow `/clear` hint is emitted. If compression can free nothing, the function stays silent — earlier versions printed `[System: Context size (N) near limit. Compressing old logs...]` every turn even when no compression was possible, which was the original UX bug that drove the refactor ([commit df81e1b](https://github.com/nileshsawant/openfoam-assistant/commit/df81e1b)).
+Compression stops when below target (75 % of cap). If progress is made but the result is still over cap, a yellow `/clear` hint is emitted. If compression can free nothing, the function stays silent — earlier versions printed `[System: Context size (N) near limit. Compressing old logs...]` every turn even when no compression was possible, which was the original UX bug that drove the refactor ([commit df81e1b](https://github.com/nileshsawant/onfield-assistant/commit/df81e1b)).
 
 Eight unit tests cover this in [test_ofa_compress.py](file:///tmp/test_ofa_compress.py).
 
@@ -615,7 +615,7 @@ $ <shell command>     — run a shell command locally (cd persists)
 
 ### 12.4 Key references
 
-- Repo: https://github.com/nileshsawant/openfoam-assistant
+- Repo: https://github.com/nileshsawant/onfield-assistant
 - BYOK walkthrough: [`docs/byok-vscode.md`](byok-vscode.md)
 - BYOK config helper: [`tools/byok-update-config.py`](../tools/byok-update-config.py)
 - VS Code BYOK docs: https://code.visualstudio.com/blogs/2026/06/18/byok-vscode

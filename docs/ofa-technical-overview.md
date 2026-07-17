@@ -1,6 +1,6 @@
 # `ofa` — Technical Overview
 
-**Project**: OpenFOAM Assistant (`ofa`)
+**Project**: OnField Assistant 🌵 (`ofa`)
 **Deployment**: NREL Kestrel HPC
 **Module**: `assistant` (Lmod)
 **Repo**: https://github.com/nileshsawant/openfoam-assistant

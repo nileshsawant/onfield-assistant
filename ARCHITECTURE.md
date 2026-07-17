@@ -1,7 +1,7 @@
-# OpenFOAM Assistant (`ofa`) Architecture & Hybrid Search
+# OnField Assistant 🌵 (`ofa`) Architecture & Hybrid Search
 
 ## Overview
-The OpenFOAM Assistant (`ofa`) is an AI-powered CLI wrapper designed to help HPC users navigate complex CFD case setups, explore OpenFOAM C++ source code, and retrieve HPC hardware documentation directly from the console. It leverages locally hosted Large Language Models (via Ollama) augmented with highly specialized domain knowledge through Retrieval-Augmented Generation (RAG).
+The OnField Assistant (`ofa`) is an AI-powered CLI wrapper designed to help HPC users navigate complex CFD case setups, explore OpenFOAM C++ source code, and retrieve HPC hardware documentation directly from the console. It leverages locally hosted Large Language Models (via Ollama) augmented with highly specialized domain knowledge through Retrieval-Augmented Generation (RAG).
 
 ## Core Components
 * **LLM Backend**: Ollama running locally (model: `gemma4:26b` or similarly configured models).

@@ -1,6 +1,6 @@
-# OpenFOAM Assistant (ofa)
+# OnField Assistant 🌵 (ofa)
 
-An AI-powered reasoning and autonomous execution agent tailored for the NREL Kestrel HPC system. The OpenFOAM Assistant (`ofa`) utilizes a local Large Language Model orchestrator (powered by Ollama and `gemma4:31b`) alongside Retrieval-Augmented Generation (RAG) using ChromaDB to help researchers build cases, compile complex scientific codebases, organically navigate Kestrel's HPC documentation, and execute multi-step SLURM jobs natively.
+An AI-powered reasoning and autonomous execution agent tailored for the NREL Kestrel HPC system. OnField Assistant (`ofa`) utilizes a local Large Language Model orchestrator (powered by Ollama and `gemma4:31b`) alongside Retrieval-Augmented Generation (RAG) using ChromaDB to help researchers build cases, compile complex scientific codebases, organically navigate Kestrel's HPC documentation, and execute multi-step SLURM jobs natively.
 
 ## Features
 

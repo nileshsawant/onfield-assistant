@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the OpenFOAM Assistant RAG index from scratch.
+Build the OnField Assistant RAG index from scratch.
 
 Sources:
   1. OpenFOAM-13 tutorials, src headers, applications headers, etc/caseDicts
@@ -443,7 +443,7 @@ def index_papers(model, collection) -> int:
 
 def build():
     print("=" * 60)
-    print("OpenFOAM Assistant RAG — full rebuild from scratch")
+    print("OnField Assistant RAG — full rebuild from scratch")
     print("=" * 60)
 
     print(f"\nLoading embedding model from {EMBEDDING_MODEL_PATH}")

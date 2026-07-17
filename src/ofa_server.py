@@ -827,7 +827,7 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
     #     number that goes in the VS Code BYOK URL.
     print("", file=sys.stderr)
     print(_c("=" * 72, "cyan"), file=sys.stderr)
-    print(_c(" CONNECT FROM YOUR LAPTOP ", "bold", "cyan"), file=sys.stderr)
+    print(_c(" 🌵 CONNECT FROM YOUR LAPTOP ", "bold", "cyan"), file=sys.stderr)
     print(_c("=" * 72, "cyan"), file=sys.stderr)
     print("", file=sys.stderr)
     print(_c(

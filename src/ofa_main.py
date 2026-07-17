@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenFOAM Assistant (ofa) — RAG-augmented LLM for OpenFOAM case setup."""
+"""OnField Assistant (ofa) — locally hosted, RAG-augmented LLM for HPC and scientific-computing workflows."""
 
 import argparse
 import atexit
@@ -157,6 +157,7 @@ def _is_model_pulled(model_id: str) -> bool:
 def _print_model_registry():
     """Pretty-print MODEL_REGISTRY annotated with which models are actually
     pulled locally. Used by --list-models."""
+    print("🌵 ofa model registry\n")
     print(f"Active model: {MODEL}{' (pulled)' if _is_model_pulled(MODEL) else ' (NOT pulled — run: ollama pull ' + MODEL + ')'}\n")
     print("Registered models:")
     name_w = max(len(n) for n in MODEL_REGISTRY) + 2
@@ -1721,7 +1722,7 @@ def fetch_url_context(query: str, max_chars: int = 64000) -> str:
         try:
             print(f"Fetching {url} ...", file=sys.stderr)
             r = httpx.get(url, timeout=15, follow_redirects=False,
-                          headers={"User-Agent": "Mozilla/5.0 (OpenFOAM Assistant)"})
+                          headers={"User-Agent": "Mozilla/5.0 (OnField Assistant)"})
             if r.status_code != 200:
                 continue
             html = r.text
@@ -2204,11 +2205,9 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     else:
         messages = [{"role": "system", "content": system_prompt}]
 
-    print("NLR HPC & OpenFOAM AI Assistant - 3 Primary Modes:")
-    print("  1. Dictionary Generator (Default) - Generates & runs cases")
-    print("  2. HPC Documentation (--hpc) - Kestrel/Slurm support")
-    print("  3. Coding Assistant (--code) - Read/Write/Execute codebase tools")
-    print("\nFeatures:\n  - Session Resume (--resume)\n  - History saved to /scratch")
+    print(_c("🌵 OnField Assistant (ofa) — locally hosted on Kestrel · single H100", "bold", "green"))
+    print(_c("Use `ofa --help` to see all modes. Highlights: --hpc, --code, --amrex, --marbles, --quantum-computing, --rhel9_reframe.", "dim"))
+    print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
 
     # Active model + the full menu of pulled alternatives. Surfacing the menu
     # here saves a `ofa --list-models` round-trip and reminds the user that
@@ -2255,7 +2254,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             break
         if user_input.lower() in ("/help", "help", "?"):
             print(
-                "\nofa interactive commands:\n"
+                "\n🌵 ofa interactive commands:\n"
                 "  quit | exit | q       — exit\n"
                 "  /clear                — reset conversation (keeps system prompt, drops loaded skills)\n"
                 "  /compact              — aggressively compress history now (strips old RAG/tool blocks, keeps prose + last 2 turns intact)\n"
@@ -3743,7 +3742,8 @@ def handle_slurm_sigterm(*args):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="OpenFOAM Assistant — AI-powered case setup helper"
+        description="🌵 OnField Assistant (ofa) — locally hosted, RAG-augmented LLM for HPC and scientific-computing workflows on NREL Kestrel.",
+        epilog="Runs entirely on your allocated Kestrel node. No data leaves NREL.",
     )
     parser.add_argument(
         "query", nargs="*", help="Query to ask (omit for interactive mode)"

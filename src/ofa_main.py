@@ -3742,8 +3742,8 @@ def handle_slurm_sigterm(*args):
 def main():
 
     parser = argparse.ArgumentParser(
-        description="🌵 OnField Assistant (ofa) — locally hosted, RAG-augmented LLM for HPC and scientific-computing workflows on NREL Kestrel.",
-        epilog="Runs entirely on your allocated Kestrel node. No data leaves NREL.",
+        description="🌵 OnField Assistant (ofa) — locally hosted, RAG-augmented LLM for HPC and scientific-computing workflows on NLR Kestrel.",
+        epilog="Runs entirely on your allocated Kestrel node. No data leaves NLR.",
     )
     parser.add_argument(
         "query", nargs="*", help="Query to ask (omit for interactive mode)"

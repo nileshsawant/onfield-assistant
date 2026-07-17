@@ -32,7 +32,7 @@
 # ---------------------------------------------------------------------------
 
 [collections.hpc_docs]
-description = "NREL Kestrel documentation."
+description = "NLR Kestrel documentation."
 [[collections.hpc_docs.sources]]
 path       = "repos/HPC/docs"
 type       = "code"

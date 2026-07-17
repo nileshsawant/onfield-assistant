@@ -1,4 +1,4 @@
-Procedures and quirks for running short debug/interactive SLURM jobs on NREL Kestrel.
+Procedures and quirks for running short debug/interactive SLURM jobs on NLR Kestrel.
 
 When the user is preparing or debugging a short SLURM job on Kestrel, prefer the
 guidance below over generic SLURM advice.

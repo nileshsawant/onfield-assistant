@@ -1,7 +1,7 @@
 # `ofa` — Technical Overview
 
 **Project**: OnField Assistant 🌵 (`ofa`)
-**Deployment**: NREL Kestrel HPC
+**Deployment**: NLR Kestrel HPC
 **Module**: `assistant` (Lmod)
 **Repo**: https://github.com/nileshsawant/openfoam-assistant
 **Document date**: June 2026
@@ -70,7 +70,7 @@ and this document.
 - **Interactive CLI** (`ofa`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --quantum-computing`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
 - **OpenAI-compatible HTTP server** (`ofa --serve`) — a Bring-Your-Own-Key (BYOK) endpoint so VS Code Chat, `opencode`, or any OpenAI-compatible client can route requests through the same domain layer.
 
-The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). All inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NREL's network. 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
+The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). All inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NLR's network. 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
 
 The remainder of this document covers what's in the repo, how the pieces fit together, and the operational/safety properties anyone evaluating `ofa` for wider use will want to know.
 

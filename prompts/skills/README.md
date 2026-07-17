@@ -44,7 +44,7 @@ the always-on system prompt:
 # Kestrel SLURM debug-queue tips
 
 Use these tips when the user is preparing or debugging short SLURM jobs
-on NREL Kestrel's debug partition.
+on NLR Kestrel's debug partition.
 
 - The debug partition wall clock cap is 1 hour. Never write `--time=24:00:00`
   to a debug-partition submission.

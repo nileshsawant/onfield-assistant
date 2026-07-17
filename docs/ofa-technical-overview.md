@@ -14,15 +14,16 @@
 
 ```bash
 module load assistant
-ofa                                  # OpenFOAM dictionary generator (default)
+ofa                                  # General coding assistant (default)
+ofa --openfoam                       # OpenFOAM dictionary generator (was default in <= 1.0)
 ofa --hpc                            # Kestrel HPC documentation assistant
-ofa --code                           # General coding assistant (file R/W/X)
+ofa --code                           # General coding assistant (redundant — this is the default)
 ofa --amrex                          # AMReX C++ framework
 ofa --marbles                        # MARBLES (LBM thermal solver on AMReX)
 ofa --quantum-computing              # Quantum computing (rigorous gate / matrix verification)
 ofa --rhel9_reframe                  # ReFrame for RHEL9 migration
 ofa --resume                         # Resume your last session
-ofa "set up a cavity case" --save ./case   # Single query + save case files
+ofa --openfoam "set up a cavity case" --save ./case   # Single OpenFOAM query + save case files
 ```
 
 `ofa` auto-allocates a quarter-node H100 GPU (debug partition, 30 min walltime)
@@ -137,9 +138,10 @@ Three layers, in order of how a request flows through them:
 
 | Command | Mode | System prompt | RAG retriever |
 |---|---|---|---|
-| `ofa` | dictionary generator | `prompts/openfoam.txt` | `retrieve_context` (OpenFOAM tutorials) |
+| `ofa` (default) | general code R/W/X | `prompts/code.txt` + `prompts/cpp.txt` | `retrieve_hpc_context` |
+| `ofa --openfoam` | OpenFOAM case / dictionary generator | `prompts/openfoam.txt` | `retrieve_context` (OpenFOAM tutorials) |
 | `ofa --hpc` | Kestrel HPC docs | `prompts/hpc.txt` | `retrieve_hpc_context` (Kestrel docs) |
-| `ofa --code` | general code R/W/X | `prompts/code.txt` + `prompts/cpp.txt` | `retrieve_hpc_context` |
+| `ofa --code` | general code R/W/X (same as default) | `prompts/code.txt` + `prompts/cpp.txt` | `retrieve_hpc_context` |
 | `ofa --amrex` | AMReX C++ framework | `prompts/amrex.txt` | `retrieve_amrex_context` (AMReX source only) |
 | `ofa --marbles` | MARBLES LBM thermal solver | `prompts/marbles.txt` | `retrieve_marbles_context` (MARBLES primary + light AMReX) |
 | `ofa --quantum-computing` | Quantum computing (code + papers, rigorous math verification) | `prompts/quantum-computing.txt` | `retrieve_quantum_computing_context` |

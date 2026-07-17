@@ -2206,7 +2206,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         messages = [{"role": "system", "content": system_prompt}]
 
     print(_c("🌵 OnField Assistant (ofa) — locally hosted on Kestrel · single H100", "bold", "green"))
-    print(_c("Use `ofa --help` to see all modes. Highlights: --hpc, --code, --amrex, --marbles, --quantum-computing, --rhel9_reframe.", "dim"))
+    print(_c("Use `ofa --help` to see all modes. Highlights: --code (default), --openfoam, --hpc, --amrex, --marbles, --quantum-computing, --rhel9_reframe.", "dim"))
     print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
 
     # Active model + the full menu of pulled alternatives. Surfacing the menu
@@ -3758,7 +3758,13 @@ def main():
     )
     parser.add_argument(
         "--hpc", action="store_true",
-        help="Use the Kestrel HPC Documentation assistant instead of OpenFOAM"
+        help="Kestrel HPC / Slurm documentation assistant"
+    )
+    parser.add_argument(
+        "--openfoam", action="store_true",
+        help="OpenFOAM case generator (writes dictionary files; pair with --save "
+             "to dump generated case files to a directory, --fast to skip the "
+             "plan stage). Was the default mode in versions <= 1.0."
     )
     parser.add_argument(
         "--amrex", action="store_true",
@@ -3779,7 +3785,8 @@ def main():
     )
     parser.add_argument(
         "--code", action="store_true",
-        help="General coding assistant mode"
+        help="General coding / software-engineering assistant. This is the "
+             "DEFAULT mode when no other mode flag is given."
     )
     parser.add_argument(
         "--rhel9_reframe", action="store_true",
@@ -3859,6 +3866,16 @@ def main():
     )
     args = parser.parse_args()
 
+    # Default mode: --code (was: --openfoam in versions <= 1.0). If the
+    # user gave no mode flag, promote them to the coding assistant so
+    # `ofa` on its own is useful for the majority of Kestrel users who
+    # aren't running OpenFOAM. Users who *do* want the OpenFOAM case
+    # generator now ask for it explicitly with `ofa --openfoam`.
+    _mode_flags = (args.hpc, args.code, args.amrex, args.marbles,
+                   args.quantum_computing, args.rhel9_reframe, args.openfoam)
+    if not any(_mode_flags):
+        args.code = True
+
     # --model wins over the env var (which was already baked into the
     # module-level MODEL global by the time argparse runs).
     if args.model:
@@ -3913,7 +3930,9 @@ def main():
             hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=True)
         elif args.hpc:
             hpc_single_query(" ".join(args.query), resume=args.resume)
-        else:
+        elif args.openfoam:
+            # Explicit OpenFOAM case-generator path (planning + tool-call
+            # scaffold + optional --save case dir + --fast single-shot).
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
         interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, marbles_mode=args.marbles, reframe_mode=args.rhel9_reframe, quantum_computing_mode=args.quantum_computing)

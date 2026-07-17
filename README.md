@@ -19,14 +19,15 @@ An AI-powered reasoning and autonomous execution agent tailored for the NREL Kes
 Simply run the `ofa` command from your Kestrel environment. Make sure to load the corresponding application module first.
 
 ```bash
-# Standard Interactive OpenFOAM case generator
+# Default mode: general coding / software-engineering assistant
 $ ofa
 
 # Single-shot query (runs without a continuous prompt loop)
-$ ofa "Write the blockMeshDict for a backward facing step"
+$ ofa "explain what a __global__ kernel does in CUDA"
 
 # Specialized Agent Modes
-$ ofa --code            # General coding assistant and software engineering
+$ ofa --openfoam        # OpenFOAM case generator (was the default in versions <= 1.0)
+$ ofa --code            # General coding assistant (redundant — this is the default now)
 $ ofa --hpc             # Kestrel HPC, SLURM documentation, and topology expert
 $ ofa --amrex           # AMReX C++ framework assistant
 $ ofa --marbles         # MARBLES (LBM thermal solver on AMReX) assistant
@@ -35,9 +36,9 @@ $ ofa --rhel9_reframe   # ReFrame integration expert strictly adhering to the Ke
 
 # Additional Flags
 $ ofa --resume          # Resume the previous interactive session (uses ~/.ofa_session.json)
-$ ofa --save <dir>      # Save locally generated template cases to a specific directory path
+$ ofa --save <dir>      # (with --openfoam) save generated template cases to a directory
 $ ofa --no-rag          # Disable ChromaDB context retrieval; relies solely on standard LLM weights
-$ ofa --fast            # Execute single-shot file generation simultaneously
+$ ofa --fast            # (with --openfoam) single-shot file generation (skip plan stage)
 
 # BYOK / programmatic server (OpenAI-compatible HTTP endpoint on this node)
 $ ofa --serve                    # Start the local HTTP server; see docs/byok-vscode.md

@@ -628,11 +628,15 @@ class _Handler(BaseHTTPRequestHandler):
             traceback.print_exc(file=sys.stderr)
             return self._send_error(500, f"failed to build prompt: {e}", "server_error")
 
-        print(
-            f"[ofa-serve] {model_id} ({mode}): {len(messages)} msg(s), "
-            f"stream={stream}, tools={'on (fence-block elided)' if use_tools else 'off'}",
-            file=sys.stderr,
-        )
+        # Per-request log; silenced by --serve-quiet so background clients
+        # (e.g. opencode inside a shared shell) don't pollute the TUI.
+        # Startup banner, auth failures, and stack traces stay visible.
+        if not getattr(self, "quiet", False):
+            print(
+                f"[ofa-serve] {model_id} ({mode}): {len(messages)} msg(s), "
+                f"stream={stream}, tools={'on (fence-block elided)' if use_tools else 'off'}",
+                file=sys.stderr,
+            )
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
         created = int(time.time())
@@ -848,7 +852,8 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
           api_key_file: str | None = None,
           no_auth: bool = False,
           local_port: int | None = None,
-          enable_tools: bool = False) -> None:
+          enable_tools: bool = False,
+          quiet: bool = False) -> None:
     """Start the BYOK server. Blocks until Ctrl+C.
 
     Parameters
@@ -918,6 +923,7 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
 
     _Handler.api_key = token
     _Handler.enable_tools = enable_tools
+    _Handler.quiet = quiet
     if enable_tools:
         print(
             "[ofa-serve] tool_calls passthrough is ENABLED (experimental). "

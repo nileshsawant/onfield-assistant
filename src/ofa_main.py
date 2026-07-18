@@ -3873,6 +3873,14 @@ def main():
              "click-per-block. OFF by default because local 31B models can "
              "emit malformed JSON for VS Code's complex tool schemas."
     )
+    parser.add_argument(
+        "--serve-quiet", action="store_true",
+        help="Silence the per-request '[ofa-serve] <model> (<mode>): N msg(s)...' "
+             "log line. Startup banner, auth failures, and errors still print. "
+             "Use when running --serve in a shell shared with an interactive "
+             "TUI (opencode, tmux pane, etc.) so background traffic doesn't "
+             "clutter the display."
+    )
     args = parser.parse_args()
 
     # Default mode: --code (was: --openfoam in versions <= 1.0). If the
@@ -3911,6 +3919,7 @@ def main():
             no_auth=args.serve_no_auth,
             local_port=args.serve_local_port,
             enable_tools=args.serve_enable_tools,
+            quiet=args.serve_quiet,
         )
         return
 

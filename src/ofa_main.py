@@ -1949,6 +1949,15 @@ def chat_stream(messages: list, **option_overrides):
         "model": MODEL,
         "messages": messages,
         "stream": True,
+        # Disable Ollama's split-field 'thinking' mode. Recent Ollama
+        # versions (~0.3+) route reasoning-capable models like Gemma 4
+        # into a separate `thinking` field, leaving `content` empty. Ofa
+        # already has its own inline <thought>...</thought> convention
+        # taught by prompts/common.txt and consumed by
+        # make_thought_filter() on the CLI; forcing think=false keeps
+        # reasoning where our filter expects it and prevents the
+        # empty-content symptom for both CLI and BYOK clients.
+        "think": False,
         "options": opts,
     }
     try:

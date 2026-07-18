@@ -353,6 +353,10 @@ def _ollama_chat_raw(messages, tools, tool_choice, options):
         "model": ofa_main.MODEL,
         "messages": messages,
         "stream": True,
+        # See chat_stream() in ofa_main.py for the rationale. Ollama
+        # returns empty `content` for reasoning-capable models unless
+        # we opt out of its split-field thinking mode.
+        "think": False,
         "options": options,
     }
     if tools:

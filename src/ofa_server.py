@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import socketserver
 import stat
@@ -166,7 +167,66 @@ def _split_content(content) -> tuple[str, list[str]]:
     return "\n".join(texts), images
 
 
-def _augment_messages(messages: list[dict], mode: str) -> list[dict]:
+# Regex used by _strip_fence_tool_protocol below. The markers live in
+# prompts/common.txt and bracket the section of the system prompt that
+# teaches the model ofa's ```bash / ```read / ```write / etc. fence
+# tool convention. That teaching is *incompatible* with OpenAI-style
+# tool_calls: given both, Gemma consistently emits fences instead of
+# JSON tool_calls, silently breaking BYOK agent clients (langchain,
+# langgraph, amrex-agent, ...). When a request supplies tools=[...] we
+# elide the whole bracketed section (markers and all) so the model
+# defaults to OpenAI's tool_calls convention.
+_FENCE_TOOL_STRIP_RE = re.compile(
+    r"\n===== BEGIN OFA FENCE-TOOL PROTOCOL[^\n]*\n"
+    r".*?"
+    r"===== END OFA FENCE-TOOL PROTOCOL =====\n",
+    re.DOTALL,
+)
+
+
+def _strip_fence_tool_protocol(sys_prompt: str) -> str:
+    """Remove the fence-tool teaching block from the system prompt.
+
+    Safe no-op if the markers aren't present (older prompt files or
+    mode-specific prompts that never included the block).
+    """
+    return _FENCE_TOOL_STRIP_RE.sub("\n", sys_prompt)
+
+
+# When ``tools=[...]`` is present on an incoming request, we prepend this
+# directive to the system prompt. Stripping the fence-tool block alone is
+# not enough — the mode prompts (code.txt, cpp.txt, examples in common.txt)
+# reference ```bash / ```write / etc. in passing, and Gemma follows those
+# examples over the caller's OpenAI schema unless we override explicitly.
+# This directive sits at the very top of the system prompt so it primes
+# the model before any legacy fence teaching lower down.
+_OPENAI_TOOL_MODE_DIRECTIVE = (
+    "CRITICAL — OpenAI tool-call mode ACTIVE for this request.\n"
+    "\n"
+    "Your caller (a BYOK client) has supplied a list of tools in OpenAI's\n"
+    "standard JSON-schema `tools` format. In this session you MUST invoke\n"
+    "tools using OpenAI's native `tool_calls` mechanism, NOT ofa's\n"
+    "fenced-code-block convention.\n"
+    "\n"
+    "Rules for this request only:\n"
+    "- When you decide to invoke a tool, produce a native `tool_calls`\n"
+    "  response with the function name and JSON arguments. Do NOT emit\n"
+    "  ```bash / ```read / ```write / ```edit / ```search / ```fetch /\n"
+    "  ```plan / ```validate_inputs / etc. fenced blocks — the caller\n"
+    "  cannot execute them. Emitting a fenced block produces no tool\n"
+    "  call and confuses the caller.\n"
+    "- Ignore any fence-syntax examples that may appear elsewhere in this\n"
+    "  system prompt — those are ofa's default CLI convention; the\n"
+    "  OpenAI convention supersedes them for this request.\n"
+    "- Continue to obey identity, thinking-channel (`<thought>`), retrieved-\n"
+    "  context grounding, memory, and safety rules normally.\n"
+    "\n"
+    "---\n"
+    "\n"
+)
+
+
+def _augment_messages(messages: list[dict], mode: str, has_tools: bool = False) -> list[dict]:
     """Return a new message list with RAG injected on the last user msg
     and an ofa system prompt prepended (replacing any inbound system msg).
 
@@ -179,8 +239,21 @@ def _augment_messages(messages: list[dict], mode: str) -> list[dict]:
     ship their own system prompt that knows nothing about Kestrel /
     OpenFOAM, and our system prompt + memory injection is the whole
     point of routing through ofa.
+
+    When ``has_tools`` is True (BYOK request supplied ``tools=[...]``),
+    strip ofa's fence-tool protocol block from the system prompt. That
+    block instructs the model to emit tool calls as ```bash / ```read /
+    etc. fenced blocks, which collides with OpenAI's native
+    ``tool_calls`` JSON convention; the model would pick the fence form
+    (as observed with amrex-agent), leaving ``tool_calls=None`` in the
+    response and breaking any external agent that expects the standard
+    OpenAI format. The RAG-injection, identity, thinking-channel and
+    behaviour rules all survive; only the fence syntax is elided.
     """
-    out = [{"role": "system", "content": ofa_main.load_system_prompt(mode)}]
+    sys_prompt = ofa_main.load_system_prompt(mode)
+    if has_tools:
+        sys_prompt = _OPENAI_TOOL_MODE_DIRECTIVE + _strip_fence_tool_protocol(sys_prompt)
+    out = [{"role": "system", "content": sys_prompt}]
     last_user_idx = None
     for i, m in enumerate(messages):
         if m.get("role") == "user":
@@ -490,14 +563,14 @@ class _Handler(BaseHTTPRequestHandler):
 
         # ---- build the message list ofa expects ----
         try:
-            ofa_messages = _augment_messages(messages, mode)
+            ofa_messages = _augment_messages(messages, mode, has_tools=use_tools)
         except Exception as e:
             traceback.print_exc(file=sys.stderr)
             return self._send_error(500, f"failed to build prompt: {e}", "server_error")
 
         print(
             f"[ofa-serve] {model_id} ({mode}): {len(messages)} msg(s), "
-            f"stream={stream}, tools={'on' if use_tools else 'off'}",
+            f"stream={stream}, tools={'on (fence-block elided)' if use_tools else 'off'}",
             file=sys.stderr,
         )
 

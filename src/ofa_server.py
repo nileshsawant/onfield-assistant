@@ -269,7 +269,63 @@ def _augment_messages(messages: list[dict], mode: str, has_tools: bool = False) 
         omsg: dict = {"role": role, "content": content}
         if images:
             omsg["images"] = images
+        # Preserve the tool-call plumbing on multi-turn agent history so
+        # the model can see its own prior tool_calls and match the
+        # returned tool results to them. Without this the caller's
+        # replayed history looks like a series of empty assistant turns
+        # followed by orphaned tool outputs, and the model just re-emits
+        # the same tool call every turn (observed in VS Code Agent mode
+        # against an earlier version of this file).
+        if role == "assistant":
+            tcs = m.get("tool_calls")
+            if tcs:
+                omsg["tool_calls"] = [_openai_tool_call_to_ollama(tc) for tc in tcs]
+        elif role == "tool":
+            tcid = m.get("tool_call_id")
+            if tcid:
+                omsg["tool_call_id"] = tcid
+            name = m.get("name")
+            if name:
+                omsg["name"] = name
         out.append(omsg)
+    return out
+
+
+def _openai_tool_call_to_ollama(tc: dict) -> dict:
+    """Convert an OpenAI-format tool_call (as replayed by BYOK clients in
+    ``messages[i].tool_calls``) to Ollama's expected shape.
+
+    Key wire-format difference: OpenAI carries ``function.arguments`` as
+    a JSON-encoded *string* (historical baggage from the function-calling
+    API), while Ollama expects a real dict/object. Passing the string
+    through unchanged makes Ollama's parser bail with "Value looks like
+    object, but can't find closing '}' symbol" and the whole request
+    fails 500.
+    """
+    fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+    args = fn.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args) if args else {}
+        except json.JSONDecodeError:
+            # Malformed args — pass an empty dict rather than crash.
+            args = {}
+    elif args is None:
+        args = {}
+    out = {
+        "function": {
+            "name": fn.get("name", ""),
+            "arguments": args,
+        },
+    }
+    # Preserve id / type when the caller sent them (Ollama accepts them
+    # and some clients depend on the response echoing the same id).
+    tc_id = tc.get("id") if isinstance(tc, dict) else None
+    if tc_id:
+        out["id"] = tc_id
+    tc_type = tc.get("type") if isinstance(tc, dict) else None
+    if tc_type:
+        out["type"] = tc_type
     return out
 
 

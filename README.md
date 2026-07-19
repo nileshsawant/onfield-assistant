@@ -43,6 +43,10 @@ $ ofa --fast            # (with --openfoam) single-shot file generation (skip pl
 # BYOK / programmatic server (OpenAI-compatible HTTP endpoint on this node)
 $ ofa --serve                    # Start the local HTTP server; see docs/byok-vscode.md
 $ ofa --serve --serve-enable-tools   # Also forward OpenAI tool_calls to Ollama (experimental)
+$ ofa --serve --serve-quiet      # Silence per-request stderr log (banner + errors still print).
+                                 # Handy when --serve shares a shell with an interactive TUI
+                                 # (e.g. opencode on RHEL9) so background traffic doesn't leak
+                                 # into the foreground display.
 ```
 
 ## Architecture

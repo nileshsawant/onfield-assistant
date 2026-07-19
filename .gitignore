@@ -27,6 +27,11 @@ vectordb/
 models/
 embedding_model/
 
+# Per-site config (see site.example.toml). Kept out of git so `git pull`
+# never clobbers a downstream install's overrides. Missing file falls
+# back to Kestrel defaults hard-coded in src/ofa_site.py.
+site.toml
+
 # OS generated files
 .DS_Store
 .DS_Store?

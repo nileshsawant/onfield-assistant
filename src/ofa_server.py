@@ -46,6 +46,11 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Iterable
 
+# Site-configuration loader — same layer used by ofa_main.py. Kestrel
+# defaults are baked in so a missing site.toml keeps the current BYOK
+# login-host hint unchanged.
+from ofa_site import load_site as _load_site
+
 # Imported lazily inside the handler so we don't pay ChromaDB init cost
 # at server-construction time (tests can monkey-patch before that).
 ofa_main = None  # set by ``serve()`` after we import the real module
@@ -981,9 +986,14 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
     print("", file=sys.stderr)
     print(_c("Step 1 — run this in a new laptop terminal (leave it open):", "bold", "cyan"),
           file=sys.stderr)
+    # Login host is site-configurable via $OFA_ROOT/site.toml
+    # ([site].login_host). Kestrel default preserved when site.toml is
+    # absent, so this cosmetic hint keeps its historical wording on the
+    # current install.
+    _login_host = _load_site().get("site", {}).get("login_host") or "kestrel.hpc.nrel.gov"
     print(_c(
         f"  ssh -N -o ExitOnForwardFailure=yes "
-        f"-L {local_port}:{node}:{actual_port} kestrel.hpc.nrel.gov",
+        f"-L {local_port}:{node}:{actual_port} {_login_host}",
         "bold",
     ), file=sys.stderr)
     print("", file=sys.stderr)

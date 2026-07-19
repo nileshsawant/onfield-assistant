@@ -14,6 +14,11 @@ from pathlib import Path
 
 import httpx
 
+# Site-configuration loader. Returns Kestrel-flavored defaults when no
+# $OFA_ROOT/site.toml is present, so this import is a no-op change for the
+# existing single-site install. See src/ofa_site.py for the schema.
+from ofa_site import load_site as _load_site
+
 OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
 
@@ -2214,8 +2219,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     else:
         messages = [{"role": "system", "content": system_prompt}]
 
-    print(_c("🌵 OnField Assistant (ofa) — locally hosted on Kestrel · single H100", "bold", "green"))
+    _site = _load_site().get("site", {})
+    _site_name = _site.get("name") or "Kestrel"
+    _site_desc = _site.get("description") or "single H100"
+    print(_c(f"🌵 OnField Assistant (ofa) — locally hosted on {_site_name} · {_site_desc}", "bold", "green"))
     print(_c("Use `ofa --help` to see all modes. Highlights: --code (default), --openfoam, --hpc, --amrex, --marbles, --quantum-computing, --rhel9_reframe.", "dim"))
+    print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
     print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
 
     # Active model + the full menu of pulled alternatives. Surfacing the menu
@@ -3237,11 +3246,25 @@ def _is_command_dangerous(lower_cmd: str) -> bool:
 # paths and the HPC software-deployment trees that an admin user has write
 # access to. Override at deployment time with $OFA_PROTECTED_PREFIXES (colon
 # separated, takes precedence — empty string disables the default list).
-_DEFAULT_PROTECTED_PREFIXES = (
+#
+# The HPC-tree portion is pulled from site.toml [site].protected_roots so
+# porting ofa to a new cluster only requires editing that file. The
+# hard-coded Kestrel roots below match the loader's DEFAULTS so unmodified
+# checkouts behave identically to the pre-refactor code.
+_UNIVERSAL_PROTECTED_PREFIXES = (
     "/bin", "/sbin", "/lib", "/lib64", "/boot", "/etc", "/usr", "/var",
     "/opt", "/proc", "/sys", "/run", "/dev", "/root",
-    "/nopt/nrel", "/nopt/nlr", "/nopt/slurm", "/nopt/sgi",
 )
+try:
+    _SITE_PROTECTED_ROOTS = tuple(
+        p for p in _load_site().get("site", {}).get("protected_roots", ()) or ()
+        if isinstance(p, str) and p.startswith("/")
+    )
+except Exception:
+    # A broken site.toml must never disable the HPC-tree guards; fall
+    # back to the Kestrel-era hard-coded list.
+    _SITE_PROTECTED_ROOTS = ("/nopt/nrel", "/nopt/nlr", "/nopt/slurm", "/nopt/sgi")
+_DEFAULT_PROTECTED_PREFIXES = _UNIVERSAL_PROTECTED_PREFIXES + _SITE_PROTECTED_ROOTS
 PROTECTED_PREFIXES = tuple(
     p for p in os.environ.get(
         "OFA_PROTECTED_PREFIXES",
@@ -3483,13 +3506,20 @@ _STREAM_KILL_PATTERNS = [
     r"removed (?:directory )?['\"]?/(?:bin|sbin|lib|lib64|boot|etc|usr|var|opt|nopt|root)/",
     # rm complaining about a protected path (means it just tried to delete it)
     r"rm: cannot remove ['\"]?/(?:bin|sbin|lib|lib64|boot|etc|usr|var|root)\b",
-    # Same for the HPC trees
-    r"rm: cannot remove ['\"]?/nopt/(?:nrel|nlr|slurm|sgi)\b",
-    r"removed (?:directory )?['\"]?/nopt/(?:nrel|nlr|slurm|sgi)/",
     # mkfs / dd / shred starting on a real device
     r"mkfs\.[a-z0-9]+ /dev/(?:sd|nvme|hd|vd|xvd)",
     r"dd:.+writing to '/dev/(?:sd|nvme|hd|vd|xvd)",
 ]
+# Per-site HPC-tree patterns are generated from site.toml
+# [site].protected_roots (falling back to the Kestrel /nopt/{nrel,nlr,...}
+# roots baked into ofa_site.DEFAULTS). Each root contributes both the
+# "rm: cannot remove …" and "removed …" variants, so a stray verbose rm
+# on any site-declared root is caught by the same guard that used to be
+# hard-coded to /nopt/*.
+for _root in _SITE_PROTECTED_ROOTS:
+    _anchored = re.escape(_root.rstrip("/"))
+    _STREAM_KILL_PATTERNS.append(rf"rm: cannot remove ['\"]?{_anchored}\b")
+    _STREAM_KILL_PATTERNS.append(rf"removed (?:directory )?['\"]?{_anchored}/")
 _STREAM_KILL_RE = re.compile("|".join(_STREAM_KILL_PATTERNS), re.IGNORECASE)
 
 

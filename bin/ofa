@@ -9,19 +9,42 @@ if [ -z "$OFA_ROOT" ]; then
 fi
 export OFA_ROOT
 
+# Load per-site scheduler / module defaults from $OFA_ROOT/site.toml (via
+# src/ofa_site.py). Populates OFA_SCHEDULER_* and OFA_MODULE_* vars used
+# below with fallback precedence:
+#   user env  >  site.toml  >  hard-coded Kestrel default (${VAR:-...})
+# so an installer that never writes site.toml keeps the exact Kestrel
+# behavior this launcher used to have inline.
+if [ -x "$OFA_ROOT/env/bin/python3" ]; then
+    _ofa_site_env="$("$OFA_ROOT/env/bin/python3" -c \
+        "import sys; sys.path.insert(0, '$OFA_ROOT/src'); import ofa_site; sys.stdout.write(ofa_site._shell_export(ofa_site.load_site()))" \
+        2>/dev/null)"
+    if [ -n "$_ofa_site_env" ]; then
+        eval "$_ofa_site_env"
+    fi
+    unset _ofa_site_env
+fi
+
 # If not inside a SLURM allocation, request a GPU node automatically
 if [ -z "$SLURM_JOB_ID" ]; then
-    ACCOUNT="${OFA_ACCOUNT:-$(sacctmgr show user "$USER" format=defaultaccount -n -P 2>/dev/null | head -1)}"
+    if [ -z "${OFA_ACCOUNT:-}" ] && [ -n "${OFA_SCHEDULER_ACCOUNT_DISCOVERY:-}" ]; then
+        ACCOUNT="$(bash -c "$OFA_SCHEDULER_ACCOUNT_DISCOVERY")"
+    else
+        ACCOUNT="${OFA_ACCOUNT:-$(sacctmgr show user "$USER" format=defaultaccount -n -P 2>/dev/null | head -1)}"
+    fi
     if [ -z "$ACCOUNT" ]; then
         echo "ERROR: Could not determine your SLURM account." >&2
         echo "       Set OFA_ACCOUNT=<account> and retry." >&2
         exit 1
     fi
-    PARTITION="${OFA_PARTITION:-debug}"
-    WALLTIME="${OFA_WALLTIME:-00:30:00}"
+    PARTITION="${OFA_PARTITION:-${OFA_SCHEDULER_PARTITION_DEFAULT:-debug}}"
+    WALLTIME="${OFA_WALLTIME:-${OFA_SCHEDULER_WALLTIME_DEFAULT:-00:30:00}}"
+    _OFA_NTASKS="${OFA_SCHEDULER_NTASKS_PER_NODE:-32}"
+    _OFA_MEM="${OFA_SCHEDULER_MEM:-80G}"
+    _OFA_GRES="${OFA_SCHEDULER_GRES:-gpu:1}"
     echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
-    exec salloc --job-name=ofa -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node=32 \
-              --mem=80G --gres=gpu:1 -p "$PARTITION" \
+    exec salloc --job-name=ofa -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node="$_OFA_NTASKS" \
+              --mem="$_OFA_MEM" --gres="$_OFA_GRES" -p "$PARTITION" \
               srun --nodes=1 --ntasks=1 --pty "$0" "$@"
 fi
 
@@ -51,13 +74,19 @@ export OFA_ROOT
 export OLLAMA_MODELS="${OFA_ROOT}/models"
 export OFA_VECTORDB="${OFA_ROOT}/vectordb"
 
-# Force load Kestrel's CUDA driver paths into the session so the Ollama daemon can natively bind to the H100 hardware
-# Handle both RHEL8 (cuda/12.4) and RHEL9 (cuda/12.8.1 or cuda)
+# Force load the site's CUDA driver paths into the session so the Ollama
+# daemon can natively bind to the local GPU hardware. site.toml supplies
+# the module names (empty string = skip module load, useful on sites
+# without Lmod). Fallbacks match the Kestrel-era hard-coded values.
 if grep -q "release 9" /etc/redhat-release 2>/dev/null; then
-    module load cuda 2>/dev/null || true
+    _ofa_cuda_mod="${OFA_MODULE_CUDA_RHEL9-cuda}"
 else
-    module load cuda/12.4 2>/dev/null || true
+    _ofa_cuda_mod="${OFA_MODULE_CUDA_RHEL8-cuda/12.4}"
 fi
+if [ -n "$_ofa_cuda_mod" ]; then
+    module load "$_ofa_cuda_mod" 2>/dev/null || true
+fi
+unset _ofa_cuda_mod
 
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
 

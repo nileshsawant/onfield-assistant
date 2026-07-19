@@ -1,0 +1,92 @@
+# ofa site configuration — template.
+#
+# Copy this file to $OFA_ROOT/site.toml and edit the values for your HPC
+# system. site.toml itself is in .gitignore so per-site overrides never
+# collide with `git pull` upstream.
+#
+# When a value is not set here, ofa falls back to the Kestrel defaults
+# baked into `src/ofa_site.py`. That means:
+#
+#   * A stock checkout on Kestrel with NO site.toml keeps running exactly
+#     as before this refactor (banner text, scheduler flags, protected
+#     paths, everything).
+#   * A stock checkout on any other site with NO site.toml will still
+#     start, but the interactive banner will call itself "Kestrel", the
+#     BYOK ssh -L hint will mention kestrel.hpc.nrel.gov, and the SLURM
+#     resource request will use Kestrel's shape. Write a real site.toml
+#     to fix that.
+
+[site]
+# Short site name printed in the interactive banner and (once prompt
+# templating lands in step 2 of the porting plan) inside the LLM system
+# prompts.
+name = "MySiteHPC"
+
+# Trailing GPU descriptor in the banner. Rendered as:
+#   "locally hosted on <name> · <description>"
+# Keep it short — e.g. "single A100", "quarter GPU node", "4x H100".
+description = "single A100"
+
+# Host users ssh from their laptop to reach this cluster's login node.
+# Printed in the `ssh -L …` suggestion emitted by `ofa --serve` when a
+# client wants to reach the compute-node BYOK endpoint from off-cluster.
+login_host = "mysite.example.edu"
+
+# Absolute path prefixes ofa's safety layer refuses to touch via
+# rm/chmod/chown-style mass operations, even after explicit user
+# approval. Merged additively with the universal system paths
+# ("/bin", "/etc", "/usr", …) already hard-coded in ofa_main.py.
+#
+# Include any site-managed software or scratch roots that a stray LLM
+# suggestion must not wipe. The stream-kill regex is regenerated from
+# this list at import time, so an entry here also protects against
+# `rm -rf` verbose output already appearing on stdout.
+protected_roots = [
+    "/opt/mysite",
+    "/global/common",
+]
+
+[scheduler]
+# One of: "slurm" | "pbs" | "lsf" | "none"
+# Only "slurm" is fully wired in `bin/ofa` today. "pbs" / "lsf" are
+# placeholders for future adapter work; "none" skips allocation and
+# expects the user to already be sitting on a GPU-equipped node.
+kind = "slurm"
+
+# Default partition / queue name used when the user does not set
+# $OFA_PARTITION. Match your site's naming.
+partition = "gpu"
+
+# Slurm GRES string for one GPU. Match your site's naming, e.g.
+# "gpu:a100:1", "gpu:h100:1", or just "gpu:1" if your cluster only
+# has one GPU model.
+gres = "gpu:1"
+
+# Memory allocation per job.
+mem = "80G"
+
+# CPU tasks per node. ofa's model server itself is single-process, but
+# tools it spawns inside the allocation (compilers, mpirun, srun steps)
+# may need the full CPU shape.
+ntasks_per_node = 32
+
+# Default wall time when the user does not set $OFA_WALLTIME.
+walltime = "00:30:00"
+
+# Bash command that must print the user's default account on stdout as
+# a single line. Executed via `bash -c` from `bin/ofa` when
+# $OFA_ACCOUNT is not already set. Leave as an empty string to require
+# users to always set $OFA_ACCOUNT explicitly.
+#
+# Security note: this string is executed by the launching user's shell
+# in the launching user's environment. It is not a privilege boundary.
+account_discovery = 'sacctmgr show user "$USER" format=defaultaccount -nP 2>/dev/null | head -1'
+
+[modules]
+# Module names loaded on the compute node before ofa starts. `bin/ofa`
+# picks cuda_rhel9 on hosts whose /etc/redhat-release contains
+# "release 9", cuda_rhel8 otherwise. Set to an empty string to skip
+# the module load entirely (e.g. sites without Lmod, or sites where
+# CUDA is already on PATH via /etc/profile.d).
+cuda_rhel8 = "cuda/12.4"
+cuda_rhel9 = "cuda"

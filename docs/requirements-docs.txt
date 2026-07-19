@@ -1,0 +1,10 @@
+# Documentation build deps. Kept separate from the top-level
+# requirements.txt so the CI docs job stays fast and the ofa install
+# doesn't ship with a Sphinx toolchain it never uses.
+#
+# All ofa runtime deps are mocked via autodoc_mock_imports in
+# docs/conf.py, so this file only needs the docs toolchain itself.
+
+sphinx>=7,<9
+furo>=2024.5
+myst-parser>=2

@@ -1,0 +1,24 @@
+# ofa Python dependencies.
+#
+# Consumed by install.sh in a fresh Miniforge env. Kept intentionally
+# unpinned so pip resolves a coherent transitive tree against whatever
+# Python (>= 3.11 for tomllib) the miniforge base env supplies. If you
+# hit a specific incompatibility on a new HPC, pin here — but the
+# expected steady state is a shrink-wrap-free requirements file.
+#
+# Top-level imports observed across src/:
+#   chromadb, ddgs, httpx, lxml, numpy, pdfplumber, pypdf, rank_bm25,
+#   sentence_transformers
+# Everything else (transformers, torch, huggingface_hub, pypdfium2,
+# jinja2, pydantic, requests, …) is a transitive dep of the above and
+# does not need to be listed here.
+
+chromadb
+ddgs
+httpx
+lxml
+numpy
+pdfplumber
+pypdf
+rank-bm25
+sentence-transformers

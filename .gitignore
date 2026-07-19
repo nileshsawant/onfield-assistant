@@ -32,6 +32,13 @@ embedding_model/
 # back to Kestrel defaults hard-coded in src/ofa_site.py.
 site.toml
 
+# Install-generated artifacts (see install.sh). Regenerated on demand,
+# per-install; must not be committed. (env/ and lib/ are already ignored
+# under the Python section above; ollama's binary lives under bin/.)
+env.sh
+tools/modulefile.lua.template
+bin/ollama
+
 # OS generated files
 .DS_Store
 .DS_Store?

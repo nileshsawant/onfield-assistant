@@ -61,6 +61,52 @@ $ ofa --serve --serve-quiet      # Silence per-request stderr log (banner + erro
 * **`prompts/`**: Directory configuring the personas. `common.txt` establishes the global rules for the agent, establishing the planning pipeline, code syntax standards, and environment constraints. `code.txt`, `hpc.txt`, and others inject the role-specific capabilities.
 * **`vectordb/`**: The persistent storage directory for the offline ChromaDB ingestors, containing chunked embeddings for Kestrel's manuals, OpenFOAM examples, and RHEL module stacks.
 
+## Install on a new HPC
+
+ofa was written for NLR's Kestrel but is portable to any Linux HPC with a Slurm scheduler and a GPU node. The installer bootstraps everything you need — a private Miniforge Python distribution, the Ollama binary, an embedding model, and (optionally) the default LLM — into the repo checkout itself. No system-wide changes.
+
+```bash
+git clone https://github.com/nileshsawant/onfield-assistant.git
+cd onfield-assistant
+./install.sh
+```
+
+What it does, in order (each step is opt-out via a flag):
+
+1. **Miniforge** — downloads and installs into `env/`, giving you a self-contained Python 3.11+ without touching the host's system Python.
+2. **Python deps** — `pip install -r requirements.txt` inside that env (chromadb, sentence-transformers, httpx, and friends).
+3. **Ollama binary** — pulls the latest static release from github.com/ollama/ollama into `bin/ollama`. Arch-aware (x86_64 / aarch64).
+4. **Embedding model** — snapshots `BAAI/bge-small-en-v1.5` from HuggingFace into `embedding_model/` (~120 MB).
+5. **LLM** — prompts to pull `gemma4:31b` (~154 GB) into `models/`. Skip with `--skip-model-pull` if you want to pull a different model, or curate a smaller one via `OFA_INSTALL_MODEL_ID`.
+6. **`site.toml` wizard** — interactive prompts for site name, Slurm partition, GRES, protected paths, etc. Writes `site.toml` at the repo root. Falls back to the annotated `site.example.toml` in `--non-interactive` mode.
+7. **RAG indices** — if `repos/` is populated (per `collections.toml`), rebuilds the ChromaDB collections. Skipped otherwise with instructions to run `src/rebuild_indices.py` manually once you've added your source dirs.
+8. **`env.sh` + Lmod template** — writes a sourceable activation script and an Lmod modulefile template under `tools/`.
+
+Useful flags:
+
+```bash
+./install.sh --skip-model-pull          # don't pull gemma4:31b
+./install.sh --skip-wizard              # don't run the site.toml wizard
+./install.sh --skip-indices             # don't rebuild RAG (populate repos/ later)
+./install.sh --non-interactive          # scripted install, opt-in steps default to skipped
+./install.sh --force                    # redo work even if artifacts already exist
+./install.sh --prefix /path/to/checkout # install target (default: install.sh's dir)
+./install.sh --help                     # full flag list + env-var overrides
+```
+
+**Before you run `ofa` for real on a new site**, audit these files — they're the pieces the installer can't infer:
+
+* [`site.toml`](site.example.toml) — verify partition names, GRES, walltime, account-discovery command.
+* [`collections.toml`](collections.toml) — replace the Kestrel-specific RAG corpora (`amrex`, `marbles-papers`, `HPC`, …) with sources that make sense for your users.
+* [`prompts/`](prompts/) — the mode prompts template the site *identity* (name, org, long name) automatically via `site.toml`, but leave Kestrel-specific *technical* content (CUDA module versions, partition names like `standard/hbw`, `/nopt/nrel` protected paths, Gila cross-references in `openfoam.txt`, the RHEL8→RHEL9 body in `reframe.txt`) as literal text. Rewrite those bits for your cluster; templating them would produce prompts that lie confidently about your setup.
+
+Once you're satisfied, source the env and go:
+
+```bash
+source $OFA_ROOT/env.sh
+ofa --help
+```
+
 ## Updating the RAG indices
 
 The vector store under `vectordb/` is populated from source directories declared in `collections.toml` at the repo root. To keep the indices current when you `git pull` a source repo, add a new source, or drop new documents into an existing one, run the rebuild script:

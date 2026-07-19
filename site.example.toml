@@ -12,7 +12,7 @@
 #     paths, everything).
 #   * A stock checkout on any other site with NO site.toml will still
 #     start, but the interactive banner will call itself "Kestrel", the
-#     BYOK ssh -L hint will mention kestrel.hpc.nrel.gov, and the SLURM
+#     BYOK ssh -L hint will mention kestrel.hpc.nlr.gov, and the SLURM
 #     resource request will use Kestrel's shape. Write a real site.toml
 #     to fix that.
 #

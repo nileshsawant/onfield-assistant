@@ -56,7 +56,7 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # <name> · <description>").
         "description": "single H100",
         # Login host used in the ``ssh -L`` hint emitted by ``ofa --serve``.
-        "login_host": "kestrel.hpc.nrel.gov",
+        "login_host": "kestrel.hpc.nlr.gov",
         # Filesystem prefixes ofa refuses to touch via rm/chmod/chown-style
         # mass operations. Merged additively with the universal system
         # paths ("/bin", "/etc", …) in ``ofa_main.PROTECTED_PREFIXES``.

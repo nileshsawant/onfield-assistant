@@ -990,7 +990,7 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
     # ([site].login_host). Kestrel default preserved when site.toml is
     # absent, so this cosmetic hint keeps its historical wording on the
     # current install.
-    _login_host = _load_site().get("site", {}).get("login_host") or "kestrel.hpc.nrel.gov"
+    _login_host = _load_site().get("site", {}).get("login_host") or "kestrel.hpc.nlr.gov"
     print(_c(
         f"  ssh -N -o ExitOnForwardFailure=yes "
         f"-L {local_port}:{node}:{actual_port} {_login_host}",

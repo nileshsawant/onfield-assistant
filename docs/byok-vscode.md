@@ -50,7 +50,7 @@ a `.bak` of your existing config the first time, safe to re-run):
 
 ```bash
 # Copy the script down once
-scp kestrel.hpc.nrel.gov:/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/tools/byok-update-config.py ~/
+scp kestrel.hpc.nlr.gov:/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/tools/byok-update-config.py ~/
 
 # Run it (replace the token + port with what step 1 printed)
 python3 ~/byok-update-config.py \

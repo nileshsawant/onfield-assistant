@@ -43,6 +43,15 @@ DEFAULTS: dict[str, dict[str, Any]] = {
     "site": {
         # Short site name printed in the interactive banner / prompts.
         "name": "Kestrel",
+        # Sponsoring organization / lab. Consumed by the {SITE_ORG}
+        # placeholder in prompts (e.g. "an NLR HPC Support Assistant").
+        "org": "NLR",
+        # Full noun phrase for the site, consumed by the {SITE_LONG_NAME}
+        # placeholder. Written out longhand so porters can adjust grammar
+        # (some sites are called "clusters", others "supercomputers",
+        # others just their name). Defaults to the pre-refactor Kestrel
+        # phrasing so the prompt output byte-matches the earlier build.
+        "long_name": "NLR Kestrel HPC supercomputer",
         # Trailing GPU descriptor in the banner ("locally hosted on
         # <name> · <description>").
         "description": "single H100",

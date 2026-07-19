@@ -933,6 +933,26 @@ def load_system_prompt(prompt_type="openfoam"):
         .replace("{OFA_ROOT}", OFA_ROOT)
         .replace("{OFA_SCRATCH}", OFA_SCRATCH)
     )
+    # Site-identity placeholders sourced from $OFA_ROOT/site.toml (with
+    # Kestrel-value defaults baked into ofa_site.py). Porters can retarget
+    # the mode prompts to their own HPC by editing site.toml alone, without
+    # touching the prompt files.
+    #
+    # NOTE: Only identity strings (site name, org, long-form name, GPU
+    # description) are templated here. Kestrel-specific *technical* content
+    # inside the prompts — CUDA module versions, Kestrel partition names,
+    # /nopt/{nrel,nlr} paths, Gila cross-references — is deliberately left
+    # as literal text. Those bits are site-specific knowledge that a porter
+    # must audit and rewrite for their cluster; blindly substituting them
+    # would produce prompts that lie confidently about a peer HPC's setup.
+    _site_cfg = _load_site().get("site", {}) or {}
+    prompt = (
+        prompt
+        .replace("{SITE_NAME}", str(_site_cfg.get("name") or "Kestrel"))
+        .replace("{SITE_ORG}", str(_site_cfg.get("org") or "NLR"))
+        .replace("{SITE_LONG_NAME}", str(_site_cfg.get("long_name") or "NLR Kestrel HPC supercomputer"))
+        .replace("{SITE_DESCRIPTION}", str(_site_cfg.get("description") or "single H100"))
+    )
     return prompt
 
 
@@ -2870,9 +2890,10 @@ def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
     # Pinned mode-authoritative Kestrel build / module / Slurm doc. Always
     # included so build & environment questions get a grounded answer even
     # when the retriever's hpc_docs top-2 slice misses it.
+    _sn = _load_site().get("site", {}).get("name") or "Kestrel"
     pinned = _read_pinned_kestrel_doc(
         "Applications/LBMcfd.md",
-        label="Kestrel MARBLES build & environment doc (authoritative)",
+        label=f"{_sn} MARBLES build & environment doc (authoritative)",
     )
     if pinned:
         context_parts.append(pinned)
@@ -2925,7 +2946,7 @@ def retrieve_quantum_computing_context(query: str, top_k: int = 7) -> str:
     # Pinned mode-authoritative Kestrel build / module / Slurm doc.
     pinned = _read_pinned_kestrel_doc(
         "Applications/quantum_computing.md",
-        label="Kestrel quantum-computing build & environment doc (authoritative)",
+        label=f"{_load_site().get('site', {}).get('name') or 'Kestrel'} quantum-computing build & environment doc (authoritative)",
     )
     if pinned:
         context_parts.append(pinned)

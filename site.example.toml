@@ -15,15 +15,40 @@
 #     BYOK ssh -L hint will mention kestrel.hpc.nrel.gov, and the SLURM
 #     resource request will use Kestrel's shape. Write a real site.toml
 #     to fix that.
+#
+# ALSO REVIEW when porting to a new HPC (site.toml is NOT enough on its own):
+#   * prompts/*.txt — the identity strings ("running natively on the
+#     <site>") are templated via {SITE_NAME} / {SITE_LONG_NAME} /
+#     {SITE_ORG} / {SITE_DESCRIPTION} placeholders and picked up from
+#     this file automatically. But Kestrel-specific TECHNICAL content
+#     (CUDA module versions like "cuda/12.4", partition names like
+#     "standard / hbw / debug", core counts, /nopt/nrel vs /nopt/nlr
+#     path notes, and any Gila-cluster cross-references in openfoam.txt)
+#     is left literal on purpose — templating it would produce prompts
+#     that lie confidently about your cluster. Audit the mode prompts
+#     you plan to use and rewrite the technical bits by hand.
+#   * collections.toml — declares the RAG source dirs. Replace the
+#     Kestrel-specific corpora (HPC docs, amrex/marbles/etc. clones)
+#     with sources that make sense for your users.
 
 [site]
-# Short site name printed in the interactive banner and (once prompt
-# templating lands in step 2 of the porting plan) inside the LLM system
-# prompts.
+# Short site name printed in the interactive banner and inside the LLM
+# system prompts wherever the {SITE_NAME} placeholder appears.
 name = "MySiteHPC"
+
+# Sponsoring organization / lab. Consumed by the {SITE_ORG} placeholder,
+# most notably in hpc.txt ("an {SITE_ORG} HPC Support Assistant …").
+org = "MyLab"
+
+# Full noun phrase used by the {SITE_LONG_NAME} placeholder in prompts.
+# Written out longhand so porters can tune the grammar — some sites are
+# called "clusters", others "supercomputers", others just their name.
+# Example: "MyLab's MySiteHPC cluster" or "the MySiteHPC supercomputer".
+long_name = "the MySiteHPC supercomputer"
 
 # Trailing GPU descriptor in the banner. Rendered as:
 #   "locally hosted on <name> · <description>"
+# Also flows into common.txt's identity line via {SITE_DESCRIPTION}.
 # Keep it short — e.g. "single A100", "quarter GPU node", "4x H100".
 description = "single A100"
 

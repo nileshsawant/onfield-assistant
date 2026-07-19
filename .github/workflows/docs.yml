@@ -69,6 +69,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Auto-enable Pages if the repo owner hasn't flipped the switch
+      # yet (Settings -> Pages -> Source: "GitHub Actions"). Without
+      # this, deploy-pages fails at "Set up job" in ~3 s with a 404
+      # because there's no Pages site to publish to. `enablement: true`
+      # requires the workflow token to have admin scope on the repo,
+      # which is the default for repo-owner pushes.
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

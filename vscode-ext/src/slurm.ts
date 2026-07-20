@@ -33,8 +33,11 @@ export interface OfaEndpoint {
     baseUrl: string;
     /** SLURM job id (from `salloc: Granted job allocation …`). */
     jobId: string;
-    /** Long-running child process; kill to release SLURM. */
-    process: cp.ChildProcess;
+    /** Long-running child process; kill to release SLURM. `null` for
+     *  endpoints we adopted from a pre-existing SLURM job (see
+     *  adoptExisting.ts) — in that case disconnect() falls back to
+     *  `scancel <jobId>` alone. */
+    process: cp.ChildProcess | null;
 }
 
 export interface SlurmOptions {
@@ -197,7 +200,7 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
 /**
  * Release the SLURM allocation. Prefers a SIGTERM cascade through the
  * child process tree; falls back to explicit `scancel` if the child is
- * already gone.
+ * already gone (or if we adopted the endpoint and never had a child).
  */
 export async function disconnect(endpoint: OfaEndpoint, logger: Logger): Promise<void> {
     const child = endpoint.process;
@@ -217,9 +220,12 @@ export async function disconnect(endpoint: OfaEndpoint, logger: Logger): Promise
                 resolvePromise();
             });
         });
+    } else if (!child) {
+        logger.info(`no child process (adopted endpoint); scancel-only teardown for job ${endpoint.jobId}`);
     }
     // Belt-and-braces scancel: SIGTERM cascade usually releases the
-    // job, but srun's --pty can occasionally strand it. Ignoring
+    // job, but srun's --pty can occasionally strand it, and adopted
+    // endpoints never had a child in the first place. Ignoring
     // errors because "already released" is the normal case.
     try {
         logger.info(`scancel ${endpoint.jobId}`);

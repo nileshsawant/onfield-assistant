@@ -19,6 +19,7 @@ import { detectKestrel } from './kestrelDetector';
 import { connect as slurmConnect, disconnect as slurmDisconnect, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
 import { registerOfaProvider } from './modelProvider';
 import { HealthProbe } from './healthProbe';
+import { adoptExistingAllocation } from './adoptExisting';
 
 const COMMAND_IDS = {
     connect: 'ofa.connect',
@@ -58,6 +59,13 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand(COMMAND_IDS.reallocate, reallocateCommand),
         vscode.commands.registerCommand(COMMAND_IDS.showLogs, () => logChannel?.show(true))
     );
+
+    // Post-activation, opportunistically adopt an existing allocation
+    // from a previous session. If none exists (or the artifacts are
+    // stale), maybeAutoConnect() runs the fresh-connect path IF the
+    // user opted into ofa.autoConnectOnStartup. Both are best-effort
+    // — we deliberately don't block activate() on them.
+    void bootstrapConnection();
 }
 
 export async function deactivate(): Promise<void> {
@@ -65,6 +73,70 @@ export async function deactivate(): Promise<void> {
     // Best-effort scancel so we don't leak a SLURM allocation across
     // VS Code shutdowns.
     await tearDown({ silent: true });
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap on activation: opportunistic adopt + optional autoconnect
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs shortly after activate(). Tries to silently adopt an existing
+ * ofa-vscode SLURM allocation (avoids burning a queue wait on every
+ * VS Code restart if the previous session left one running). If no
+ * adoption target and ofa.autoConnectOnStartup is on, kicks off a
+ * fresh silent connect. Otherwise stays quietly disconnected until
+ * the user runs `OFA: Connect`.
+ */
+async function bootstrapConnection(): Promise<void> {
+    if (!logger) return;
+    const cfg = vscode.workspace.getConfiguration('ofa');
+
+    // Adopt attempt is cheap (squeue + two file reads + one HTTP GET)
+    // and non-Kestrel hosts are gated inside adoptExistingAllocation
+    // by the required-env checks + squeue exec failing.
+    if (vscode.env.remoteName === 'ssh-remote') {
+        try {
+            if (await tryAdopt({ silent: true })) return;
+        } catch (err) {
+            logger.info(`bootstrap adopt threw: ${(err as Error).message}`);
+        }
+    }
+
+    if (cfg.get<boolean>('autoConnectOnStartup', false)) {
+        logger.info('autoConnectOnStartup=true; running fresh connect');
+        await bringUp({ silent: true });
+    }
+}
+
+/**
+ * Attempt to adopt an existing ofa-vscode SLURM job. Returns true iff
+ * we successfully wired up currentEndpoint + provider + probe.
+ */
+async function tryAdopt(flow: FlowOptions): Promise<boolean> {
+    if (!logger) return false;
+    const adopted = await adoptExistingAllocation(logger);
+    if (!adopted) return false;
+    const cfg = vscode.workspace.getConfiguration('ofa');
+    const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);
+
+    currentEndpoint = adopted;
+    providerRegistration = registerOfaProvider(adopted, logger);
+    healthProbe = new HealthProbe({
+        baseUrl: adopted.baseUrl,
+        token: adopted.token,
+        intervalMs: Math.max(5, healthIntervalSec) * 1000,
+        onDrop: () => void handleEndpointDrop(),
+        logger
+    });
+    healthProbe.start();
+    setStatus('connected');
+    const notice = `OFA adopted existing allocation: ${adopted.node}:${adopted.port} (job ${adopted.jobId}).`;
+    if (flow.silent) {
+        logger.info(notice);
+    } else {
+        void vscode.window.showInformationMessage(notice);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +151,9 @@ async function connectCommand(): Promise<void> {
         );
         return;
     }
+    // Prefer adoption over a fresh salloc so users don't burn a
+    // queue wait if a prior allocation is still alive.
+    if (await tryAdopt({ silent: false })) return;
     await bringUp({ silent: false });
 }
 

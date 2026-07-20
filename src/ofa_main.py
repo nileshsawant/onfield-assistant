@@ -327,6 +327,7 @@ _of13_src_collection = None
 _amrex_src_collection = None
 _marbles_src_collection = None
 _quantum_computing_collection = None
+_vasp_src_collection = None
 _reframe_src_collection = None
 
 
@@ -896,6 +897,12 @@ def load_system_prompt(prompt_type="openfoam"):
         else:
             # Sensible fallback if the file was deleted post-deployment.
             prompt = "You are a MARBLES (lattice-Boltzmann on AMReX) assistant."
+    elif prompt_type == "vasp":
+        vasp_prompt_path = os.path.join(OFA_ROOT, "prompts", "vasp.txt")
+        if os.path.exists(vasp_prompt_path):
+            with open(vasp_prompt_path) as f: prompt = f.read().strip()
+        else:
+            prompt = "You are a VASP (Vienna Ab initio Simulation Package) assistant."
     elif prompt_type == "quantum-computing":
         qc_prompt_path = os.path.join(OFA_ROOT, "prompts", "quantum-computing.txt")
         if os.path.exists(qc_prompt_path):
@@ -1620,7 +1627,7 @@ def _terminate_stale_ollama():
 
 def _init_rag():
     """Load the embedding model and ChromaDB collection once."""
-    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection, _reframe_src_collection, _quantum_computing_collection
+    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection, _reframe_src_collection, _quantum_computing_collection, _vasp_src_collection
     if _embed_model is not None:
         return
     import chromadb
@@ -1677,6 +1684,7 @@ def _init_rag():
     _marbles_src_collection = _get_optional("marbles_src")
     _reframe_src_collection = _get_optional("reframe_src")
     _quantum_computing_collection = _get_optional("quantum_computing")
+    _vasp_src_collection = _get_optional("vasp_src")
 
     # Eager BM25 build: the previous lazy build inside _hybrid_search caused
     # a multi-second freeze on the user's FIRST query (which is when first
@@ -1691,6 +1699,7 @@ def _init_rag():
         ("marbles_src",        _marbles_src_collection),
         ("reframe_src",        _reframe_src_collection),
         ("quantum_computing",  _quantum_computing_collection),
+        ("vasp_src",           _vasp_src_collection),
     ]
     for _name, _coll in _prebuild_bm25:
         if _coll is None:
@@ -2218,7 +2227,7 @@ def save_case(response_text: str, output_dir: str):
         print(f"  Written: {fpath}", file=sys.stderr)
 
 
-def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False, quantum_computing_mode: bool = False):
+def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False, quantum_computing_mode: bool = False, vasp_mode: bool = False):
     """Run interactive chat loop."""
     current_plan = ""
     try:
@@ -2231,7 +2240,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     except Exception:
         pass
 
-    system_prompt = load_system_prompt("quantum-computing") if quantum_computing_mode else (load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam"))))))
+    system_prompt = load_system_prompt("vasp") if vasp_mode else (load_system_prompt("quantum-computing") if quantum_computing_mode else (load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else (load_system_prompt("hpc") if hpc_mode else load_system_prompt("openfoam")))))))
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = system_prompt
@@ -2243,7 +2252,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     _site_name = _site.get("name") or "Kestrel"
     _site_desc = _site.get("description") or "single H100"
     print(_c(f"🌵 OnField Assistant (ofa) — locally hosted on {_site_name} · {_site_desc}", "bold", "green"))
-    print(_c("Use `ofa --help` to see all modes. Highlights: --code (default), --openfoam, --hpc, --amrex, --marbles, --quantum-computing, --rhel9_reframe.", "dim"))
+    print(_c("Use `ofa --help` to see all modes. Highlights: --code (default), --openfoam, --hpc, --amrex, --marbles, --quantum-computing, --vasp, --rhel9_reframe.", "dim"))
     print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
     print("Features:\n  - Session Resume (--resume)\n  - History saved to /scratch")
 
@@ -2582,12 +2591,12 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                     base_context = retrieve_hpc_context(user_input)
                     context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
                 else:
-                    context = retrieve_quantum_computing_context(user_input) if quantum_computing_mode else (retrieve_marbles_context(user_input) if marbles_mode else (retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input))))
+                    context = retrieve_vasp_context(user_input) if vasp_mode else (retrieve_quantum_computing_context(user_input) if quantum_computing_mode else (retrieve_marbles_context(user_input) if marbles_mode else (retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)))))
             if context:
-                fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "QUANTUM" if quantum_computing_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode or marbles_mode) else "OPENFOAM")
+                fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "QUANTUM" if quantum_computing_mode else "VASP" if vasp_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode or marbles_mode) else "OPENFOAM")
                 if reframe_mode:
                     augmented_input = f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{fenced}\n\n---\n\nUser request: {user_input}"
-                elif hpc_mode or code_mode or amrex_mode or marbles_mode or quantum_computing_mode:
+                elif hpc_mode or code_mode or amrex_mode or marbles_mode or quantum_computing_mode or vasp_mode:
                     augmented_input = f"Here is relevant context for your reference:\n\n{fenced}\n\n---\n\nUser request: {user_input}"
                 else:
                     augmented_input = (
@@ -2947,6 +2956,52 @@ def retrieve_quantum_computing_context(query: str, top_k: int = 7) -> str:
     pinned = _read_pinned_kestrel_doc(
         "Applications/quantum_computing.md",
         label=f"{_load_site().get('site', {}).get('name') or 'Kestrel'} quantum-computing build & environment doc (authoritative)",
+    )
+    if pinned:
+        context_parts.append(pinned)
+
+    # HPC docs for module paths / Slurm on Kestrel.
+    hpc_ctx = retrieve_hpc_context(query, top_k=2)
+    if hpc_ctx:
+        context_parts.append(hpc_ctx)
+
+    return "\n\n---\n\n".join(context_parts)
+
+def retrieve_vasp_context(query: str, top_k: int = 5) -> str:
+    """VASP-focused retrieval.
+
+    Queries the ``vasp_src`` collection (tutorials + general notes +
+    Wisconsin docs snapshot), pins ``Applications/vasp.md`` from the
+    HPC docs as the authoritative build / module / Slurm / licensing
+    reference, and adds a small ``hpc_docs`` slice so tooling advice
+    stays grounded when users ask about running VASP on Kestrel.
+    """
+    _init_rag()
+    query_embedding = _embed_model.encode([query])[0].tolist()
+    context_parts = []
+
+    if _vasp_src_collection is not None:
+        try:
+            docs, metas = _hybrid_search(
+                query=query,
+                query_embedding=query_embedding,
+                collection=_vasp_src_collection,
+                coll_name="vasp_src",
+                top_k=top_k,
+            )
+            for s_doc, s_meta in zip(docs, metas):
+                fp = s_meta.get("filepath", "?")
+                context_parts.append(f"[VASP notes/tutorial - {fp}]\n{s_doc}\n")
+        except Exception:
+            pass
+
+    # Pinned mode-authoritative Kestrel VASP doc. Always included so
+    # module/license/Slurm questions get a grounded answer even when
+    # the retriever's hpc_docs top-2 slice misses it.
+    _sn = _load_site().get("site", {}).get("name") or "Kestrel"
+    pinned = _read_pinned_kestrel_doc(
+        "Applications/vasp.md",
+        label=f"{_sn} VASP build & environment doc (authoritative)",
     )
     if pinned:
         context_parts.append(pinned)
@@ -3764,7 +3819,7 @@ def check_and_execute_bash(response_text):
     return "\n".join(all_outputs) if all_outputs else None
 
 
-def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False, quantum_computing_mode: bool = False):
+def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, amrex_mode: bool = False, marbles_mode: bool = False, reframe_mode: bool = False, quantum_computing_mode: bool = False, vasp_mode: bool = False):
     current_plan = ""
     greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
     is_greeting = query.strip().lower() in greetings
@@ -3773,14 +3828,14 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
         base_context = retrieve_hpc_context(query) if not is_greeting else ""
         context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}" if not is_greeting else ""
     else:
-        context = (retrieve_quantum_computing_context(query) if quantum_computing_mode else (retrieve_marbles_context(query) if marbles_mode else (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query)))) if not is_greeting else ""
+        context = (retrieve_vasp_context(query) if vasp_mode else (retrieve_quantum_computing_context(query) if quantum_computing_mode else (retrieve_marbles_context(query) if marbles_mode else (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query))))) if not is_greeting else ""
 
     augmented = f"Context Information:\n---\n{_fence_rag(context, label='HPC_DOCS')}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
         messages[0]["content"] = HPC_SYSTEM_PROMPT
     else:
-        messages = [{"role": "system", "content": load_system_prompt("quantum-computing") if quantum_computing_mode else (load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc")))))}]
+        messages = [{"role": "system", "content": load_system_prompt("vasp") if vasp_mode else (load_system_prompt("quantum-computing") if quantum_computing_mode else (load_system_prompt("reframe") if reframe_mode else (load_system_prompt("marbles") if marbles_mode else (load_system_prompt("amrex") if amrex_mode else (load_system_prompt("code") if code_mode else load_system_prompt("hpc"))))))}]
     messages.append({"role": "user", "content": augmented})
     
     print(f"\n[HPC Documentation Assistant]\nQuerying Kestrel docs...", file=sys.stderr)
@@ -3842,6 +3897,13 @@ def main():
              "code + papers collection (quantum_computing) and requires "
              "the model to verify gate matrices, unitarity, and tensor "
              "orderings before answering."
+    )
+    parser.add_argument(
+        "--vasp", action="store_true",
+        help="VASP (Vienna Ab initio Simulation Package) assistant mode. "
+             "Retrieves from vasp_src (tutorials + general notes + Wisconsin "
+             "docs) plus an hpc_docs slice, and pins Applications/vasp.md "
+             "as the authoritative build/module/Slurm reference."
     )
     parser.add_argument(
         "--code", action="store_true",
@@ -3940,7 +4002,7 @@ def main():
     # aren't running OpenFOAM. Users who *do* want the OpenFOAM case
     # generator now ask for it explicitly with `ofa --openfoam`.
     _mode_flags = (args.hpc, args.code, args.amrex, args.marbles,
-                   args.quantum_computing, args.rhel9_reframe, args.openfoam)
+                   args.quantum_computing, args.vasp, args.rhel9_reframe, args.openfoam)
     if not any(_mode_flags):
         args.code = True
 
@@ -3988,6 +4050,8 @@ def main():
     if args.query:
         if args.rhel9_reframe:
             hpc_single_query(" ".join(args.query), resume=args.resume, code_mode=False, amrex_mode=False, reframe_mode=True)
+        elif args.vasp:
+            hpc_single_query(" ".join(args.query), resume=args.resume, vasp_mode=True)
         elif args.quantum_computing:
             hpc_single_query(" ".join(args.query), resume=args.resume, quantum_computing_mode=True)
         elif args.marbles:
@@ -4004,7 +4068,7 @@ def main():
             # scaffold + optional --save case dir + --fast single-shot).
             single_query(" ".join(args.query), save_dir=args.save, fast=args.fast, resume=args.resume)
     else:
-        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, marbles_mode=args.marbles, reframe_mode=args.rhel9_reframe, quantum_computing_mode=args.quantum_computing)
+        interactive_mode(save_dir=args.save, resume=args.resume, hpc_mode=args.hpc, code_mode=args.code, amrex_mode=args.amrex, marbles_mode=args.marbles, reframe_mode=args.rhel9_reframe, quantum_computing_mode=args.quantum_computing, vasp_mode=args.vasp)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ What each /v1/chat/completions request does:
   1. Authenticate via `Authorization: Bearer <token>` (token read from a
      keyfile created on first --serve run).
   2. Pick the ofa "mode" from the `model` field:
-        ofa-openfoam, ofa-hpc, ofa-code, ofa-amrex, ofa-reframe
+        ofa-openfoam, ofa-hpc, ofa-code, ofa-amrex, ofa-marbles,
+        ofa-quantum-computing, ofa-vasp, ofa-reframe
   3. Build the system prompt via ``ofa_main.load_system_prompt(mode)`` so
      long-term prefs + lessons are injected exactly the same way the CLI
      does.
@@ -68,6 +69,7 @@ _MODEL_MODES = {
     "ofa-marbles":            "marbles",
     "ofa-reframe":            "reframe",
     "ofa-quantum-computing":  "quantum-computing",
+    "ofa-vasp":               "vasp",
 }
 
 
@@ -93,6 +95,8 @@ def _retrieve_for_mode(query: str, mode: str) -> str:
         return ofa_main.retrieve_marbles_context(query)
     if mode == "quantum-computing":
         return ofa_main.retrieve_quantum_computing_context(query)
+    if mode == "vasp":
+        return ofa_main.retrieve_vasp_context(query)
     if mode in ("hpc", "code"):
         return ofa_main.retrieve_hpc_context(query)
     return ofa_main.retrieve_context(query)
@@ -114,13 +118,14 @@ def _augment_user_message(content: str, mode: str) -> str:
     label = (
         "RHEL9_STACK+HPC" if mode == "reframe"
         else "QUANTUM" if mode == "quantum-computing"
+        else "VASP" if mode == "vasp"
         else "HPC_DOCS" if mode in ("hpc", "code", "amrex", "marbles")
         else "OPENFOAM"
     )
     fenced = ofa_main._fence_rag(rag, label=label)
     if mode == "reframe":
         return f"Extracted RHEL9 Stack & RHEL8 Context:\n\n{fenced}\n\n---\n\nUser request: {content}"
-    if mode in ("hpc", "code", "amrex", "marbles", "quantum-computing"):
+    if mode in ("hpc", "code", "amrex", "marbles", "quantum-computing", "vasp"):
         return f"Here is relevant context for your reference:\n\n{fenced}\n\n---\n\nUser request: {content}"
     return (
         f"Here are relevant OpenFOAM example files for reference:\n\n"

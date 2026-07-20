@@ -98,3 +98,17 @@ keep_missing = true   # see marbles-papers above.
 # Use to skip front-matter / unrelated chapters of a large textbook.
 page_ranges  = { "TheLatticeBoltzmannEquationForComplexStatesOfFlowingMatter_succiLatticeBoltzmannEquation2018a.pdf" = "646-" }
 
+# ---------------------------------------------------------------------------
+# VASP — general notes, Rosen-group tutorials (I/O files, SEEKPATH,
+# transition-state search, visualization), and the Wisconsin VASP docs
+# snapshot. Small text-only corpus; the authoritative HPC build/module
+# doc is pinned separately (Applications/vasp.md via retrieve_vasp_context).
+# ---------------------------------------------------------------------------
+
+[collections.vasp_src]
+description = "VASP — tutorials, general notes, and vendored docs snapshots."
+[[collections.vasp_src.sources]]
+path       = "repos/vasp"
+type       = "code"
+extensions = [".md", ".txt"]
+

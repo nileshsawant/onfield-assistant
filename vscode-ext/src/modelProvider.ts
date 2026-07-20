@@ -32,6 +32,7 @@ const OFA_MODES: ReadonlyArray<{
     { id: 'ofa-amrex',             name: 'ofa · amrex',             tooltip: 'AMReX C++ framework assistant.' },
     { id: 'ofa-marbles',           name: 'ofa · marbles',           tooltip: 'MARBLES lattice-Boltzmann solver (on AMReX).' },
     { id: 'ofa-quantum-computing', name: 'ofa · quantum-computing', tooltip: 'Quantum computing assistant.' },
+    { id: 'ofa-vasp',              name: 'ofa · vasp',              tooltip: 'VASP (Vienna Ab initio Simulation Package) assistant.' },
     { id: 'ofa-reframe',           name: 'ofa · reframe',           tooltip: 'ReFrame CI/CD testing assistant.' }
 ];
 

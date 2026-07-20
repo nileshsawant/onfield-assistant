@@ -14,6 +14,7 @@ import * as vscode from 'vscode';
 import { ChannelLogger, Logger } from './logger';
 import { detectKestrel } from './kestrelDetector';
 import { connect as slurmConnect, disconnect as slurmDisconnect, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
+import { registerOfaProvider } from './modelProvider';
 
 const COMMAND_IDS = {
     connect: 'ofa.connect',
@@ -26,6 +27,9 @@ let statusBarItem: vscode.StatusBarItem | undefined;
 let logChannel: vscode.OutputChannel | undefined;
 let logger: Logger | undefined;
 let currentEndpoint: OfaEndpoint | null = null;
+/** Disposable returned by vscode.lm.registerLanguageModelChatProvider —
+ *  removes the seven ofa models from the picker when disposed. */
+let providerRegistration: vscode.Disposable | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
     logChannel = vscode.window.createOutputChannel('OnField Assistant');
@@ -51,6 +55,10 @@ export async function deactivate(): Promise<void> {
     // VS Code awaits this (up to ~5s) before the extension host exits.
     // Best-effort scancel so we don't leak a SLURM allocation across
     // VS Code shutdowns.
+    if (providerRegistration) {
+        providerRegistration.dispose();
+        providerRegistration = null;
+    }
     if (currentEndpoint && logger) {
         try {
             await slurmDisconnect(currentEndpoint, logger);
@@ -100,9 +108,10 @@ async function connectCommand(): Promise<void> {
             },
             () => slurmConnect(opts, logger!)
         );
+        providerRegistration = registerOfaProvider(currentEndpoint, logger);
         setStatus('connected');
         void vscode.window.showInformationMessage(
-            `OFA connected: ${currentEndpoint.node}:${currentEndpoint.port} (job ${currentEndpoint.jobId}). Model picker registration lands in PR 3.`
+            `OFA connected: ${currentEndpoint.node}:${currentEndpoint.port} (job ${currentEndpoint.jobId}). Seven ofa models are now in the VS Code Chat model picker.`
         );
     } catch (err) {
         const isSlurm = err instanceof SlurmError;
@@ -126,6 +135,14 @@ async function disconnectCommand(): Promise<void> {
     }
     const endpoint = currentEndpoint;
     setStatus('disconnecting');
+    // Deregister the provider FIRST so no new chat request lands on a
+    // stale endpoint mid-teardown. In-flight requests already have a
+    // reference to the provider instance so they finish (or get
+    // AbortController-cancelled by VS Code).
+    if (providerRegistration) {
+        providerRegistration.dispose();
+        providerRegistration = null;
+    }
     try {
         await slurmDisconnect(endpoint, logger);
         logger.info(`disconnected: job ${endpoint.jobId} released`);

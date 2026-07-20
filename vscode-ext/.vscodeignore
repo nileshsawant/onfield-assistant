@@ -1,0 +1,13 @@
+# Exclude dev artifacts from the packaged .vsix. Only dist/, package.json,
+# README, and CHANGELOG (if any) should ship.
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+.vscodeignore
+tsconfig.json
+esbuild.js
+node_modules/**
+**/*.map
+**/*.ts
+**/*.vsix

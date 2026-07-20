@@ -1,0 +1,129 @@
+{
+  "name": "ofa-vscode",
+  "displayName": "OnField Assistant (ofa)",
+  "description": "One-click SLURM + ofa connection for VS Code Chat on Kestrel and other HPC systems.",
+  "version": "0.1.0-alpha.0",
+  "publisher": "nileshsawant",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nileshsawant/onfield-assistant.git",
+    "directory": "vscode-ext"
+  },
+  "bugs": {
+    "url": "https://github.com/nileshsawant/onfield-assistant/issues"
+  },
+  "homepage": "https://github.com/nileshsawant/onfield-assistant#readme",
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "Chat",
+    "AI",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "ofa",
+    "kestrel",
+    "hpc",
+    "slurm",
+    "byok",
+    "language-model-provider"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ofa.connect",
+        "title": "Connect",
+        "category": "OFA"
+      },
+      {
+        "command": "ofa.disconnect",
+        "title": "Disconnect",
+        "category": "OFA"
+      },
+      {
+        "command": "ofa.reallocate",
+        "title": "Re-allocate SLURM job",
+        "category": "OFA"
+      },
+      {
+        "command": "ofa.showLogs",
+        "title": "Show Logs",
+        "category": "OFA"
+      }
+    ],
+    "configuration": {
+      "title": "OnField Assistant (ofa)",
+      "properties": {
+        "ofa.kestrelHostnamePattern": {
+          "type": "string",
+          "default": "^(kl\\d+|kestrel|x\\d+c\\d+s\\d+b\\d+n\\d+)$",
+          "markdownDescription": "Regex used to confirm that a Remote-SSH host is a Kestrel node. If your site uses different hostnames, override this so `OFA: Connect` still recognizes it. Matched against the output of `uname -n` on the remote."
+        },
+        "ofa.slurm.account": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Slurm account for the `salloc` request. Empty string = auto-detect via `sacctmgr` (same behaviour as `bin/ofa`)."
+        },
+        "ofa.slurm.partition": {
+          "type": "string",
+          "default": "debug",
+          "markdownDescription": "Slurm partition for the `salloc` request."
+        },
+        "ofa.slurm.walltime": {
+          "type": "string",
+          "default": "00:30:00",
+          "markdownDescription": "Wall time for the `salloc` request. Format: `HH:MM:SS`."
+        },
+        "ofa.slurm.gres": {
+          "type": "string",
+          "default": "gpu:1",
+          "markdownDescription": "Slurm GRES for the `salloc` request. Set to `gpu:h100:1` or similar on sites with typed GPU GRES."
+        },
+        "ofa.enableTools": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Pass `--serve-enable-tools` to `ofa --serve`. Enables tool-calling passthrough so VS Code Agent mode can chain file edits / terminal commands."
+        },
+        "ofa.autoConnectOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Automatically call `OFA: Connect` when a workspace opens on a detected Kestrel host. Opt-in because it burns a SLURM allocation whether you plan to use ofa or not."
+        },
+        "ofa.healthProbeIntervalSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "markdownDescription": "How often to poll `/healthz` on the ofa endpoint. First failed probe triggers the silent-reconnect flow."
+        },
+        "ofa.silentReconnect": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When the SLURM job expires mid-session, silently re-allocate and rewire the endpoint (a toast notifies the user). Disable to be prompted before each re-allocate."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "npm run build && npx --yes @vscode/vsce@^3 package --no-yarn --no-dependencies -o ofa-vscode.vsix",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,75 @@
+name: Build vscode-ext .vsix
+
+on:
+  push:
+    tags:
+      - 'vscode-ext-v*'
+    branches:
+      - main
+    paths:
+      - 'vscode-ext/**'
+      - '.github/workflows/vscode-ext.yml'
+  pull_request:
+    paths:
+      - 'vscode-ext/**'
+      - '.github/workflows/vscode-ext.yml'
+  workflow_dispatch:
+
+# 'contents: write' is only needed by the release-upload step. The build
+# job itself is read-only.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-ext
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        # Using `npm install` rather than `npm ci` because we deliberately
+        # do not commit package-lock.json (per vscode-ext/.gitignore).
+        # Downside: transitive dep versions may drift between runs. If
+        # that becomes a source of build flakiness, drop package-lock.json
+        # from .gitignore and switch to `npm ci`.
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build bundle
+        run: npm run build
+
+      - name: Package .vsix
+        run: npm run package
+
+      - name: Upload .vsix as workflow artifact
+        # Available on every run (PRs, main pushes, tags) so reviewers
+        # can install the exact build produced by CI.
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofa-vscode-vsix
+          path: vscode-ext/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach .vsix to GitHub Release
+        # Only fires on release tags. Auto-creates the release if it
+        # doesn't already exist. draft/prerelease inferred from the tag
+        # name (e.g. 'vscode-ext-v0.1.0-alpha.0' → prerelease).
+        if: startsWith(github.ref, 'refs/tags/vscode-ext-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vscode-ext/*.vsix
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}

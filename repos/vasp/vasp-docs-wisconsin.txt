@@ -1,0 +1,96 @@
+# VASP documentation inspired from https://hpc.chem.wisc.edu/software/kestrel-software/vasp/
+# JC: I have modified them to improve their clarity 
+
+VASP
+
+Input files
+There are four input files necessary to run a VASP job:
+
+INCAR
+KPOINTS
+POSCAR
+POTCAR
+The INCAR file is the central input file. In contains the “what to do” and the “how to do”. Here is an example of an INCAR file:
+
+GGA = PE
+LASPH = .FALSE.
+ISTART = 0
+PREC = Accurate
+ENCUT = 400  # 520 eV is usually better for systems with oxygen; 1.3*EMAX
+EDIFF = 1E-05
+EDIFFG = -1E-04
+ISMEAR = 0  # 0 is safe for most systems, use 1 for metals for faster convergence
+SIGMA = 0.02 # use 0.02 for gapped systems; use 0.2 for metals
+IBRION = 2
+ISIF = 2
+NSW = 500
+ISPIN = 2
+
+ISTART starts the job. ISTART=0 means to start a new job from this input file. If you want to use another input file your ISTART will have a different value. PREC defines the precision of the calculation. The default is Normal. ENCUT is the cut-off for plane wave basis in eV. EDIFF is the convergence criteria for the energy. ISMEAR determines how the partial occupancies are set for each orbital. The ISMEAR value will change depending on the type of system you are interested in. SIGMA is the width of smearing. IBRION is the amount of relaxation for a system to get the their instantaneous ground state. NSW is the maximum number of ionic steps. POTIM is the scaling constant for forces in minimization algorithms.
+
+The KPOINTS must contain the k-point coordinates and weights or the mesh size for creating the k-point grid. Here is an example of a KPOINTS file for running with a 6x6x6 Gamma-centered grid:
+
+k-points
+0
+Gamma
+ 6 6 6
+ 0 0 0
+
+POSCAR contains the geometry of the atoms and has the lattice vectors to create the periodic structure. Here's an example for bulk rock-salt MgO
+
+comment
+1.0
+4.257770028975298 0.0 5.2917612568991345e-16
+5.2917612568991345e-16 4.257770028975298 5.2917612568991345e-16
+0.0 0.0 4.257770028975298
+Mg O
+4 4
+Direct
+0.000000000000000 0.000000000000000 0.000000000000000
+0.000000000000000 0.500000000000000 0.500000000000000
+0.500000000000000 0.000000000000000 0.500000000000000
+0.500000000000000 0.500000000000000 0.000000000000000
+0.000000000000000 0.000000000000000 0.500000000000000
+0.000000000000000 0.500000000000000 0.000000000000000
+0.500000000000000 0.000000000000000 0.000000000000000
+0.500000000000000 0.500000000000000 0.500000000000000
+Note the 4 4 in the input below the lattice vectors. They represent the order of the pseudopotentials in the POTCAR.
+
+POTCAR contains all of the pseudo potential information for the atoms
+
+Reference
+    G. Kresse and J. Hafner. Ab initio molecular dynamics for liquid metals. Phys. Rev. B, 47:558, 1993.
+    G. Kresse and J. Hafner. Ab initio molecular-dynamics simulation of the liquid-metal-amorphous-semiconductor 
+    transition in germanium. Phys. Rev. B, 49:14251, 1994.
+    G. Kresse and J. Furthmüller. Efficiency of ab-initio total energy calculations for metals and semiconductors 
+    using a plane-wave basis set. Comput. Mat. Sci., 6:15, 1996.
+    G. Kresse and J. Furthmüller. Efficient iterative schemes for ab initio total-energy calculations using a plane-wave 
+    basis set. Phys. Rev. B, 54:11169, 1996.
+
+Depending on the potentials used you should also include the following citations:
+
+Ultra-soft pseudopotentials
+
+   D. Vanderbilt. Soft self-consistent pseudopotentials in a generalized eigenvalue formalism. Phys. Rev. B, 41:7892, 1990.
+   G. Kresse and J. Hafner. Norm-conserving and ultrasoft pseudopotentials for first-row and transition-elements. J. Phys.: Condens. Matter, 6:8245, 1994.
+
+PAW potentials
+
+   P. E. Blochl. Projector augmented-wave method. Phys. Rev. B, 50:17953, 1994.
+   G. Kresse and D. Joubert. From ultrasoft pseudopotentials to the projector augmented-wave method. Phys. Rev. B, 59:1758, 1999.
+
+The references to the exchange and correlation approximations implemented in VASP are:
+
+Local Density Approximation (LDA)
+
+   J. P. Perdew and A. Zunger. Self-interaction correction to density-functional approximations for many-electron systems. Phys. Rev. B, 23:5048, 1981.
+Generalized Gradient Approximation PW91 (GGA-PW91)
+
+   J.P. Perdew, J.A. Chevary, S.H. Vosko, K.A. Jackson, M.R. Pederson, D.J. Singh, and C. Fiolhais. Atoms, molecules, solids, and surfaces: Applications of the generalized gradient approximation for exchange and correlation. Phys. Rev. B, 46:6671, 1992.
+   J.P. Perdew, J.A. Chevary, S.H. Vosko, K.A. Jackson, M.R. Pederson, D.J. Singh, and C. Fiolhais. Erratum: Atoms, molecules, solids, and surfaces: Applications of the generalized gradient approximation for exchange and correlation. Phys. Rev. B, 48:4978, 1993.
+
+Generalized Gradient Approximation PBE (GGA-PBE)
+
+   J. P. Perdew, K. Burke, and M. Ernzerhof. Generalized gradient approximation made simple. Phys. Rev. Lett., 77:3865, 1996.
+   J. P. Perdew, K. Burke, and M. Ernzerhof. Erratum: Generalized gradient approximation made simple. Phys. Rev. Lett., 78:1396, 1997.
+

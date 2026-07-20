@@ -32,6 +32,7 @@ $ ofa --hpc             # Kestrel HPC, SLURM documentation, and topology expert
 $ ofa --amrex           # AMReX C++ framework assistant
 $ ofa --marbles         # MARBLES (LBM thermal solver on AMReX) assistant
 $ ofa --quantum-computing # Quantum computing (rigorous verification of gates / unitarity / tensor order)
+$ ofa --vasp            # VASP (Vienna Ab initio Simulation Package) — tutorials, notes, pinned build/module doc
 $ ofa --rhel9_reframe   # ReFrame integration expert strictly adhering to the Kestrel RHEL9 software stack
 
 # Additional Flags
@@ -192,7 +193,7 @@ text = ask(
     image="output/step_4200_pressure.png",
     file="output/solver.log",
     context="Re=1000, cavity flow, k-omega SST turbulence model.",
-    model="ofa-code",          # ofa-openfoam | ofa-hpc | ofa-code | ofa-amrex | ofa-marbles | ofa-reframe | ofa-quantum-computing
+    model="ofa-code",          # ofa-openfoam | ofa-hpc | ofa-code | ofa-amrex | ofa-marbles | ofa-reframe | ofa-quantum-computing | ofa-vasp
     timeout=60,
 )
 ```

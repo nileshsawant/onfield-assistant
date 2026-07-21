@@ -20,6 +20,7 @@ import { connect as slurmConnect, disconnect as slurmDisconnect, resolveOfaBin, 
 import { registerOfaProvider, OfaProviderHandle } from './modelProvider';
 import { HealthProbe } from './healthProbe';
 import { adoptExistingAllocation } from './adoptExisting';
+import { startBridge, stopBridge, BridgeHandle } from './bridge';
 
 const COMMAND_IDS = {
     connect: 'ofa.connect',
@@ -44,6 +45,10 @@ let currentEndpoint: OfaEndpoint | null = null;
  *  selectChatModels(). */
 let providerHandle: OfaProviderHandle | null = null;
 let healthProbe: HealthProbe | null = null;
+/** ssh -L bridge on the login node. Fixed local port stays stable
+ *  across allocations so the user's laptop-side chatLanguageModels.json
+ *  doesn't need per-allocation edits. See src/bridge.ts. */
+let currentBridge: BridgeHandle | null = null;
 /** True while we're mid-silent-reconnect. Prevents overlapping
  *  reallocations if the probe fires again while the first is running. */
 let reconnecting = false;
@@ -137,6 +142,18 @@ async function tryAdopt(flow: FlowOptions): Promise<boolean> {
 
     currentEndpoint = adopted;
     providerHandle?.setEndpoint(adopted);
+    // Start the login-node ssh -L bridge so the user's laptop-side
+    // chatLanguageModels.json (pointed at http://localhost:<port>)
+    // reaches this adopted allocation. Errors are logged but not
+    // fatal to the adopt flow; the LanguageModelChatProvider path
+    // still works even without the bridge.
+    try {
+        const bridgePort = cfg.get<number>('laptopSideBridgePort', 49643);
+        currentBridge = await startBridge(adopted, bridgePort, logger);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn(`ssh -L bridge failed for adopted allocation: ${msg}`);
+    }
     healthProbe = new HealthProbe({
         baseUrl: adopted.baseUrl,
         token: adopted.token,
@@ -254,6 +271,25 @@ async function bringUp(flow: FlowOptions): Promise<void> {
 
         currentEndpoint = endpoint;
         providerHandle?.setEndpoint(endpoint);
+        // Start the login-node ssh -L bridge so the user's laptop-side
+        // chatLanguageModels.json (pointed at http://localhost:<port>)
+        // reaches this allocation. Errors surface as a warning toast
+        // but don't tear down the connection — the LanguageModelChatProvider
+        // path still works even without the bridge.
+        try {
+            const bridgePort = cfg.get<number>('laptopSideBridgePort', 49643);
+            currentBridge = await startBridge(endpoint, bridgePort, logger);
+            logger.info(`bridge ready: laptop:${bridgePort} -> ${endpoint.node}:${endpoint.port}`);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`ssh -L bridge failed: ${msg}`);
+            void vscode.window.showWarningMessage(
+                `OFA: ssh -L bridge failed — chatLanguageModels.json path unavailable. Provider path in the picker still works. Details in the log.`,
+                'Show logs'
+            ).then((choice) => {
+                if (choice === 'Show logs') logChannel?.show(true);
+            });
+        }
         healthProbe = new HealthProbe({
             baseUrl: endpoint.baseUrl,
             token: endpoint.token,
@@ -264,7 +300,10 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         healthProbe.start();
 
         setStatus('connected');
-        const notice = `OFA connected: ${endpoint.node}:${endpoint.port} (job ${endpoint.jobId}). If the 'ofa' models aren't in the Chat picker yet, run 'Chat: Manage Language Models' and enable the 'ofa' provider.`;
+        const bridgeInfo = currentBridge
+            ? ` Laptop-side chatLanguageModels.json can point at http://localhost:${currentBridge.localPort}/v1/chat/completions (ssh -L bridge is up).`
+            : '';
+        const notice = `OFA connected: ${endpoint.node}:${endpoint.port} (job ${endpoint.jobId}).${bridgeInfo}`;
         if (flow.silent) {
             logger.info(notice);
         } else {
@@ -295,6 +334,14 @@ async function tearDown(flow: FlowOptions): Promise<void> {
     // stay in Copilot Chat's picker even while disconnected, which
     // is the whole point of the activate-time registration.
     providerHandle?.setEndpoint(null);
+    if (currentBridge) {
+        try {
+            await stopBridge(currentBridge, logger);
+        } catch (err) {
+            logger.warn(`stopBridge error (continuing): ${(err as Error).message}`);
+        }
+        currentBridge = null;
+    }
     if (healthProbe) {
         healthProbe.stop();
         healthProbe = null;

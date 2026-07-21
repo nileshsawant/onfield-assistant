@@ -110,6 +110,13 @@
           "default": true,
           "markdownDescription": "Pass `--serve-enable-tools` to `ofa --serve`. Enables tool-calling passthrough so VS Code Agent mode can chain file edits / terminal commands."
         },
+        "ofa.laptopSideBridgePort": {
+          "type": "number",
+          "default": 49643,
+          "minimum": 1024,
+          "maximum": 65535,
+          "markdownDescription": "Login-node port for the `ssh -N -L` bridge that forwards `kestrel-login:PORT` → `<compute-node>:<remote-port>`. VS Code Remote-SSH auto-forwards this to `laptop:PORT`, so your laptop's `chatLanguageModels.json` can pin `http://localhost:PORT/v1/chat/completions` and stay valid across SLURM allocations. Match the port your existing `byok-update-config.py` setup used (default `49643`)."
+        },
         "ofa.autoConnectOnStartup": {
           "type": "boolean",
           "default": false,

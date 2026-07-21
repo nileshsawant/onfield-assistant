@@ -16,7 +16,7 @@
 import * as vscode from 'vscode';
 import { ChannelLogger, Logger } from './logger';
 import { detectKestrel } from './kestrelDetector';
-import { connect as slurmConnect, disconnect as slurmDisconnect, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
+import { connect as slurmConnect, disconnect as slurmDisconnect, resolveOfaBin, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
 import { registerOfaProvider } from './modelProvider';
 import { HealthProbe } from './healthProbe';
 import { adoptExistingAllocation } from './adoptExisting';
@@ -199,12 +199,26 @@ async function bringUp(flow: FlowOptions): Promise<void> {
     }
     logger.info(`Kestrel probe OK on '${probe.hostname}'`);
 
+    let ofaBinPath: string;
+    try {
+        ofaBinPath = await resolveOfaBin(cfg.get<string>('ofaBinPath', ''), logger);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(msg);
+        setStatus('disconnected');
+        void vscode.window.showErrorMessage(`OFA: ${msg}`, 'Show logs').then((choice) => {
+            if (choice === 'Show logs') logChannel?.show(true);
+        });
+        return;
+    }
+
     const opts: SlurmOptions = {
         account: cfg.get<string>('slurm.account', ''),
         partition: cfg.get<string>('slurm.partition', 'debug'),
         walltime: cfg.get<string>('slurm.walltime', '00:30:00'),
         gres: cfg.get<string>('slurm.gres', 'gpu:1'),
-        enableTools: cfg.get<boolean>('enableTools', true)
+        enableTools: cfg.get<boolean>('enableTools', true),
+        ofaBinPath
     };
     const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);
 

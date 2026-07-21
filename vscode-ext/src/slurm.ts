@@ -17,6 +17,8 @@
  * the job is still around.
  */
 import * as cp from 'node:child_process';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { promisify } from 'node:util';
 import type { Logger } from './logger';
 
@@ -47,6 +49,13 @@ export interface SlurmOptions {
     walltime: string;
     gres: string;
     enableTools: boolean;
+    /** Absolute path to bin/ofa. Resolved by resolveOfaBin() before
+     *  connect() is called. Passing this explicitly (rather than
+     *  relying on $PATH inside the extension host) is required
+     *  because VS Code's Remote-SSH server does not source ~/.bashrc,
+     *  so any `module load assistant` a user runs manually in a
+     *  terminal never propagates to the extension host process. */
+    ofaBinPath: string;
 }
 
 export class SlurmError extends Error {
@@ -88,12 +97,14 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         // adoptExistingAllocation() can find our jobs by name without
         // colliding with CLI-launched 'ofa' sessions.
         //
-        // Run through `bash -l -c` so the login profile (including
-        // `module load assistant`, which puts `ofa` on PATH via the
-        // Lmod modulefile) is sourced. VS Code's Remote-SSH server
-        // does not source ~/.bashrc for the extension host, so a
-        // direct spawn('ofa', ...) fails with ENOENT.
-        const innerParts = ['ofa', '--serve', '--serve-quiet'];
+        // Run through `bash -l -c` so the login profile (e.g. things
+        // sourced by /etc/profile.d/*) is available. We still call
+        // ofa by its absolute path (opts.ofaBinPath) because most
+        // users have `module load assistant` in an interactive
+        // terminal, not their non-interactive login profile — so we
+        // cannot rely on $PATH to find `ofa`. See resolveOfaBin()
+        // below for how the absolute path is discovered.
+        const innerParts = [shellQuote(opts.ofaBinPath), '--serve', '--serve-quiet'];
         if (opts.enableTools) innerParts.push('--serve-enable-tools');
         const inner = innerParts.join(' ');
 
@@ -274,4 +285,90 @@ function setupLineReader(stream: NodeJS.ReadableStream, onLine: (line: string) =
     stream.on('end', () => {
         if (buf.length > 0) onLine(buf);
     });
+}
+
+/**
+ * Locate the `ofa` binary for this Kestrel install. Tried in order:
+ *
+ *   1. `ofa.ofaBinPath` setting if the user configured one explicitly.
+ *   2. `$OFA_ROOT/bin/ofa` if `$OFA_ROOT` is exported in the
+ *      extension host's env (e.g. via a system-wide profile.d
+ *      script). Uncommon on Kestrel today but the cleanest signal
+ *      when present.
+ *   3. `bash -lic 'command -v ofa'` — an interactive login shell,
+ *      which sources `~/.bashrc` and so picks up a `module load
+ *      assistant` there. Note the `-i`: plain `-l` skips `.bashrc`,
+ *      which is where most Kestrel users put their module loads.
+ *   4. The Kestrel deploy path
+ *      `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/bin/ofa`.
+ *      Last-ditch hard-coded fallback so the extension "just works"
+ *      on a fresh Kestrel account without any prior module-load
+ *      customisation.
+ *
+ * All candidates must be executable-by-us to count. Errors from each
+ * step are swallowed and the search continues; only if all four fail
+ * do we throw with an actionable message.
+ */
+export async function resolveOfaBin(configuredPath: string, logger: Logger): Promise<string> {
+    const tryPath = async (p: string, source: string): Promise<string | null> => {
+        try {
+            await fs.access(p, fs.constants.X_OK);
+            logger.info(`ofa binary: ${p} (source: ${source})`);
+            return p;
+        } catch {
+            return null;
+        }
+    };
+
+    // 1. Explicit setting
+    const configured = configuredPath.trim();
+    if (configured) {
+        const found = await tryPath(configured, 'ofa.ofaBinPath setting');
+        if (found) return found;
+        logger.warn(`ofa.ofaBinPath='${configured}' is not an executable file; falling back to auto-detect`);
+    }
+
+    // 2. $OFA_ROOT env var
+    const root = process.env.OFA_ROOT;
+    if (root) {
+        const found = await tryPath(path.join(root, 'bin', 'ofa'), '$OFA_ROOT/bin/ofa');
+        if (found) return found;
+    }
+
+    // 3. Interactive login shell probe
+    try {
+        const { stdout } = await execFile(
+            'bash', ['-lic', 'command -v ofa 2>/dev/null'],
+            { timeout: 5000 }
+        );
+        const p = stdout.trim().split('\n')[0]?.trim();
+        if (p) {
+            const found = await tryPath(p, `bash -lic 'command -v ofa'`);
+            if (found) return found;
+        }
+    } catch {
+        // bash -i without a TTY can throw or exit non-zero even when
+        // command -v prints. Swallow and continue.
+    }
+
+    // 4. Kestrel deploy default
+    const kestrelPath = '/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/bin/ofa';
+    const found = await tryPath(kestrelPath, 'Kestrel deploy default');
+    if (found) return found;
+
+    throw new Error(
+        `Could not locate 'ofa'. Tried ofa.ofaBinPath, $OFA_ROOT/bin/ofa, ` +
+        `bash -lic 'command -v ofa', and ${kestrelPath}. ` +
+        `Set 'ofa.ofaBinPath' in Settings to an absolute path.`
+    );
+}
+
+/**
+ * Minimal shell-quoting for the path we hand to `bash -l -c`. The
+ * only realistic character to worry about in an install path is a
+ * space; single-quoting handles that. Embedded single quotes are
+ * escaped with the classic '"'"' idiom.
+ */
+function shellQuote(s: string): string {
+    return "'" + s.replace(/'/g, "'\"'\"'") + "'";
 }

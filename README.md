@@ -145,6 +145,76 @@ The assistant maintains its transient session state natively in your scratch dir
 If your SLURM allocation expires, the custom signal handlers will safely write the final context to disk. You can then request a new allocation and simply run `ofa --resume` (with any of your targeted flags) to perfectly reconstruct the context window. 
 Any permanent global preferences (e.g., "always use 4 spaces for indentation") mentioned to the assistant are extracted into an isolated `~/.ofa_prefs.txt` file and automatically sourced into all future context windows.
 
+## Use `ofa` from VS Code Chat (the OnField Assistant extension)
+
+VS Code's Chat / Copilot Chat picker can drive `ofa` if you install the
+bundled OnField Assistant extension on the Kestrel-remote side. The
+extension handles the SLURM allocation and the login-node TCP bridge for
+you; on the laptop side you register the eight `ofa` modes as BYOK
+models. End-to-end verified flow (Mac laptop + Kestrel + VS Code
+Remote-SSH):
+
+1. **Attach VS Code to Kestrel.** Standard Remote-SSH — open a new
+   window connected to your Kestrel login node.
+
+2. **Install the extension on the remote.** In the Kestrel-attached
+   window: `Cmd+Shift+X` → `⋯` menu at the top of the Extensions
+   sidebar → **Install from VSIX...** → pick
+   `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/vscode-ext/ofa-vscode.vsix`.
+   Reload when prompted. The extension shows up under **SSH: KESTREL**
+   as `ofa-vscode`.
+
+3. **Bring up the server.** `Cmd+Shift+P` → **OnField Assistant:
+   Connect**. This allocates a debug GPU node, launches
+   `ofa --serve --serve-enable-tools`, and opens an `ncat` TCP bridge
+   on login-node port `49643`. Watch the **Output** panel
+   (`Cmd+Shift+U` → **OnField Assistant** channel) for progress. Wait
+   for the connect-success toast — and copy the bearer token printed
+   in the log (line matching `apiKey = ofa-…`).
+
+4. **Register the models on your laptop.** From a native Mac terminal:
+
+   ```bash
+   scp kestrel.hpc.nlr.gov:/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/tools/byok-update-config.py ~/byok-update-config.py
+   python3 ~/byok-update-config.py --token ofa-<paste-your-token>
+   ```
+
+   The script edits `~/Library/Application Support/Code/User/chatLanguageModels.json`,
+   backing it up to `.bak` on first run, appending `OFA (Kestrel)`
+   with all 8 modes, and leaving any existing Copilot / other BYOK
+   providers untouched.
+
+5. **Reload + plant the API key in secret storage.** In VS Code:
+
+   * `Cmd+Shift+P` → **Developer: Reload Window**.
+   * `Cmd+Shift+P` → **Chat: Manage Language Models**.
+   * Hover the **OFA (Kestrel)** row → click the gear icon →
+     **Update API Key** → paste the same token again.
+     **This step is required** — the `apiKey` field in the JSON is
+     only a hint; Copilot Chat reads the real token from VS Code's
+     per-provider secret storage, which is only populated via this
+     UI flow. Skipping it yields `missing or invalid Authorization
+     header` on the first request.
+   * In the same view, click the eye icon on each `OFA · …` row so
+     the eight models become visible in the picker.
+
+6. **Chat.** Open Copilot Chat (`Cmd+Ctrl+I`). Click the model picker
+   at the bottom of the panel, type `OFA`, pick e.g.
+   **OFA · Kestrel HPC**. Set the mode selector at the top to
+   **Ask**, send a test message.
+
+The bearer token and login-node bridge port are stable across
+allocations (the server reuses `$OFA_SCRATCH/.ofa_api_key`; the
+extension pins port `49643` via the `ofa.laptopSideBridgePort`
+setting), so steps 4–5 are one-time on a given laptop. Subsequent
+allocations only need step 3 (**OnField Assistant: Connect**).
+
+**Tear down** with `Cmd+Shift+P` → **OnField Assistant: Disconnect**
+— this releases the SLURM job and closes the bridge.
+
+Full BYOK reference, troubleshooting table, and manual JSON template:
+[`docs/byok-vscode.md`](docs/byok-vscode.md).
+
 ## Programmatic use from Python (`ofa_client`)
 
 Call `ofa` from your own simulation / diagnostic scripts. The client is

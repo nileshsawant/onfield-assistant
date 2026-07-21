@@ -59,6 +59,11 @@
         "command": "ofa.showLogs",
         "title": "Show Logs",
         "category": "OFA"
+      },
+      {
+        "command": "ofa.listModels",
+        "title": "List Registered Models (diagnostic)",
+        "category": "OFA"
       }
     ],
     "configuration": {

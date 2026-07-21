@@ -25,7 +25,8 @@ const COMMAND_IDS = {
     connect: 'ofa.connect',
     disconnect: 'ofa.disconnect',
     reallocate: 'ofa.reallocate',
-    showLogs: 'ofa.showLogs'
+    showLogs: 'ofa.showLogs',
+    listModels: 'ofa.listModels'
 } as const;
 
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -57,7 +58,8 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand(COMMAND_IDS.connect, connectCommand),
         vscode.commands.registerCommand(COMMAND_IDS.disconnect, disconnectCommand),
         vscode.commands.registerCommand(COMMAND_IDS.reallocate, reallocateCommand),
-        vscode.commands.registerCommand(COMMAND_IDS.showLogs, () => logChannel?.show(true))
+        vscode.commands.registerCommand(COMMAND_IDS.showLogs, () => logChannel?.show(true)),
+        vscode.commands.registerCommand(COMMAND_IDS.listModels, listModelsCommand)
     );
 
     // Post-activation, opportunistically adopt an existing allocation
@@ -248,7 +250,7 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         healthProbe.start();
 
         setStatus('connected');
-        const notice = `OFA connected: ${endpoint.node}:${endpoint.port} (job ${endpoint.jobId}). Seven ofa models are now in the VS Code Chat model picker.`;
+        const notice = `OFA connected: ${endpoint.node}:${endpoint.port} (job ${endpoint.jobId}). If the 'ofa' models aren't in the Chat picker yet, run 'Chat: Manage Language Models' and enable the 'ofa' provider.`;
         if (flow.silent) {
             logger.info(notice);
         } else {
@@ -383,3 +385,39 @@ function setStatus(state: 'disconnected' | 'connecting' | 'connected' | 'disconn
             break;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Diagnostic: has our LanguageModelChatProvider actually been seen by
+// VS Code Chat / Copilot Chat? Run OFA: List Registered Models to find
+// out. If length is 0, either registration failed OR the picker's
+// selectChatModels filter is hiding us. If length is 8, registration
+// worked and the missing-in-picker case is a Manage-Language-Models
+// opt-in issue on the user's side.
+// ---------------------------------------------------------------------------
+
+async function listModelsCommand(): Promise<void> {
+    if (!logger) return;
+    try {
+        const models = await vscode.lm.selectChatModels({ vendor: 'ofa' });
+        logger.info(`selectChatModels({vendor:"ofa"}) returned ${models.length} models`);
+        for (const m of models) {
+            logger.info(`  - id=${m.id} name=${m.name} vendor=${m.vendor} family=${m.family}`);
+        }
+        const allModels = await vscode.lm.selectChatModels();
+        logger.info(`selectChatModels() [all vendors] returned ${allModels.length} models`);
+        for (const m of allModels) {
+            logger.info(`  * vendor=${m.vendor} id=${m.id} name=${m.name}`);
+        }
+        void vscode.window.showInformationMessage(
+            `OFA provider models: ${models.length}. Total across all vendors: ${allModels.length}. See logs.`,
+            'Show logs'
+        ).then((choice) => {
+            if (choice === 'Show logs') logChannel?.show(true);
+        });
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`listModelsCommand failed: ${msg}`);
+        void vscode.window.showErrorMessage(`OFA: List Models failed — ${msg}`);
+    }
+}
+

@@ -17,7 +17,7 @@ import * as vscode from 'vscode';
 import { ChannelLogger, Logger } from './logger';
 import { detectKestrel } from './kestrelDetector';
 import { connect as slurmConnect, disconnect as slurmDisconnect, resolveOfaBin, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
-import { registerOfaProvider } from './modelProvider';
+import { registerOfaProvider, OfaProviderHandle } from './modelProvider';
 import { HealthProbe } from './healthProbe';
 import { adoptExistingAllocation } from './adoptExisting';
 
@@ -34,9 +34,15 @@ let logChannel: vscode.OutputChannel | undefined;
 let logger: Logger | undefined;
 
 let currentEndpoint: OfaEndpoint | null = null;
-/** Disposable returned by vscode.lm.registerLanguageModelChatProvider —
- *  removes the seven ofa models from the picker when disposed. */
-let providerRegistration: vscode.Disposable | null = null;
+/** Handle to the LanguageModelChatProvider registered once at activate().
+ *  Its setEndpoint() is called on connect/disconnect to switch it between
+ *  the connected and disconnected states. Keeping the registration alive
+ *  the whole time is critical: Copilot Chat's picker caches the vendor
+ *  list at startup and doesn't reliably re-scan when providers register
+ *  later, so registering on-demand at connect time left the 8 models
+ *  invisible in the dropdown even though they were discoverable via
+ *  selectChatModels(). */
+let providerHandle: OfaProviderHandle | null = null;
 let healthProbe: HealthProbe | null = null;
 /** True while we're mid-silent-reconnect. Prevents overlapping
  *  reallocations if the probe fires again while the first is running. */
@@ -53,6 +59,14 @@ export function activate(context: vscode.ExtensionContext): void {
     setStatus('disconnected');
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
+
+    // Register the LanguageModelChatProvider IMMEDIATELY so Copilot
+    // Chat sees our vendor during its startup scan. The provider
+    // starts with a null endpoint; requests in that state return a
+    // 'run OFA: Connect first' message to the chat pane. bringUp() /
+    // tearDown() flip the endpoint on/off via providerHandle.setEndpoint().
+    providerHandle = registerOfaProvider(logger);
+    context.subscriptions.push({ dispose: () => providerHandle?.dispose() });
 
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMAND_IDS.connect, connectCommand),
@@ -122,7 +136,7 @@ async function tryAdopt(flow: FlowOptions): Promise<boolean> {
     const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);
 
     currentEndpoint = adopted;
-    providerRegistration = registerOfaProvider(adopted, logger);
+    providerHandle?.setEndpoint(adopted);
     healthProbe = new HealthProbe({
         baseUrl: adopted.baseUrl,
         token: adopted.token,
@@ -239,7 +253,7 @@ async function bringUp(flow: FlowOptions): Promise<void> {
             );
 
         currentEndpoint = endpoint;
-        providerRegistration = registerOfaProvider(endpoint, logger);
+        providerHandle?.setEndpoint(endpoint);
         healthProbe = new HealthProbe({
             baseUrl: endpoint.baseUrl,
             token: endpoint.token,
@@ -274,13 +288,13 @@ async function bringUp(flow: FlowOptions): Promise<void> {
 
 async function tearDown(flow: FlowOptions): Promise<void> {
     if (!logger) return;
-    // Dispose the provider FIRST so no new chat request lands on a
-    // stale endpoint mid-teardown. In-flight requests keep their
-    // provider reference and get AbortController-cancelled by VS Code.
-    if (providerRegistration) {
-        providerRegistration.dispose();
-        providerRegistration = null;
-    }
+    // Clear the endpoint on the still-registered provider FIRST so
+    // any in-flight request lands on the 'not connected' branch
+    // rather than a stale endpoint. We deliberately do NOT dispose
+    // the provider itself — keeping it registered lets the 8 models
+    // stay in Copilot Chat's picker even while disconnected, which
+    // is the whole point of the activate-time registration.
+    providerHandle?.setEndpoint(null);
     if (healthProbe) {
         healthProbe.stop();
         healthProbe = null;

@@ -46,31 +46,49 @@ const MAX_OUTPUT_TOKENS = 8192;
 const HTTP_TIMEOUT_MS = 5 * 60 * 1000;   // 5 min — long enough for a big generation
 
 /**
- * Provider that owns the ofa endpoint for the lifetime of a connection.
- * A fresh instance is created per `OFA: Connect` and disposed on
- * disconnect (so re-allocated jobs get a fresh provider with the new
- * node/port).
+ * Provider that always advertises the 8 ofa modes, whether or not
+ * ofa is currently connected. A single instance is registered at
+ * extension activation so Copilot Chat's picker sees our vendor
+ * during its startup scan (registering later is unreliable — the
+ * picker caches the vendor list). setEndpoint() wires up the live
+ * ofa endpoint on connect and clears it on disconnect; while
+ * cleared, provideLanguageModelChatResponse throws a helpful error
+ * pointing the user at OFA: Connect.
  */
 class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.LanguageModelChatInformation> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    onDidChangeLanguageModelChatInformation?: vscode.Event<void>;
+    private endpoint: OfaEndpoint | null = null;
+    private readonly _onDidChange = new vscode.EventEmitter<void>();
+    readonly onDidChangeLanguageModelChatInformation: vscode.Event<void> = this._onDidChange.event;
 
-    constructor(
-        private readonly endpoint: OfaEndpoint,
-        private readonly logger: Logger
-    ) {}
+    constructor(private readonly logger: Logger) {}
+
+    /** Called from bringUp() after a successful connect, and from
+     *  tearDown() with null on disconnect. Fires the change event so
+     *  VS Code Chat re-queries our model list (which updates
+     *  tooltips / details that mention the current node & job). */
+    setEndpoint(endpoint: OfaEndpoint | null): void {
+        this.endpoint = endpoint;
+        this._onDidChange.fire();
+    }
+
+    dispose(): void {
+        this._onDidChange.dispose();
+    }
 
     async provideLanguageModelChatInformation(
         _options: vscode.PrepareLanguageModelChatModelOptions,
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelChatInformation[]> {
+        const endpoint = this.endpoint;
         return OFA_MODES.map(({ id, name, tooltip }) => ({
             id,
             name,
             family: 'ofa',
             version: '1.0',
             vendor: 'ofa',
-            tooltip,
+            tooltip: endpoint
+                ? `${tooltip} (connected: ${endpoint.node}:${endpoint.port}, job ${endpoint.jobId})`
+                : `${tooltip} (not connected — run 'OFA: Connect' from the command palette)`,
             maxInputTokens: MAX_INPUT_TOKENS,
             maxOutputTokens: MAX_OUTPUT_TOKENS,
             capabilities: {
@@ -91,7 +109,16 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
         progress: vscode.Progress<vscode.LanguageModelResponsePart>,
         token: vscode.CancellationToken
     ): Promise<void> {
-        const url = `${this.endpoint.baseUrl}/chat/completions`;
+        const endpoint = this.endpoint;
+        if (!endpoint) {
+            const msg = `OFA is not connected. Run 'OFA: Connect' from the command palette to start a SLURM allocation, then retry.`;
+            this.logger.warn(`chat request for ${model.id} rejected: not connected`);
+            // Emit as a visible response part so the user sees the reason
+            // in the chat pane, not just a generic error toast.
+            progress.report(new vscode.LanguageModelTextPart(`⚠️ ${msg}`));
+            return;
+        }
+        const url = `${endpoint.baseUrl}/chat/completions`;
         const openaiMessages = messages.map(toOpenAIMessage);
         const body = JSON.stringify({
             model: model.id,
@@ -99,7 +126,7 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
             stream: true
         });
 
-        this.logger.info(`chat request: model=${model.id} messages=${openaiMessages.length}`);
+        this.logger.info(`chat request: model=${model.id} messages=${openaiMessages.length} endpoint=${endpoint.node}:${endpoint.port}`);
 
         // AbortController hooks the VS Code CancellationToken up to
         // fetch so 'Stop generating' actually stops the underlying
@@ -116,7 +143,7 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
                 method: 'POST',
                 headers: {
                     'content-type': 'application/json',
-                    'authorization': `Bearer ${this.endpoint.token}`
+                    'authorization': `Bearer ${endpoint.token}`
                 },
                 body,
                 signal: controller.signal
@@ -160,15 +187,47 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
 }
 
 /**
- * Register the provider with VS Code. Returns a Disposable to hand
- * back to VS Code's subscription list — disposing it removes the
- * seven ofa models from the picker.
+ * Handle to the registered provider. Returned by registerOfaProvider()
+ * at extension activation and passed back on connect/disconnect via
+ * setEndpoint().
  */
-export function registerOfaProvider(endpoint: OfaEndpoint, logger: Logger): vscode.Disposable {
-    const provider = new OfaChatProvider(endpoint, logger);
-    const disposable = vscode.lm.registerLanguageModelChatProvider('ofa', provider);
-    logger.info(`registered LanguageModelChatProvider (vendor=ofa, ${OFA_MODES.length} models)`);
-    return disposable;
+export interface OfaProviderHandle {
+    /** Attach or clear the live endpoint. Called from bringUp()
+     *  (set) and tearDown() (clear). Fires an internal change event
+     *  so VS Code Chat re-queries our model list — mostly a
+     *  cosmetic refresh so the tooltip reflects the new node/job. */
+    setEndpoint(endpoint: OfaEndpoint | null): void;
+    /** Dispose the registration. Called from deactivate(). */
+    dispose(): void;
+}
+
+/**
+ * Register the ofa provider with VS Code at extension activation.
+ * The provider always advertises the 8 ofa modes so they appear in
+ * Copilot Chat's picker from startup — critical because the picker
+ * caches its vendor list at first scan and doesn't re-scan reliably
+ * when a provider registers later.
+ *
+ * The endpoint starts as null; a chat request in that state returns
+ * a "run OFA: Connect first" message to the chat pane. When the
+ * user connects, bringUp() calls handle.setEndpoint(endpoint) and
+ * subsequent requests hit the real ofa server.
+ */
+export function registerOfaProvider(logger: Logger): OfaProviderHandle {
+    const provider = new OfaChatProvider(logger);
+    const registration = vscode.lm.registerLanguageModelChatProvider('ofa', provider);
+    logger.info(`registered LanguageModelChatProvider (vendor=ofa, ${OFA_MODES.length} models, endpoint=<not connected>)`);
+    return {
+        setEndpoint(endpoint) {
+            provider.setEndpoint(endpoint);
+            logger.info(`provider endpoint updated: ${endpoint ? `${endpoint.node}:${endpoint.port}` : '<cleared>'}`);
+        },
+        dispose() {
+            registration.dispose();
+            provider.dispose();
+            logger.info('LanguageModelChatProvider disposed');
+        }
+    };
 }
 
 // -- helpers ---------------------------------------------------------------

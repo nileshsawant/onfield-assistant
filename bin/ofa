@@ -41,9 +41,10 @@ if [ -z "$SLURM_JOB_ID" ]; then
     WALLTIME="${OFA_WALLTIME:-${OFA_SCHEDULER_WALLTIME_DEFAULT:-00:30:00}}"
     _OFA_NTASKS="${OFA_SCHEDULER_NTASKS_PER_NODE:-32}"
     _OFA_MEM="${OFA_SCHEDULER_MEM:-80G}"
-    _OFA_GRES="${OFA_SCHEDULER_GRES:-gpu:1}"
+    _OFA_GRES="${OFA_GRES:-${OFA_SCHEDULER_GRES:-gpu:1}}"
+    _OFA_JOB_NAME="${OFA_JOB_NAME:-ofa}"
     echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
-    exec salloc --job-name=ofa -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node="$_OFA_NTASKS" \
+    exec salloc --job-name="$_OFA_JOB_NAME" -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node="$_OFA_NTASKS" \
               --mem="$_OFA_MEM" --gres="$_OFA_GRES" -p "$PARTITION" \
               srun --nodes=1 --ntasks=1 --pty "$0" "$@"
 fi

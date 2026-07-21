@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register all five OFA modes in your VS Code BYOK config.
+"""Register all eight OFA modes in your VS Code BYOK config.
 
 Run this on your **laptop** (Mac/Linux), once. Safe to re-run; only edits
 the "OFA (Kestrel)" provider entry and leaves Copilot or other BYOK
@@ -8,7 +8,7 @@ providers alone. Makes a `.bak` copy of the file the first time.
 Usage:
     python3 byok-update-config.py \\
         --token  ofa-xxxxxxxxxxxxxxxxxx \\
-        [--port  40933] \\
+        [--port  49643] \\
         [--name  "OFA (Kestrel)"]
 
 Get the token from Kestrel:
@@ -16,9 +16,12 @@ Get the token from Kestrel:
 
 After running the script:
   1. Reload VS Code window: Cmd+Shift+P -> "Developer: Reload Window"
-  2. Cmd+Shift+P -> "Chat: Manage Language Models" -> toggle each OFA
-     model's eye icon to "visible" (one-time per model).
-  3. Pick "OFA . <mode>" from the Chat model dropdown. Use "Ask" mode.
+  2. Cmd+Shift+P -> "Chat: Manage Language Models" -> gear icon next
+     to "OFA (Kestrel)" -> Update API Key -> paste the same token. The
+     `apiKey` in the JSON is only a hint; the actual token used at
+     request time lives in VS Code secret storage.
+  3. In the same view, toggle each OFA model's eye icon to "visible".
+  4. Pick "OFA . <mode>" from the Chat model dropdown. Use "Ask" mode.
 
 This script uses only the Python stdlib; no extra dependencies needed.
 """
@@ -40,6 +43,7 @@ MODES = [
     ("ofa-marbles",           "OFA \u00b7 MARBLES (LBM)"),
     ("ofa-reframe",           "OFA \u00b7 ReFrame (RHEL9)"),
     ("ofa-quantum-computing", "OFA \u00b7 Quantum Computing"),
+    ("ofa-vasp",              "OFA \u00b7 VASP"),
 ]
 
 
@@ -66,7 +70,7 @@ def find_vscode_config_path() -> Path:
 
 
 def build_provider(port: int, token: str, name: str) -> dict:
-    """Build the OFA (Kestrel) provider entry with all five OFA modes."""
+    """Build the OFA (Kestrel) provider entry with all eight OFA modes."""
     return {
         "name": name,
         "vendor": "customendpoint",
@@ -100,9 +104,10 @@ def main() -> int:
         help="Bearer token from $OFA_SCRATCH/.ofa_api_key on Kestrel.",
     )
     ap.add_argument(
-        "--port", type=int, default=40933, metavar="N",
-        help="Laptop-side port (default 40933). Must match the LOCAL port "
-             "your ssh -L tunnel listens on.",
+        "--port", type=int, default=49643, metavar="N",
+        help="Laptop-side port (default 49643, matches the ofa-vscode "
+             "extension's laptopSideBridgePort setting). If you launched "
+             "the bridge with a different --serve-local-port, override here.",
     )
     ap.add_argument(
         "--name", default="OFA (Kestrel)",
@@ -165,7 +170,10 @@ def main() -> int:
     print("Next steps in VS Code:")
     print("  1. Cmd+Shift+P -> 'Developer: Reload Window'")
     print("  2. Cmd+Shift+P -> 'Chat: Manage Language Models'")
-    print("     Click the eye icon on each OFA row to make it visible in the picker.")
+    print("     - Click the gear next to 'OFA (Kestrel)' -> 'Update API Key'")
+    print("       and paste the SAME token. The JSON apiKey is only a hint;")
+    print("       the value used at request time lives in secret storage.")
+    print("     - Click the eye icon on each OFA row to make it visible.")
     print("  3. In Chat, switch to 'Ask' mode (top of Chat panel).")
     print("  4. Open the model dropdown and pick 'OFA \u00b7 <mode>'.")
     return 0

@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.vsix
 package-lock.json
+# Optional local Node runtime (created via 'mamba create -p .conda-node
+# -c conda-forge -y nodejs=20' when there is no system Node 18+). Big.
+.conda-node/

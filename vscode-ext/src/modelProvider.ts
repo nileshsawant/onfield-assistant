@@ -36,9 +36,12 @@ const OFA_MODES: ReadonlyArray<{
     { id: 'ofa-reframe',           name: 'ofa · reframe',           tooltip: 'ReFrame CI/CD testing assistant.' }
 ];
 
-/** Gemma-4 31B has a ~8k context; keep some headroom for the reply. */
-const MAX_INPUT_TOKENS = 7000;
-const MAX_OUTPUT_TOKENS = 1024;
+/** Gemma 4's context is 32K tokens; keep the max-input just under to
+ *  leave headroom for the RAG-augmented prompt ofa server adds. This
+ *  matches the old chatLanguageModels.json byok setup users were on
+ *  before this extension replaced it. */
+const MAX_INPUT_TOKENS = 32000;
+const MAX_OUTPUT_TOKENS = 8192;
 
 const HTTP_TIMEOUT_MS = 5 * 60 * 1000;   // 5 min — long enough for a big generation
 

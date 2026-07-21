@@ -39,6 +39,12 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "ofa",
+        "displayName": "OnField Assistant (Kestrel)"
+      }
+    ],
     "commands": [
       {
         "command": "ofa.connect",

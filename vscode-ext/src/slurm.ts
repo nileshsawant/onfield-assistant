@@ -77,28 +77,31 @@ const STDERR_TAIL_LINES = 40;
  */
 export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint> {
     return new Promise<OfaEndpoint>((resolve, reject) => {
-        const accountFlag = opts.account ? ['-A', opts.account] : [];
-        const enableTools = opts.enableTools ? '--serve-enable-tools' : '';
-        // -l on bash so /etc/profile is sourced — otherwise `ofa` may
-        // not be on PATH inside srun's fresh session (some Kestrel
-        // profile.d scripts populate it).
-        const innerCmd = `ofa --serve --serve-quiet ${enableTools}`.trim();
-        const sallocArgs = [
-            '--job-name=ofa-vscode',
-            ...accountFlag,
-            '-t', opts.walltime,
-            '-p', opts.partition,
-            `--gres=${opts.gres}`,
-            '--nodes=1',
-            '--ntasks-per-node=32',
-            '--mem=80G',
-            'srun', '--nodes=1', '--ntasks=1', '--pty',
-            'bash', '-l', '-c', innerCmd
-        ];
-        logger.info(`spawn: salloc ${sallocArgs.join(' ')}`);
+        // Delegate the whole allocation dance to bin/ofa. It already
+        // does everything we would have to reimplement here: sacctmgr
+        // account auto-detection, site.toml scheduler defaults,
+        // /etc/profile sourcing, CUDA module loading, and the exact
+        // salloc/srun/ofa exec chain we want. We just forward the
+        // extension's ofa.slurm.* settings via the env vars bin/ofa
+        // already respects (OFA_ACCOUNT / OFA_PARTITION / OFA_WALLTIME
+        // / OFA_GRES), plus OFA_JOB_NAME=ofa-vscode so
+        // adoptExistingAllocation() can find our jobs by name without
+        // colliding with CLI-launched 'ofa' sessions.
+        const args = ['--serve', '--serve-quiet'];
+        if (opts.enableTools) args.push('--serve-enable-tools');
 
-        const child = cp.spawn('salloc', sallocArgs, {
-            stdio: ['ignore', 'pipe', 'pipe']
+        const env: NodeJS.ProcessEnv = { ...process.env, OFA_JOB_NAME: 'ofa-vscode' };
+        if (opts.account) env.OFA_ACCOUNT = opts.account;
+        if (opts.partition) env.OFA_PARTITION = opts.partition;
+        if (opts.walltime) env.OFA_WALLTIME = opts.walltime;
+        if (opts.gres) env.OFA_GRES = opts.gres;
+
+        logger.info(`spawn: ofa ${args.join(' ')}`);
+        logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'}`);
+
+        const child = cp.spawn('ofa', args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env
         });
 
         let jobId: string | null = null;

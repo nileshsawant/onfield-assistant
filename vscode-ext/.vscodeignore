@@ -8,6 +8,10 @@ src/**
 tsconfig.json
 esbuild.js
 node_modules/**
+# Local Node runtime installed via conda-forge for building on hosts
+# without a system-wide Node 18+ (e.g. Kestrel login nodes). Huge and
+# obviously not part of the shipped extension.
+.conda-node/**
 **/*.map
 **/*.ts
 **/*.vsix

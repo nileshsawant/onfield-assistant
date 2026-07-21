@@ -301,7 +301,7 @@ async function bringUp(flow: FlowOptions): Promise<void> {
 
         setStatus('connected');
         const bridgeInfo = currentBridge
-            ? ` Laptop-side chatLanguageModels.json can point at http://localhost:${currentBridge.localPort}/v1/chat/completions (ssh -L bridge is up).`
+            ? ` Point your laptop's chatLanguageModels.json at http://localhost:${currentBridge.localPort}/v1/chat/completions, then use Chat: Manage Language Models → gear → Update API Key to paste the bearer token (the JSON apiKey is only a hint).`
             : '';
         const notice = `OFA connected: ${endpoint.node}:${endpoint.port} (job ${endpoint.jobId}).${bridgeInfo}`;
         if (flow.silent) {

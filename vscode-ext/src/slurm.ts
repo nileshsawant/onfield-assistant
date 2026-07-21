@@ -87,8 +87,15 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         // / OFA_GRES), plus OFA_JOB_NAME=ofa-vscode so
         // adoptExistingAllocation() can find our jobs by name without
         // colliding with CLI-launched 'ofa' sessions.
-        const args = ['--serve', '--serve-quiet'];
-        if (opts.enableTools) args.push('--serve-enable-tools');
+        //
+        // Run through `bash -l -c` so the login profile (including
+        // `module load assistant`, which puts `ofa` on PATH via the
+        // Lmod modulefile) is sourced. VS Code's Remote-SSH server
+        // does not source ~/.bashrc for the extension host, so a
+        // direct spawn('ofa', ...) fails with ENOENT.
+        const innerParts = ['ofa', '--serve', '--serve-quiet'];
+        if (opts.enableTools) innerParts.push('--serve-enable-tools');
+        const inner = innerParts.join(' ');
 
         const env: NodeJS.ProcessEnv = { ...process.env, OFA_JOB_NAME: 'ofa-vscode' };
         if (opts.account) env.OFA_ACCOUNT = opts.account;
@@ -96,10 +103,10 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         if (opts.walltime) env.OFA_WALLTIME = opts.walltime;
         if (opts.gres) env.OFA_GRES = opts.gres;
 
-        logger.info(`spawn: ofa ${args.join(' ')}`);
+        logger.info(`spawn (via bash -lc): ${inner}`);
         logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'}`);
 
-        const child = cp.spawn('ofa', args, {
+        const child = cp.spawn('bash', ['-l', '-c', inner], {
             stdio: ['ignore', 'pipe', 'pipe'],
             env
         });
@@ -186,14 +193,14 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
             if (settled) return;
             settled = true;
             clearTimeout(timeoutHandle);
-            reject(new SlurmError(`failed to spawn salloc: ${err.message}`));
+            reject(new SlurmError(`failed to spawn ofa (via bash -lc): ${err.message}. Is 'module load assistant' in your login shell rc?`));
         });
         child.on('exit', (code, signal) => {
             if (settled) return;
             settled = true;
             clearTimeout(timeoutHandle);
             reject(new SlurmError(
-                `salloc/srun exited before ofa was ready (code=${code} signal=${signal})`,
+                `ofa exited before serve was ready (code=${code} signal=${signal})`,
                 stderrTail.join('')
             ));
         });

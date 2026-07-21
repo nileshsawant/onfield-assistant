@@ -89,6 +89,11 @@
           "default": "gpu:1",
           "markdownDescription": "Slurm GRES for the `salloc` request. Set to `gpu:h100:1` or similar on sites with typed GPU GRES."
         },
+        "ofa.ofaBinPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the `ofa` executable. Leave empty to auto-detect (checks `$OFA_ROOT/bin/ofa`, then `bash -lic 'command -v ofa'`, then the Kestrel deploy default `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/bin/ofa`). Set explicitly on non-Kestrel installs or if your `module load assistant` is not sourced by an interactive login shell."
+        },
         "ofa.enableTools": {
           "type": "boolean",
           "default": true,

@@ -61,6 +61,20 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
         "thought_tags": [],
     },
+    # Google Gemma 4 — 31B in Q8_0 quantization (~34 GB). Same base
+    # weights as gemma4:31b, higher precision than the default Q4_K_M.
+    # Reaches ~95% of bf16 quality at roughly half the VRAM footprint
+    # of the bf16 variants, leaving ~46 GB free on an H100 80 GB for
+    # KV cache — the right pick when long context (repo-scale views,
+    # multi-file review) matters more than a coding-tuned base.
+    # NOTE: Google's coding-specialized 31B (gemma4:31b-coding-mtp-bf16)
+    # is Apple-MLX only on Ollama; on Linux/H100 the next-best coding
+    # pick is this Q8_0 general variant.
+    "gemma4:31b-it-q8_0": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
+        "repeat_penalty": 1.15, "num_ctx": 131072, "num_predict": 32768,
+        "thought_tags": [],
+    },
     "gemma4:26b": {
         "temperature": 1.0, "top_p": 0.95, "top_k": 64,
         "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,

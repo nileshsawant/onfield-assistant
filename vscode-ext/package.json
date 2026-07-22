@@ -111,6 +111,7 @@
           "enum": [
             "",
             "gemma4:31b",
+            "gemma4:31b-it-q8_0",
             "gemma4:26b",
             "llama4:scout",
             "llama3.3:70b",
@@ -119,8 +120,9 @@
           ],
           "enumDescriptions": [
             "(default) Do not set OFA_MODEL. bin/ofa picks its own default (currently gemma4:31b) — the only model with validated safety guards (TESTED_MODELS).",
-            "Google Gemma 4 — 31B, ~19 GB. Default; the only model in TESTED_MODELS. Sampling: T=1.0, top_p=0.95.",
-            "Google Gemma 4 — 26B, smaller sibling. Same sampling as 31b.",
+            "Google Gemma 4 — 31B, ~19 GB (Q4_K_M). Default; the only model in TESTED_MODELS. Sampling: T=1.0, top_p=0.95.",
+            "Google Gemma 4 — 31B Q8_0 (~34 GB). Higher precision than Q4_K_M default, ~46 GB free for KV cache on H100 — pick this when long context or better fidelity matters. Same base weights as gemma4:31b.",
+            "Google Gemma 4 — 26B, smaller sibling of the default. Same sampling.",
             "Meta Llama 4 Scout — 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
             "Meta Llama 3.3 — 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
             "Microsoft phi-4 — 14B. Small + strong reasoning. NOTE: no tools capability upstream — combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",

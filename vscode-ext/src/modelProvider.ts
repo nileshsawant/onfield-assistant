@@ -97,7 +97,16 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
                 // only forwards text. Flip when tool-call passthrough
                 // lands in a later release.
                 toolCalling: false,
-                imageInput: false
+                // Vision works when OFA_MODEL is vision-capable
+                // (gemma4:31b, gemma4:31b-it-q8_0, gemma4:26b,
+                // llama4:scout). If OFA_MODEL is set to a
+                // completion-only model (llama3.3:70b, phi4:14b,
+                // granite4:32b-a9b-h) the ofa server will reject the
+                // images. We advertise imageInput=true because the
+                // deployment default gemma4:31b supports it; users who
+                // pick a non-vision model via ofa.model implicitly opt
+                // out of image uploads.
+                imageInput: true
             }
         }));
     }
@@ -232,24 +241,87 @@ export function registerOfaProvider(logger: Logger): OfaProviderHandle {
 
 // -- helpers ---------------------------------------------------------------
 
+/** Content in OpenAI's chat-completions API is either a plain string
+ *  (text-only, cheapest to construct) or an array of typed parts for
+ *  multimodal payloads. We use the array form only when at least one
+ *  image is present so text-only messages stay compact on the wire. */
+type OpenAIContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
 interface OpenAIMessage {
     role: 'user' | 'assistant' | 'system';
-    content: string;
+    content: string | OpenAIContentPart[];
 }
 
 /**
  * Convert VS Code's LanguageModelChatRequestMessage into the OpenAI
- * chat-completions message shape. v0.1 handles text content only;
- * tool-call parts and data (image) parts are stringified into text so
- * they at least appear in the conversation instead of being dropped
- * silently — richer support lands with tool-call passthrough.
+ * chat-completions message shape.
+ *
+ * Text-only messages collapse to the plain-string form. Any message
+ * containing a LanguageModelDataPart (image) is emitted as the array
+ * form so the image survives the round-trip: text parts become
+ * ``{type:'text', text:...}`` entries; image data parts become
+ * ``{type:'image_url', image_url:{url:'data:<mime>;base64,...'}}``.
+ * The ofa server's src/ofa_server.py::_split_content is the peer
+ * consumer of this array form and extracts the base64 payloads back
+ * out for Ollama's ``messages[].images`` field.
+ *
+ * Tool-call and tool-result parts are still stringified since ofa's
+ * BYOK path treats them as text; richer passthrough lands with
+ * capabilities.toolCalling.
  */
 function toOpenAIMessage(msg: vscode.LanguageModelChatRequestMessage): OpenAIMessage {
     const role: OpenAIMessage['role'] =
         msg.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
-    return { role, content: messageToString(msg) };
+    const parts = messageToContentParts(msg);
+    if (parts.length === 0) return { role, content: '' };
+    if (parts.every(p => p.type === 'text')) {
+        return { role, content: parts.map(p => (p as { type: 'text'; text: string }).text).join('') };
+    }
+    return { role, content: parts };
 }
 
+/** Extract every part of a chat message into OpenAI content-part
+ *  form. Unknown part types fall back to a bracketed marker so they
+ *  appear in the conversation instead of vanishing silently. */
+function messageToContentParts(msg: vscode.LanguageModelChatRequestMessage): OpenAIContentPart[] {
+    const out: OpenAIContentPart[] = [];
+    for (const part of msg.content) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+            out.push({ type: 'text', text: part.value });
+        } else if (part instanceof vscode.LanguageModelToolCallPart) {
+            out.push({ type: 'text', text: `[tool call: ${part.name}(${JSON.stringify(part.input)})]` });
+        } else if (part instanceof vscode.LanguageModelToolResultPart) {
+            out.push({ type: 'text', text: `[tool result for ${part.callId}: ${JSON.stringify(part.content)}]` });
+        } else {
+            // LanguageModelDataPart (VS Code 1.98+, only surface for
+            // image content today). Duck-type on {data, mimeType} so
+            // the code compiles against the older @types/vscode
+            // ^1.95 currently declared in package.json and remains
+            // resilient to future part types with the same shape.
+            const dp = part as unknown as { data?: Uint8Array; mimeType?: string };
+            if (dp.data && dp.mimeType && dp.mimeType.startsWith('image/')) {
+                const b64 = Buffer.from(dp.data).toString('base64');
+                out.push({
+                    type: 'image_url',
+                    image_url: { url: `data:${dp.mimeType};base64,${b64}` }
+                });
+            } else {
+                out.push({
+                    type: 'text',
+                    text: `[unsupported part: ${(part as { constructor?: { name?: string } })?.constructor?.name ?? typeof part}]`
+                });
+            }
+        }
+    }
+    return out;
+}
+
+/** Rough character-count string for token estimation only. Images
+ *  are counted as a fixed budget matching Gemma 4's default
+ *  ~280-visual-token cost so provideTokenCount() doesn't undercount
+ *  multimodal messages. */
 function messageToString(msg: vscode.LanguageModelChatRequestMessage): string {
     const parts: string[] = [];
     for (const part of msg.content) {
@@ -260,8 +332,13 @@ function messageToString(msg: vscode.LanguageModelChatRequestMessage): string {
         } else if (part instanceof vscode.LanguageModelToolResultPart) {
             parts.push(`[tool result for ${part.callId}: ${JSON.stringify(part.content)}]`);
         } else {
-            // LanguageModelDataPart or future variants — best-effort
-            parts.push(`[unsupported part: ${(part as { constructor?: { name?: string } })?.constructor?.name ?? typeof part}]`);
+            const dp = part as unknown as { data?: Uint8Array; mimeType?: string };
+            if (dp.data && dp.mimeType && dp.mimeType.startsWith('image/')) {
+                // 280 tokens * 4 chars/token heuristic = 1120 chars.
+                parts.push('X'.repeat(1120));
+            } else {
+                parts.push(`[unsupported part: ${(part as { constructor?: { name?: string } })?.constructor?.name ?? typeof part}]`);
+            }
         }
     }
     return parts.join('');

@@ -11,7 +11,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-hpc",
@@ -19,7 +20,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-code",
@@ -27,7 +29,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-amrex",
@@ -35,7 +38,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-marbles",
@@ -43,7 +47,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-reframe",
@@ -51,7 +56,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-quantum-computing",
@@ -59,7 +65,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       },
       {
         "id": "ofa-vasp",
@@ -67,7 +74,8 @@
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
         "toolCalling": true,
         "maxInputTokens": 32000,
-        "maxOutputTokens": 8192
+        "maxOutputTokens": 8192,
+        "imageInput": true
       }
     ]
   }

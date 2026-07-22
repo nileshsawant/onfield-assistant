@@ -105,6 +105,29 @@
           "default": "",
           "markdownDescription": "Absolute path to the `ofa` executable. Leave empty to auto-detect (checks `$OFA_ROOT/bin/ofa`, then `bash -lic 'command -v ofa'`, then the Kestrel deploy default `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/bin/ofa`). Set explicitly on non-Kestrel installs or if your `module load assistant` is not sourced by an interactive login shell."
         },
+        "ofa.model": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "gemma4:31b",
+            "gemma4:26b",
+            "llama4:scout",
+            "llama3.3:70b",
+            "phi4:14b",
+            "granite4:32b-a9b-h"
+          ],
+          "enumDescriptions": [
+            "(default) Do not set OFA_MODEL. bin/ofa picks its own default (currently gemma4:31b) — the only model with validated safety guards (TESTED_MODELS).",
+            "Google Gemma 4 — 31B, ~19 GB. Default; the only model in TESTED_MODELS. Sampling: T=1.0, top_p=0.95.",
+            "Google Gemma 4 — 26B, smaller sibling. Same sampling as 31b.",
+            "Meta Llama 4 Scout — 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
+            "Meta Llama 3.3 — 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
+            "Microsoft phi-4 — 14B. Small + strong reasoning. NOTE: no tools capability upstream — combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
+            "IBM Granite 4 — 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95."
+          ],
+          "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Leave empty to inherit `bin/ofa`'s default. **Server-wide, not per-model-picker-entry**: all eight `OFA · *` entries in the Copilot Chat picker route to the SAME LLM selected here — they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
+        },
         "ofa.enableTools": {
           "type": "boolean",
           "default": true,

@@ -251,6 +251,7 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         walltime: cfg.get<string>('slurm.walltime', '00:30:00'),
         gres: cfg.get<string>('slurm.gres', 'gpu:1'),
         enableTools: cfg.get<boolean>('enableTools', true),
+        model: cfg.get<string>('model', ''),
         ofaBinPath
     };
     const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);

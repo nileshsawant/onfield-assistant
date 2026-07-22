@@ -49,6 +49,12 @@ export interface SlurmOptions {
     walltime: string;
     gres: string;
     enableTools: boolean;
+    /** Empty string = don't set OFA_MODEL, let bin/ofa use its own
+     *  default (currently gemma4:31b). Any non-empty value is passed
+     *  through as-is; validation against MODEL_REGISTRY is done by
+     *  bin/ofa itself so this stays forward-compatible with entries
+     *  added via $OFA_ROOT/models.json / $OFA_MODELS_JSON. */
+    model: string;
     /** Absolute path to bin/ofa. Resolved by resolveOfaBin() before
      *  connect() is called. Passing this explicitly (rather than
      *  relying on $PATH inside the extension host) is required
@@ -113,9 +119,10 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         if (opts.partition) env.OFA_PARTITION = opts.partition;
         if (opts.walltime) env.OFA_WALLTIME = opts.walltime;
         if (opts.gres) env.OFA_GRES = opts.gres;
+        if (opts.model) env.OFA_MODEL = opts.model;
 
         logger.info(`spawn (via bash -lc): ${inner}`);
-        logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'}`);
+        logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'} OFA_MODEL=${env.OFA_MODEL ?? '<bin/ofa default>'}`);
 
         const child = cp.spawn('bash', ['-l', '-c', inner], {
             stdio: ['ignore', 'pipe', 'pipe'],

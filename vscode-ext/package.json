@@ -107,7 +107,7 @@
         },
         "ofa.model": {
           "type": "string",
-          "default": "",
+          "default": "gemma4:31b-it-q8_0",
           "enum": [
             "",
             "gemma4:31b",
@@ -120,17 +120,17 @@
             "gpt-oss:120b"
           ],
           "enumDescriptions": [
-            "(default) Do not set OFA_MODEL. bin/ofa picks its own default (currently gemma4:31b) — the only model with validated safety guards (TESTED_MODELS).",
-            "Google Gemma 4 — 31B, ~19 GB (Q4_K_M). Default; the only model in TESTED_MODELS. Sampling: T=1.0, top_p=0.95.",
-            "Google Gemma 4 — 31B Q8_0 (~34 GB). Higher precision than Q4_K_M default, ~46 GB free for KV cache on H100 — pick this when long context or better fidelity matters. Same base weights as gemma4:31b.",
-            "Google Gemma 4 — 26B, smaller sibling of the default. Same sampling.",
-            "Meta Llama 4 Scout — 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
-            "Meta Llama 3.3 — 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
-            "Microsoft phi-4 — 14B. Small + strong reasoning. NOTE: no tools capability upstream — combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
-            "IBM Granite 4 — 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95.",
-            "OpenAI gpt-oss — 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card."
+            "Do not set OFA_MODEL. bin/ofa falls back to its own default (currently gemma4:31b Q4_K_M) \u2014 the only model with validated safety guards (TESTED_MODELS). Choose this if you want CLI parity.",
+            "Google Gemma 4 \u2014 31B, ~19 GB (Q4_K_M). Only model in TESTED_MODELS. Same base weights as the Q8 default but lower fidelity; pick this if you want CLI parity or need the VRAM for other things.",
+            "(extension default) Google Gemma 4 \u2014 31B Q8_0 (~34 GB). Higher precision than the Q4 default, ~46 GB free for KV cache on H100 \u2014 lets num_ctx go to 131072. Same base weights as gemma4:31b.",
+            "Google Gemma 4 \u2014 26B, smaller sibling of the default. Same sampling.",
+            "Meta Llama 4 Scout \u2014 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
+            "Meta Llama 3.3 \u2014 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
+            "Microsoft phi-4 \u2014 14B. Small + strong reasoning. NOTE: no tools capability upstream \u2014 combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
+            "IBM Granite 4 \u2014 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95.",
+            "OpenAI gpt-oss \u2014 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card."
           ],
-          "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Leave empty to inherit `bin/ofa`'s default. **Server-wide, not per-model-picker-entry**: all eight `OFA · *` entries in the Copilot Chat picker route to the SAME LLM selected here — they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
+          "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Extension default is `gemma4:31b-it-q8_0` (higher fidelity than bin/ofa's CLI default of `gemma4:31b`); pick the empty option to inherit bin/ofa's default instead. **Server-wide, not per-model-picker-entry**: all eight `OFA \u00b7 *` entries in the Copilot Chat picker route to the SAME LLM selected here \u2014 they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
         },
         "ofa.enableTools": {
           "type": "boolean",

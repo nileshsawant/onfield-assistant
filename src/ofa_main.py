@@ -66,13 +66,13 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
         "thought_tags": [],
     },
-    # Meta Llama 4 (MoE).
+    # Meta Llama 4 (MoE). Only Scout is registered here — Maverick was
+    # dropped from the built-in registry because it is not part of the
+    # deployed model set on Kestrel. To reinstate on a site that pulls
+    # it, either drop a `models.json` at $OFA_ROOT/models.json (or point
+    # $OFA_MODELS_JSON at one) with the same shape as this dict, or add
+    # it back inline. Sampling matches Meta's Llama 4 chat recommendation.
     "llama4:scout": {
-        "temperature": 0.6, "top_p": 0.9, "top_k": 0,
-        "repeat_penalty": 1.1, "num_ctx": 131072, "num_predict": 16384,
-        "thought_tags": [],
-    },
-    "llama4:maverick": {
         "temperature": 0.6, "top_p": 0.9, "top_k": 0,
         "repeat_penalty": 1.1, "num_ctx": 131072, "num_predict": 16384,
         "thought_tags": [],
@@ -84,8 +84,17 @@ MODEL_REGISTRY = {
         "thought_tags": [],
     },
     # Microsoft phi-4 — small, strong reasoning.
+    #   * Sampling matches the Microsoft phi-4 model card recommendation
+    #     for chat use: T=0.8, top_p=1.0 (top_p=1 effectively disables
+    #     nucleus filtering, per the card). top_k=50 kept as a modest
+    #     tail cap; repeat_penalty 1.05 kept conservative.
+    #   * NOTE: phi-4 has NO tools capability in Ollama's metadata (no
+    #     function-calling in the base training). Using this model with
+    #     `ofa --serve --serve-enable-tools` silently degrades — the
+    #     schema is forwarded but the model will not emit tool_calls,
+    #     so VS Code Agent mode falls back to plain-chat behavior.
     "phi4:14b": {
-        "temperature": 0.7, "top_p": 0.95, "top_k": 50,
+        "temperature": 0.8, "top_p": 1.0, "top_k": 50,
         "repeat_penalty": 1.05, "num_ctx": 16384, "num_predict": 8192,
         "thought_tags": [],
     },

@@ -83,25 +83,28 @@ customendpoint`). Replace `<LOCAL_PORT>` and the apiKey:
     "models": [
       { "id": "ofa-openfoam", "name": "OFA · OpenFOAM",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-hpc", "name": "OFA · Kestrel HPC",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-code", "name": "OFA · Code",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-amrex", "name": "OFA · AMReX",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-marbles", "name": "OFA · MARBLES (LBM)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-reframe", "name": "OFA · ReFrame (RHEL9)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
       { "id": "ofa-quantum-computing", "name": "OFA · Quantum Computing",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 }
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+      { "id": "ofa-vasp", "name": "OFA · VASP",
+        "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 }
     ]
   }
 ]
@@ -112,6 +115,16 @@ A drop-in template is also at
 
 `toolCalling: true` is required even when you don't intend to use Agent
 mode — the picker silently hides models that declare `false`.
+
+`imageInput: true` enables the image-upload UI (paperclip icon in
+Copilot Chat) so you can attach screenshots, plots, or diagrams. Vision
+passthrough works when `OFA_MODEL` (or `ofa --model`) is set to a
+vision-capable model: `gemma4:31b` (default), `gemma4:31b-it-q8_0`,
+`gemma4:26b`, or `llama4:scout`. If you switch to a completion-only
+model (`llama3.3:70b`, `phi4:14b`, `granite4:32b-a9b-h`), the paperclip
+still shows but the ofa server will reject any request that contains
+images — the BYOK JSON is a static per-model declaration; the actual
+backend LLM is fixed at `ofa --serve` startup.
 
 ### 4. Activate the models in VS Code (this is where the apiKey actually goes)
 

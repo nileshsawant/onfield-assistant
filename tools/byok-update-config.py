@@ -86,6 +86,16 @@ def build_provider(port: int, token: str, name: str) -> dict:
                 # ignores tool_calls at the protocol level, so this is a
                 # cosmetic concession.
                 "toolCalling": True,
+                # imageInput=True enables the paperclip image-upload UI
+                # in Copilot Chat. Vision passthrough works when
+                # OFA_MODEL is a vision-capable model (gemma4:* family
+                # and llama4:scout). If the user switches OFA_MODEL to
+                # a completion-only model (llama3.3:70b, phi4:14b,
+                # granite4:32b-a9b-h) the ofa server will 4xx on any
+                # request that contains images — unavoidable given
+                # BYOK JSON is a static per-model declaration and the
+                # backend model is chosen at 'ofa --serve' startup.
+                "imageInput": True,
                 "maxInputTokens": 32000,
                 "maxOutputTokens": 8192,
             }

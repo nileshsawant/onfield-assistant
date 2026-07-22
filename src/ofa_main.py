@@ -119,6 +119,22 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.05, "num_ctx": 131072, "num_predict": 16384,
         "thought_tags": [],
     },
+    # OpenAI gpt-oss — 116.8B MoE (~5B active), MXFP4, 65 GB weights.
+    # Advertises tools + thinking capability; no vision head. Sourced from
+    # the shared Kestrel install at
+    # /nopt/nlr/apps/kestrel-gpu/software/ollama/models via symlinks into
+    # $OFA_ROOT/models (manifest + 5 blobs), so no bytes are duplicated.
+    # Sampling: T=1.0 matches upstream (ollama show reports temperature=1
+    # and no other params); OpenAI's model card recommends top_p=1.0
+    # (nucleus off) with the default temperature. num_ctx capped at 64K
+    # to leave KV-cache headroom on H100 80 GB alongside the 65 GB weight
+    # file (~15 GB free); the model supports up to 128K — raise
+    # OFA_NUM_CTX per-run if you need it and can spare the VRAM.
+    "gpt-oss:120b": {
+        "temperature": 1.0, "top_p": 1.0, "top_k": 0,
+        "repeat_penalty": 1.05, "num_ctx": 65536, "num_predict": 32768,
+        "thought_tags": [],
+    },
 }
 
 def _load_external_model_registry():

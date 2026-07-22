@@ -116,7 +116,8 @@
             "llama4:scout",
             "llama3.3:70b",
             "phi4:14b",
-            "granite4:32b-a9b-h"
+            "granite4:32b-a9b-h",
+            "gpt-oss:120b"
           ],
           "enumDescriptions": [
             "(default) Do not set OFA_MODEL. bin/ofa picks its own default (currently gemma4:31b) — the only model with validated safety guards (TESTED_MODELS).",
@@ -126,7 +127,8 @@
             "Meta Llama 4 Scout — 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
             "Meta Llama 3.3 — 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
             "Microsoft phi-4 — 14B. Small + strong reasoning. NOTE: no tools capability upstream — combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
-            "IBM Granite 4 — 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95."
+            "IBM Granite 4 — 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95.",
+            "OpenAI gpt-oss — 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card."
           ],
           "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Leave empty to inherit `bin/ofa`'s default. **Server-wide, not per-model-picker-entry**: all eight `OFA · *` entries in the Copilot Chat picker route to the SAME LLM selected here — they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
         },

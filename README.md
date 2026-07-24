@@ -16,7 +16,22 @@ An AI-powered reasoning and autonomous execution agent tailored for the NLR Kest
 
 ## Usage
 
-Simply run the `ofa` command from your Kestrel environment. Make sure to load the corresponding application module first.
+Run the `ofa` command from a Kestrel login node **after loading the
+`assistant` module**. That module puts `ofa` on `$PATH`, exports
+`$OFA_ROOT`, and wires up the Python + ChromaDB + Ollama toolchain
+bundled with the deploy.
+
+```bash
+module load assistant
+ofa --help
+```
+
+If you'd rather drive `ofa` from VS Code Chat (Copilot Chat's model
+picker fed by a laptop-side BYOK config) instead of the shell, skip
+straight to [Use `ofa` from VS Code Chat](#use-ofa-from-vs-code-chat-the-onfield-assistant-extension)
+below — that section handles the module load automatically inside a
+one-click SLURM allocation. The CLI examples in this section are for
+the terminal-native path.
 
 ```bash
 # Default mode: general coding / software-engineering assistant

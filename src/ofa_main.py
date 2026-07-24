@@ -170,6 +170,7 @@ def get_model_options():
         "num_predict":    int(os.environ["OFA_NUM_PREDICT"])      if os.environ.get("OFA_NUM_PREDICT")    else reg.get("num_predict",    LLM_NUM_PREDICT),
         "num_ctx":        int(os.environ["OFA_NUM_CTX"])          if os.environ.get("OFA_NUM_CTX")        else reg.get("num_ctx",        LLM_NUM_CTX),
         "num_gpu":        int(os.environ["OFA_NUM_GPU"])          if os.environ.get("OFA_NUM_GPU")        else LLM_NUM_GPU,
+        "num_batch":      int(os.environ["OFA_NUM_BATCH"])        if os.environ.get("OFA_NUM_BATCH")      else reg.get("num_batch",      LLM_NUM_BATCH),
     }
 
 def get_model_thought_tags():
@@ -267,6 +268,13 @@ LLM_REPEAT_PENALTY = float(os.environ.get("OFA_REPEAT_PENALTY", "1.15"))
 LLM_NUM_PREDICT   = int(os.environ.get("OFA_NUM_PREDICT", "32768"))
 LLM_NUM_CTX       = int(os.environ.get("OFA_NUM_CTX", "65536"))
 LLM_NUM_GPU       = int(os.environ.get("OFA_NUM_GPU", "99"))
+# Prompt-processing batch. Ollama's built-in default is 512; on H100
+# 80 GB we have plenty of headroom to push it 4x higher, which
+# roughly halves time-to-first-token on long prompts (files pasted
+# into Agent mode, big system-prompt + RAG payloads). Kept as a
+# module-level default rather than per-model in MODEL_REGISTRY
+# because num_batch is a hardware capacity dial, not a model dial.
+LLM_NUM_BATCH     = int(os.environ.get("OFA_NUM_BATCH", "2048"))
 # Maximum chars of single-command output to feed back to the LLM.
 TOOL_OUTPUT_MAX_CHARS = 96000
 TOOL_OUTPUT_HEAD_TAIL = 48000
@@ -1538,6 +1546,13 @@ def ensure_ollama_running():
     env["OLLAMA_HOST"] = f"127.0.0.1:{OFA_PORT}"
     env["OLLAMA_FLASH_ATTENTION"] = "1"
     env["OLLAMA_KV_CACHE_TYPE"] = "q8_0"
+    # Keep the loaded model resident for 30 minutes of idle instead
+    # of Ollama's 5-minute default. Matches the extension's default
+    # 00:30:00 SLURM walltime, so users who step away for a coffee
+    # come back to a hot model rather than paying a 10–20 s reload
+    # penalty on their next request. setdefault() so an explicit
+    # OLLAMA_KEEP_ALIVE in the user's environment always wins.
+    env.setdefault("OLLAMA_KEEP_ALIVE", "30m")
     env["CUDA_VISIBLE_DEVICES"] = "0"
     env["LD_LIBRARY_PATH"] = (
         os.path.join(OFA_ROOT, "lib")

@@ -153,6 +153,133 @@ When rebuilding a collection that was previously indexed by an older ingester, u
 
 Edit `collections.toml` to add a new collection or a new source directory. Paths starting with `/` are absolute; others resolve relative to `$OFA_ROOT`. See the header comment inside that file for the schema.
 
+### Common maintenance workflows
+
+Concrete recipes for the four situations you'll actually run into. Each
+one runs `rebuild_indices.py` via the bundled interpreter
+(`$OFA_ROOT/env/bin/python`) so you don't need `module load assistant`
+in the shell — useful for one-shot maintenance where you don't want to
+disturb the interactive environment.
+
+#### 1. Refresh a git-tracked source repo (HPC docs, AMReX, reframe, MARBLES)
+
+The `repos/HPC`, `repos/amrex`, `repos/reframe-universal`, and
+`repos/marblesThermal` trees are plain `git clone`s (not submodules).
+When upstream publishes new content, pull and rebuild:
+
+```bash
+cd $OFA_ROOT/repos/HPC && git pull && cd $OFA_ROOT
+./env/bin/python src/rebuild_indices.py --collection hpc_docs
+```
+
+`--collection` scopes the run to one collection so an unrelated
+gitignored source (say `repos/quantum-papers`) isn't touched. The
+mtime cache in `vectordb/.rebuild_state.json` means only files whose
+content actually changed on disk get re-embedded — expect
+"`[+] N added/updated  [=] M unchanged`" with a small `N` and large
+`M` after a routine `git pull`.
+
+For AMReX, reframe, MARBLES: substitute `--collection amrex_src`,
+`--collection reframe_src`, or `--collection marbles_src`.
+
+#### 2. Import a new document drop from a shared path
+
+Example: the VASP team hands you a batch of `.md`, `.txt`, or `.html`
+files under a shared directory like `/projects/hpcapps/rag-data-for-nilesh/vasp/`.
+
+Copy into `repos/vasp/`, then rebuild:
+
+```bash
+# Copy verbatim if the source is already Markdown/text
+rsync -av --delete /projects/hpcapps/rag-data-for-nilesh/vasp/*.{md,txt} \
+    $OFA_ROOT/repos/vasp/
+
+# HTML files (VASP wiki dumps, etc.) need conversion first — the
+# indexer only reads .md/.rst/.txt/.py/.cpp/.h/.f90/.ipynb. Use pandoc
+# if available, else a stdlib html.parser one-liner, else drop them
+# somewhere non-indexed.
+
+./env/bin/python src/rebuild_indices.py --clear --collection vasp_src
+```
+
+`--clear` first drops the existing chunks, then rebuilds — safer than
+a plain rebuild when files were renamed or removed en masse (the
+mtime cache doesn't detect renames as such, so it can leave stale
+chunks with old paths). For an in-place edit of existing files, drop
+`--clear`.
+
+`repos/vasp/` is one of the few `repos/*` directories that IS
+git-tracked (see `.gitignore`'s `!repos/vasp/` exception). Commit the
+new files so peer users of the same deploy inherit them:
+
+```bash
+git add repos/vasp/ && git commit -m "repos/vasp: refresh from July drop"
+```
+
+#### 3. Update a collection where some source files were deliberately emptied
+
+Example: `repos/quantum-papers/` was cleared to avoid copyright issues,
+but you still want the previously-indexed knowledge to remain
+available to ofa. The `[[collections.quantum_computing.sources]]`
+entry for `repos/quantum-papers` already has `keep_missing = true`
+(marbles-papers uses the same pattern), so a plain rebuild is safe:
+
+```bash
+./env/bin/python src/rebuild_indices.py --collection quantum_computing
+```
+
+Rebuild log will explicitly report:
+
+```
+[~] keep_missing: retaining 8 file entries under sources marked keep_missing=true
+[+] N added/updated  [=] M unchanged  [-] 0 orphaned
+```
+
+The `[-] 0 orphaned` line is the important one — no papers chunks
+were swept away. Chunks from the code source alongside are updated
+normally.
+
+If you add `keep_missing = true` to a source for the first time, no
+`--clear` is needed; the flag only affects future orphan sweeps, not
+already-indexed content.
+
+#### 4. Add a new collection or source
+
+Edit `collections.toml`:
+
+```toml
+[collections.my_new_collection]
+description = "Short human-readable description shown by --list."
+[[collections.my_new_collection.sources]]
+path       = "repos/my-new-content"       # relative to $OFA_ROOT
+type       = "code"                       # or "pdf"
+extensions = [".md", ".py"]               # ignored for type="pdf"
+# keep_missing = true                     # optional; see workflow 3
+# page_ranges  = { "file.pdf" = "23-" }   # optional PDF slicing
+```
+
+Then populate `repos/my-new-content/` and rebuild:
+
+```bash
+./env/bin/python src/rebuild_indices.py --collection my_new_collection
+```
+
+To wire the new collection into an ofa mode's retriever, edit the
+`retrieve_<mode>_context()` function in `src/ofa_main.py` and add a
+query against the new collection with a sensible top-k budget.
+Without that wiring, the collection is queryable via
+`src/ofa_client.py` but not automatically injected into chat context.
+
+### Where to run
+
+Both login nodes (`kl6`, `kl7`) and any compute-node GPU allocation
+work. On the login node the embedder falls back to CPU because the
+GPU driver on `kl6`/`kl7` is older than what the bundled PyTorch
+expects — throughput is ~30 chunks/second on CPU, adequate for
+routine updates (a full HPC-docs rebuild of ~730 chunks completes in
+about 4 minutes). If you already have a compute-node allocation open,
+run there for GPU-speed embedding (~5×).
+
 ## Memory & Session Context
 
 The assistant maintains its transient session state natively in your scratch directory (`~/.ofa_session.json`). Tilde expansion within the tool orchestrator is deliberately handled safely to target your literal home directory instead of generating corrupt relative paths.

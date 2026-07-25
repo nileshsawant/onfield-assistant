@@ -10,6 +10,7 @@
 - **User & porting guide:** [Getting started](getting-started.md) — end-to-end usage, CLI flags, installation on a new HPC.
 - **BYOK integration:** [Use ofa from VS Code](byok-vscode.md) — pointing VS Code Chat at `ofa --serve` over an ssh tunnel.
 - **Architecture:** [High-level layout](architecture.md) and the [in-depth technical overview](ofa-technical-overview.md).
+- **RAG maintenance:** [Updating the RAG corpora](rag-maintenance.md) — operator playbook for git-tracked, vendored, and copyright-restricted corpora.
 - **API reference:** [Python API](api.rst) — every module, class, and function in `src/`, hyperlinked, with `[source]` jumps to the exact line on GitHub.
 
 ```{toctree}
@@ -20,6 +21,7 @@ getting-started
 byok-vscode
 architecture
 ofa-technical-overview
+rag-maintenance
 ```
 
 ```{toctree}

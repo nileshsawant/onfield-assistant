@@ -44,6 +44,22 @@ bin/ollama
 docs/_build/
 docs/_autosummary/
 
+# RAG source repos. These are cloned per-install (via install.sh or by
+# a maintainer) and can be large third-party trees — never track them.
+# Individual small in-repo corpora (e.g. repos/vasp/) can be un-ignored
+# with a negation pattern below.
+repos/*
+# ...but do track our small, hand-maintained corpora:
+!repos/vasp/
+
+# Ad-hoc migration / one-shot fix scripts left behind at the repo root
+# during rapid iteration. Belong in a branch or gist, not in main.
+/fix_*.py
+/update_*.py
+/loosen_*.py
+/get_ollama_models.py
+/commit_fix.sh
+
 # OS generated files
 .DS_Store
 .DS_Store?

@@ -357,6 +357,97 @@ allocations only need step 3 (**OnField Assistant: Connect**).
 Full BYOK reference, troubleshooting table, and manual JSON template:
 [`docs/byok-vscode.md`](docs/byok-vscode.md).
 
+## Bring your own agent
+
+`ofa --serve` speaks the OpenAI `/v1/chat/completions` API (the same
+endpoint the VS Code BYOK setup above uses), so any agent framework
+that lets you point at a custom `base_url` + `api_key` can use ofa as
+its backend LLM — not just VS Code. Two verified integrations:
+
+### Use ofa from opencode (RHEL9 · access-gated)
+
+[opencode](https://opencode.ai) is a terminal-native coding TUI. On Kestrel
+it's shipped as a module (RHEL9 nodes only, granted on request — ask the
+maintainers). Once you have access, it can talk to `ofa --serve` as one of
+its providers so the whole ofa mode family shows up in its model picker
+alongside the built-in `serveai` and `local-ollama` providers.
+
+**One-time setup.** Create `~/.config/opencode/opencode.json` with an `ofa`
+provider block whose `baseURL` / `apiKey` reference `{env:OFA_BYOK_URL}` and
+`{env:OFA_BYOK_TOKEN}`, listing the seven ofa modes as separate models. The
+`{env:…}` substitution happens at opencode startup, so the file never has to
+be re-edited when the allocation, port, or token changes. The opencode
+maintainers can share a template.
+
+**Per-allocation flow.**
+
+```bash
+# 1) Load ofa and start its server. This writes the auto-picked port and
+#    bearer token to $OFA_SCRATCH/.ofa_serve_port and $OFA_SCRATCH/.ofa_api_key.
+module load assistant
+ofa --serve --serve-quiet --serve-enable-tools &
+
+# Wait until "[ofa-serve] Ctrl+C to stop." appears, then press Enter to get
+# the shell prompt back. The server keeps running under job control (&).
+
+# 2) Load opencode. Loading it does NOT overwrite your opencode.json.
+module load opencode
+
+# 3) Wire ofa's live endpoint into the environment. opencode.json substitutes
+#    {env:OFA_BYOK_URL} / {env:OFA_BYOK_TOKEN} at startup, so ofa is picked up
+#    dynamically each allocation without editing any config file.
+OFA_SCRATCH="${OFA_SCRATCH:-/scratch/$USER}"
+export OFA_BYOK_URL="http://localhost:$(cat $OFA_SCRATCH/.ofa_serve_port)/v1"
+export OFA_BYOK_TOKEN=$(cat $OFA_SCRATCH/.ofa_api_key)
+
+# 4) Optional — also drop ./opencode.json in the current directory so its
+#    built-in serveai + local-ollama providers show up alongside ofa in the
+#    model picker for this workdir. Skip this if you only want ofa.
+_write_opencode_json
+
+# 5) Launch. The model picker lists "OnField Assistant 🌵" with 7 modes.
+opencode
+```
+
+`--serve-quiet` matters here because ofa's `--serve` stderr shares the
+terminal with opencode's TUI — without it every request prints a
+`[ofa-serve] <model> (<mode>): N msg(s)...` line into the foreground.
+`--serve-enable-tools` lets opencode chain file edits and shell commands
+through ofa's tool-calling passthrough instead of one-shot Q&A.
+
+### Use ofa from AMReX Agent
+
+[AMReX Agent](https://github.com/AMReX-Codes/amrex-agent) is AMReX's
+LangGraph-based coding agent. Its `litellm` LLM provider talks to any
+OpenAI-compatible endpoint (Ollama, vLLM, a LiteLLM proxy, LM Studio, or
+an HPC BYOK server like ofa) — see
+[PR #59](https://github.com/AMReX-Codes/amrex-agent/pull/59) /
+`docs/api_keys.md` in that repo for the general recipe. Pointed at ofa:
+
+```bash
+module load assistant
+ofa --serve --serve-enable-tools
+export LITELLM_BASE_URL="http://localhost:$(cat $OFA_SCRATCH/.ofa_serve_port)/v1"
+export LITELLM_API_KEY="$(cat $OFA_SCRATCH/.ofa_api_key)"
+export LITELLM_MODEL="ofa-code"
+unset CBORG_API_KEY   # unset whichever other provider key would otherwise take priority
+```
+
+```yaml
+# ~/.amrex_agent/kestrel-ofa.yaml
+llm_provider: litellm
+llm_model: ofa-code
+embedding_provider: huggingface   # ofa's /v1 endpoint doesn't serve /v1/embeddings
+```
+
+```bash
+python amrex_agent.py --prompt "..." --config ~/.amrex_agent/kestrel-ofa.yaml
+```
+
+`llm_model` accepts any of the eight `ofa-*` mode IDs — `ofa-code`,
+`ofa-hpc`, `ofa-amrex`, `ofa-marbles`, `ofa-openfoam`, `ofa-reframe`,
+`ofa-quantum-computing`, `ofa-vasp` — pick whichever matches the task.
+
 ## Programmatic use from Python (`ofa_client`)
 
 Call `ofa` from your own simulation / diagnostic scripts. The client is
@@ -534,57 +625,6 @@ try:
 except Exception as e:
     print(f"[ai summary skipped: {e}]")
 ```
-
-### Use ofa from opencode (RHEL9 · access-gated)
-
-[opencode](https://opencode.ai) is a terminal-native coding TUI. On Kestrel
-it's shipped as a module (RHEL9 nodes only, granted on request — ask the
-maintainers). Once you have access, it can talk to `ofa --serve` as one of
-its providers so the whole ofa mode family shows up in its model picker
-alongside the built-in `serveai` and `local-ollama` providers.
-
-**One-time setup.** Create `~/.config/opencode/opencode.json` with an `ofa`
-provider block whose `baseURL` / `apiKey` reference `{env:OFA_BYOK_URL}` and
-`{env:OFA_BYOK_TOKEN}`, listing the seven ofa modes as separate models. The
-`{env:…}` substitution happens at opencode startup, so the file never has to
-be re-edited when the allocation, port, or token changes. The opencode
-maintainers can share a template.
-
-**Per-allocation flow.**
-
-```bash
-# 1) Load ofa and start its server. This writes the auto-picked port and
-#    bearer token to $OFA_SCRATCH/.ofa_serve_port and $OFA_SCRATCH/.ofa_api_key.
-module load assistant
-ofa --serve --serve-quiet --serve-enable-tools &
-
-# Wait until "[ofa-serve] Ctrl+C to stop." appears, then press Enter to get
-# the shell prompt back. The server keeps running under job control (&).
-
-# 2) Load opencode. Loading it does NOT overwrite your opencode.json.
-module load opencode
-
-# 3) Wire ofa's live endpoint into the environment. opencode.json substitutes
-#    {env:OFA_BYOK_URL} / {env:OFA_BYOK_TOKEN} at startup, so ofa is picked up
-#    dynamically each allocation without editing any config file.
-OFA_SCRATCH="${OFA_SCRATCH:-/scratch/$USER}"
-export OFA_BYOK_URL="http://localhost:$(cat $OFA_SCRATCH/.ofa_serve_port)/v1"
-export OFA_BYOK_TOKEN=$(cat $OFA_SCRATCH/.ofa_api_key)
-
-# 4) Optional — also drop ./opencode.json in the current directory so its
-#    built-in serveai + local-ollama providers show up alongside ofa in the
-#    model picker for this workdir. Skip this if you only want ofa.
-_write_opencode_json
-
-# 5) Launch. The model picker lists "OnField Assistant 🌵" with 7 modes.
-opencode
-```
-
-`--serve-quiet` matters here because ofa's `--serve` stderr shares the
-terminal with opencode's TUI — without it every request prints a
-`[ofa-serve] <model> (<mode>): N msg(s)...` line into the foreground.
-`--serve-enable-tools` lets opencode chain file edits and shell commands
-through ofa's tool-calling passthrough instead of one-shot Q&A.
 
 ### Where to go next
 

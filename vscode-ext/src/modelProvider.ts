@@ -36,12 +36,42 @@ const OFA_MODES: ReadonlyArray<{
     { id: 'ofa-reframe',           name: 'ofa · reframe',           tooltip: 'ReFrame CI/CD testing assistant.' }
 ];
 
-/** Gemma 4's context is 32K tokens; keep the max-input just under to
- *  leave headroom for the RAG-augmented prompt ofa server adds. This
- *  matches the old chatLanguageModels.json byok setup users were on
- *  before this extension replaced it. */
-const MAX_INPUT_TOKENS = 32000;
-const MAX_OUTPUT_TOKENS = 8192;
+/** Context window (num_ctx) and max generation length (num_predict)
+ *  per OFA_MODEL id, mirroring MODEL_REGISTRY in src/ofa_main.py —
+ *  keep these two in sync when the Python registry changes. The ''
+ *  key is bin/ofa's own fallback when ofa.model is left empty
+ *  (currently gemma4:31b-it-q8_0). */
+const MODEL_CONTEXT: Readonly<Record<string, { numCtx: number; numPredict: number }>> = {
+    '':                       { numCtx: 131072, numPredict: 32768 },
+    'gemma4:31b':              { numCtx: 65536,  numPredict: 32768 },
+    'gemma4:31b-it-q8_0':      { numCtx: 131072, numPredict: 32768 },
+    'gemma4:26b':              { numCtx: 65536,  numPredict: 32768 },
+    'llama4:scout':            { numCtx: 131072, numPredict: 16384 },
+    'llama3.3:70b':            { numCtx: 32768,  numPredict: 16384 },
+    'phi4:14b':                { numCtx: 16384,  numPredict: 8192 },
+    'granite4:32b-a9b-h':      { numCtx: 131072, numPredict: 16384 },
+    'gpt-oss:120b':            { numCtx: 65536,  numPredict: 32768 },
+    'muse-glimmer:30b':        { numCtx: 131072, numPredict: 32768 }
+};
+/** Extra tokens to reserve on top of num_predict for the RAG-augmented
+ *  prompt ofa server adds server-side (Copilot only sees the user's raw
+ *  message here, not what ofa injects afterward). */
+const RAG_HEADROOM_TOKENS = 4096;
+const MIN_INPUT_TOKENS = 2048;
+
+/** Compute the advertised input/output token limits for the model
+ *  currently selected via the ofa.model setting, so Copilot Chat's
+ *  client-side budget check (which runs before provideLanguageModelChatResponse
+ *  is ever called) reflects the model's real context window instead of
+ *  a stale fixed value — an overly conservative constant here silently
+ *  rejects conversations the model could actually handle. */
+function getModelLimits(): { maxInputTokens: number; maxOutputTokens: number } {
+    const configured = vscode.workspace.getConfiguration('ofa').get<string>('model', '') ?? '';
+    const entry = MODEL_CONTEXT[configured] ?? MODEL_CONTEXT[''];
+    const maxOutputTokens = entry.numPredict;
+    const maxInputTokens = Math.max(MIN_INPUT_TOKENS, entry.numCtx - entry.numPredict - RAG_HEADROOM_TOKENS);
+    return { maxInputTokens, maxOutputTokens };
+}
 
 const HTTP_TIMEOUT_MS = 5 * 60 * 1000;   // 5 min — long enough for a big generation
 
@@ -59,8 +89,16 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
     private endpoint: OfaEndpoint | null = null;
     private readonly _onDidChange = new vscode.EventEmitter<void>();
     readonly onDidChangeLanguageModelChatInformation: vscode.Event<void> = this._onDidChange.event;
+    private readonly configSub: vscode.Disposable;
 
-    constructor(private readonly logger: Logger) {}
+    constructor(private readonly logger: Logger) {
+        // ofa.model changes the underlying LLM's context window, so the
+        // advertised token limits need to refresh even without a
+        // reconnect (setEndpoint() is the only other trigger for that).
+        this.configSub = vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('ofa.model')) this._onDidChange.fire();
+        });
+    }
 
     /** Called from bringUp() after a successful connect, and from
      *  tearDown() with null on disconnect. Fires the change event so
@@ -73,6 +111,7 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
 
     dispose(): void {
         this._onDidChange.dispose();
+        this.configSub.dispose();
     }
 
     async provideLanguageModelChatInformation(
@@ -80,6 +119,7 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelChatInformation[]> {
         const endpoint = this.endpoint;
+        const { maxInputTokens, maxOutputTokens } = getModelLimits();
         return OFA_MODES.map(({ id, name, tooltip }) => ({
             id,
             name,
@@ -89,8 +129,8 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
             tooltip: endpoint
                 ? `${tooltip} (connected: ${endpoint.node}:${endpoint.port}, job ${endpoint.jobId})`
                 : `${tooltip} (not connected — run 'OFA: Connect' from the command palette)`,
-            maxInputTokens: MAX_INPUT_TOKENS,
-            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            maxInputTokens,
+            maxOutputTokens,
             capabilities: {
                 // ofa --serve --serve-enable-tools translates OpenAI
                 // tool_calls back and forth, but v0.1 of this extension

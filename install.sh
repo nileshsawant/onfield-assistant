@@ -11,7 +11,7 @@
 #   4. Downloads the Ollama static binary into $OFA_ROOT/bin/ollama.
 #   5. Downloads the BAAI/bge-small-en-v1.5 embedding model into
 #      $OFA_ROOT/embedding_model via huggingface-cli.
-#   6. Optionally pulls the default LLM (gemma4:31b, ~154 GB).
+#   6. Optionally pulls the default LLM (gemma4:31b-it-q8_0, ~34 GB).
 #   7. Optionally runs the interactive site.toml wizard.
 #   8. Optionally rebuilds the RAG indices from collections.toml.
 #   9. Writes $OFA_ROOT/env.sh (sourceable) and
@@ -20,7 +20,7 @@
 # Prereqs:
 #   * bash 4+, curl, tar, coreutils (readlink -f), find. Standard on any
 #     modern HPC login node.
-#   * ~250 GB free disk if you pull the default LLM. ~500 MB for the
+#   * ~50 GB free disk if you pull the default LLM. ~500 MB for the
 #     Python env + Ollama binary + embedding model alone.
 #   * Outbound HTTPS to github.com / huggingface.co / ollama.com from
 #     the login node.
@@ -49,7 +49,7 @@ Usage: ./install.sh [OPTIONS]
 
 Options:
   --skip-model-pull      Do not pull the default LLM. Default: prompt to pull
-                         gemma4:31b (~154 GB on disk).
+                         gemma4:31b-it-q8_0 (~34 GB on disk).
   --skip-wizard          Do not run the interactive site.toml wizard. If
                          no site.toml exists, ofa falls back to the Kestrel
                          defaults hard-coded in src/ofa_site.py.
@@ -69,7 +69,7 @@ Options:
 Environment overrides (all optional):
   OFA_INSTALL_PYTHON_VERSION   Miniforge base python version (default: unpinned).
   OFA_INSTALL_OLLAMA_VERSION   Pin an Ollama release, e.g. v0.5.4 (default: latest).
-  OFA_INSTALL_MODEL_ID         Model to pull (default: gemma4:31b).
+  OFA_INSTALL_MODEL_ID         Model to pull (default: gemma4:31b-it-q8_0).
   OFA_INSTALL_EMBEDDING_MODEL  HuggingFace repo id (default: BAAI/bge-small-en-v1.5).
   OFA_INSTALL_KEEP_INSTALLER   Set to 1 to keep the downloaded miniforge/ollama
                                tarballs after install for debugging.
@@ -241,7 +241,7 @@ pull_default_model() {
         log "skipping ollama pull (per --skip-model-pull)"
         return 0
     fi
-    local model_id="${OFA_INSTALL_MODEL_ID:-gemma4:31b}"
+    local model_id="${OFA_INSTALL_MODEL_ID:-gemma4:31b-it-q8_0}"
 
     cat <<EOF
 [ofa-install] Next step: pull LLM '$model_id' (~50-150 GB on disk).

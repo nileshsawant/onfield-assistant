@@ -31,7 +31,7 @@ OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
 OFA_PORT = None         # type: int | None
 OLLAMA_HOST = None      # type: str | None
 
-MODEL = os.environ.get("OFA_MODEL", "gemma4:31b")
+MODEL = os.environ.get("OFA_MODEL", "gemma4:31b-it-q8_0")
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
 HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
@@ -47,7 +47,7 @@ VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"
 # Resolution order at startup:
 #   1. CLI flag --model <id>
 #   2. $OFA_MODEL env var
-#   3. The default below (currently gemma4:31b for backwards compat).
+#   3. The default below (currently gemma4:31b-it-q8_0).
 #
 # Sampling defaults inside each entry follow the upstream model card.
 # Anything missing falls back to the module-level LLM_* defaults further down.
@@ -55,18 +55,22 @@ VECTORDB_PATH = os.environ.get("OFA_VECTORDB", os.path.join(OFA_ROOT, "vectordb"
 # $OFA_ROOT/models.json with the same shape as MODEL_REGISTRY.
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY = {
-    # Google Gemma 4 — current default. Sampling per the model card.
+    # Google Gemma 4 — Q4_K_M quantization (~19 GB). Lower VRAM / lower
+    # fidelity than gemma4:31b-it-q8_0 below, which is the deployment
+    # default; kept in TESTED_MODELS as the lighter-weight option.
+    # Sampling per the model card.
     "gemma4:31b": {
         "temperature": 1.0, "top_p": 0.95, "top_k": 64,
         "repeat_penalty": 1.15, "num_ctx": 65536, "num_predict": 32768,
         "thought_tags": [],
     },
-    # Google Gemma 4 — 31B in Q8_0 quantization (~34 GB). Same base
-    # weights as gemma4:31b, higher precision than the default Q4_K_M.
-    # Reaches ~95% of bf16 quality at roughly half the VRAM footprint
-    # of the bf16 variants, leaving ~46 GB free on an H100 80 GB for
-    # KV cache — the right pick when long context (repo-scale views,
-    # multi-file review) matters more than a coding-tuned base.
+    # Google Gemma 4 — 31B in Q8_0 quantization (~34 GB). Deployment
+    # default (MODEL fallback + vscode-ext's ofa.model default). Same
+    # base weights as gemma4:31b, higher precision than that Q4_K_M
+    # variant. Reaches ~95% of bf16 quality at roughly half the VRAM
+    # footprint of the bf16 variants, leaving ~46 GB free on an H100
+    # 80 GB for KV cache — the right pick when long context (repo-scale
+    # views, multi-file review) matters more than a coding-tuned base.
     # NOTE: Google's coding-specialized 31B (gemma4:31b-coding-mtp-bf16)
     # is Apple-MLX only on Ollama; on Linux/H100 the next-best coding
     # pick is this Q8_0 general variant.
@@ -230,16 +234,16 @@ def _print_model_registry():
 # Models that have been hardened against the destructive-command/Makefile
 # escape scenarios documented in the README. Anything not in this set is
 # considered experimental, and the interactive banner warns the user.
-TESTED_MODELS = frozenset({"gemma4:31b"})
+TESTED_MODELS = frozenset({"gemma4:31b", "gemma4:31b-it-q8_0"})
 
 def _print_active_model_banner():
     """Print a short line showing the active model at startup.
 
     When the active model is in TESTED_MODELS (the common case — the
-    default `gemma4:31b`) we print a single green line and stay quiet
-    about alternatives: showing a menu at startup invites users to try
-    untested models for no reason. The `/models` slash command exposes
-    the full registry on demand.
+    default `gemma4:31b-it-q8_0`) we print a single green line and stay
+    quiet about alternatives: showing a menu at startup invites users to
+    try untested models for no reason. The `/models` slash command
+    exposes the full registry on demand.
 
     When the active model is NOT tested (the user opted into it via
     `--model` or `$OFA_MODEL`) we keep the loud safety warning AND the
@@ -254,16 +258,17 @@ def _print_active_model_banner():
         return
 
     # Untested-model branch: keep the original loud warning + switch back hint.
+    tested_list = ", ".join(sorted(TESTED_MODELS))
     print(_c(f"Active model: {MODEL}  [UNTESTED — see warning below]", "bold", "red"))
     print(_c(
         "\n" + "!" * 66 + "\n"
-        "ONLY gemma4:31b has been tested with the assistant's safety guards.\n"
+        f"ONLY {tested_list} ha{'s' if len(TESTED_MODELS) == 1 else 've'} been tested with the assistant's safety guards.\n"
         "The model you selected is EXPERIMENTAL. We've seen non-default\n"
         "models emit Makefiles or shell commands that attempted to delete\n"
         "system paths (e.g. rm -f /*). The destructive-command guards are\n"
         "designed to catch those, but they are not infallible — review\n"
         "every approval prompt carefully.\n"
-        "To switch back: `ofa --model gemma4:31b` (or unset $OFA_MODEL).\n"
+        "To switch back: unset $OFA_MODEL (or pass --model <tested id>).\n"
         + "!" * 66,
         "bold", "red",
     ))
@@ -2466,10 +2471,11 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             ), file=sys.stderr)
             if any(n not in TESTED_MODELS for n in pulled):
                 print(_c(
-                    "\nNote: only gemma4:31b has been validated against the safety guards. "
-                    "Other models are EXPERIMENTAL — they have produced commands that "
-                    "tried to delete system paths in the past. Review every approval "
-                    "prompt carefully.",
+                    f"\nNote: only {', '.join(sorted(TESTED_MODELS))} ha"
+                    f"{'s' if len(TESTED_MODELS) == 1 else 've'} been validated against "
+                    "the safety guards. Other models are EXPERIMENTAL — they have "
+                    "produced commands that tried to delete system paths in the past. "
+                    "Review every approval prompt carefully.",
                     "yellow",
                 ), file=sys.stderr)
             continue
@@ -3989,7 +3995,7 @@ def main():
     )
     parser.add_argument(
         "--model", "-m", metavar="ID",
-        help="Override the LLM model id for this run (e.g. 'gemma4:31b', "
+        help="Override the LLM model id for this run (e.g. 'gemma4:31b-it-q8_0', "
              "'llama4:scout', 'llama3.3:70b'). Wins over $OFA_MODEL. "
              "See --list-models for what the registry knows about."
     )

@@ -119,7 +119,7 @@ mode — the picker silently hides models that declare `false`.
 `imageInput: true` enables the image-upload UI (paperclip icon in
 Copilot Chat) so you can attach screenshots, plots, or diagrams. Vision
 passthrough works when `OFA_MODEL` (or `ofa --model`) is set to a
-vision-capable model: `gemma4:31b` (default), `gemma4:31b-it-q8_0`,
+vision-capable model: `gemma4:31b-it-q8_0` (default), `gemma4:31b`,
 `gemma4:26b`, or `llama4:scout`. If you switch to a completion-only
 model (`llama3.3:70b`, `phi4:14b`, `granite4:32b-a9b-h`), the paperclip
 still shows but the ofa server will reject any request that contains

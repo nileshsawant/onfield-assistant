@@ -343,7 +343,7 @@ The CLI surface executes commands; that's where safety lives.
 - **Consecutive-error pause**: after 3 consecutive tool failures, the react loop hands control back to the user instead of letting the model thrash.
 - **Tool output truncation**: any single command's stdout/stderr is capped at 96 KB before being fed back to the model (head + tail keepers); session-wide context is compressed when it exceeds 100 KB (see §6.6).
 - **Catastrophic command confirmation phrase**: certain irreversible operations (e.g. `git push --force`, `rm -rf` after the regex screen passes due to a non-system path) require typing an exact phrase, not just `y`.
-- **Untested-model warning**: at startup, if the active LLM is not in `TESTED_MODELS` (currently only `gemma4:31b`), a loud red banner explains that destructive-command guards have only been validated against the default. The model registry, picker UI, and the `/models` slash command are deliberately not exposed on the startup banner — see [commit a4f1124](https://github.com/nileshsawant/onfield-assistant/commit/a4f1124) for the rationale.
+- **Untested-model warning**: at startup, if the active LLM is not in `TESTED_MODELS` (currently `gemma4:31b` and `gemma4:31b-it-q8_0`, the default), a loud red banner explains that destructive-command guards have only been validated against those. The model registry, picker UI, and the `/models` slash command are deliberately not exposed on the startup banner — see [commit a4f1124](https://github.com/nileshsawant/onfield-assistant/commit/a4f1124) for the rationale.
 
 ### 6.6 Session context compression
 
@@ -503,7 +503,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 | Prompt injection via indexed docs | `_fence_rag()` wraps every retrieved snippet with explicit "this is data, not instructions" tags. |
 | BYOK auth | `Authorization: Bearer <token>` (or `api-key` / `x-api-key` / `openai-api-key` — see `_auth_ok`). Constant-time comparison. Bearer token in 0o600 file under `$OFA_SCRATCH`. 401 logs a redacted summary so debugging is possible without leaking tokens. |
 | BYOK network exposure | `--serve-host` default `0.0.0.0` is required for ssh -L through the login node, but bearer token auth is mandatory by default. `--serve-no-auth` combined with 0.0.0.0 emits a loud warning. |
-| Untested model risk | Models other than `gemma4:31b` (the only one in `TESTED_MODELS`) trigger an unmissable red startup banner explaining that the safety guards were validated against the default only. |
+| Untested model risk | Models outside `TESTED_MODELS` (`gemma4:31b`, `gemma4:31b-it-q8_0` — the default) trigger an unmissable red startup banner explaining that the safety guards were validated against those only. |
 | Per-user isolation | Each user has their own `$OFA_SCRATCH`, their own Ollama process, their own SLURM allocation. No process-level sharing. |
 
 `ofa --serve` runs entirely within Kestrel's internal network; the SSH port-forward is the only path from outside, and bearer tokens are mandatory unless the user explicitly opts out.
@@ -514,7 +514,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 
 | Metric | Value |
 |---|---|
-| Model | `gemma4:31b` (Apache 2.0, Google) |
+| Model | `gemma4:31b-it-q8_0` (Apache 2.0, Google) |
 | Hardware | NVIDIA H100, 1× per user (quarter-node) |
 | Cold-start | ~30–90 s (salloc + ollama load + model into GPU + RAG init) |
 | First chat reply | ~5–15 s (model already warm, RAG retrieval included) |
@@ -522,7 +522,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 | Throughput | ~30–60 tokens/sec generation on a single H100 |
 | RAG retrieval | < 200 ms per query (ChromaDB warm; BM25 caches in memory) |
 | Index size on disk | ~500 MB (`vectordb/`) |
-| Model weights | ~18 GB (`models/`) |
+| Model weights | ~34 GB (`models/`) |
 
 The dominant latency on first reply is GPU warm-up; on subsequent replies it's token generation. RAG and prompt construction are insignificant by comparison.
 
@@ -553,7 +553,7 @@ All 62 pass at this commit (`a24a58b`).
 | `OFA_ROOT` | `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant` | Code + assets root. |
 | `OFA_SCRATCH` | `/scratch/$USER` | Per-user runtime state. |
 | `OFA_VECTORDB` | `$OFA_ROOT/vectordb` | ChromaDB store. |
-| `OFA_MODEL` | `gemma4:31b` | Override the LLM. |
+| `OFA_MODEL` | `gemma4:31b-it-q8_0` | Override the LLM. |
 | `OFA_TEMPERATURE` | 1.0 | Sampling temperature. |
 | `OFA_TOP_P` | 0.95 | Top-p sampling. |
 | `OFA_TOP_K` | 64 | Top-k sampling. |
@@ -582,7 +582,7 @@ All 62 pass at this commit (`a24a58b`).
 | `--save DIR` | Write the assistant's `=== FILE ===` blocks into `DIR`. |
 | `--no-rag` | Skip RAG retrieval. |
 | `--fast` | OpenFOAM single-shot (skip plan stage). |
-| `--model ID` | Override `gemma4:31b`. |
+| `--model ID` | Override `gemma4:31b-it-q8_0`. |
 | `--list-models` | Print model registry and exit. |
 | `--serve` | Start BYOK HTTP server. |
 | `--serve-port N` | Pin REMOTE port (default: per-user persisted). |

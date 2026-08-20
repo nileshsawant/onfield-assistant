@@ -1,6 +1,6 @@
 # OnField Assistant 🌵 (ofa)
 
-An AI-powered reasoning and autonomous execution agent tailored for the NLR Kestrel HPC system. OnField Assistant (`ofa`) utilizes a local Large Language Model orchestrator (powered by Ollama and `gemma4:31b`) alongside Retrieval-Augmented Generation (RAG) using ChromaDB to help researchers build cases, compile complex scientific codebases, organically navigate Kestrel's HPC documentation, and execute multi-step SLURM jobs natively.
+An AI-powered reasoning and autonomous execution agent tailored for the NLR Kestrel HPC system. OnField Assistant (`ofa`) utilizes a local Large Language Model orchestrator (powered by Ollama and `gemma4:31b-it-q8_0`) alongside Retrieval-Augmented Generation (RAG) using ChromaDB to help researchers build cases, compile complex scientific codebases, organically navigate Kestrel's HPC documentation, and execute multi-step SLURM jobs natively.
 
 ## Features
 
@@ -93,7 +93,7 @@ What it does, in order (each step is opt-out via a flag):
 2. **Python deps** — `pip install -r requirements.txt` inside that env (chromadb, sentence-transformers, httpx, and friends).
 3. **Ollama binary** — pulls the latest static release from github.com/ollama/ollama into `bin/ollama`. Arch-aware (x86_64 / aarch64).
 4. **Embedding model** — snapshots `BAAI/bge-small-en-v1.5` from HuggingFace into `embedding_model/` (~120 MB).
-5. **LLM** — prompts to pull `gemma4:31b` (~154 GB) into `models/`. Skip with `--skip-model-pull` if you want to pull a different model, or curate a smaller one via `OFA_INSTALL_MODEL_ID`.
+5. **LLM** — prompts to pull `gemma4:31b-it-q8_0` (~34 GB) into `models/`. Skip with `--skip-model-pull` if you want to pull a different model, or curate a smaller one via `OFA_INSTALL_MODEL_ID`.
 6. **`site.toml` wizard** — interactive prompts for site name, Slurm partition, GRES, protected paths, etc. Writes `site.toml` at the repo root. Falls back to the annotated `site.example.toml` in `--non-interactive` mode.
 7. **RAG indices** — if `repos/` is populated (per `collections.toml`), rebuilds the ChromaDB collections. Skipped otherwise with instructions to run `src/rebuild_indices.py` manually once you've added your source dirs.
 8. **`env.sh` + Lmod template** — writes a sourceable activation script and an Lmod modulefile template under `tools/`.
@@ -101,7 +101,7 @@ What it does, in order (each step is opt-out via a flag):
 Useful flags:
 
 ```bash
-./install.sh --skip-model-pull          # don't pull gemma4:31b
+./install.sh --skip-model-pull          # don't pull gemma4:31b-it-q8_0
 ./install.sh --skip-wizard              # don't run the site.toml wizard
 ./install.sh --skip-indices             # don't rebuild RAG (populate repos/ later)
 ./install.sh --non-interactive          # scripted install, opt-in steps default to skipped

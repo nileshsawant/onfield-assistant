@@ -388,10 +388,10 @@ looks like a delete to the mtime cache. Two remedies:
 ### Model banner shows `Active model: <name>  [UNTESTED — see warning below]`
 
 Unrelated to RAG. The active model isn't in `TESTED_MODELS`
-(currently only `gemma4:31b`). The safety guards were validated
-against that model's output style; other models still work but
-have not been separately re-validated. Approve destructive-command
-prompts carefully.
+(currently `gemma4:31b` and `gemma4:31b-it-q8_0`, the default). The
+safety guards were validated against those models' output style;
+other models still work but have not been separately re-validated.
+Approve destructive-command prompts carefully.
 
 ## Which collection feeds which mode
 

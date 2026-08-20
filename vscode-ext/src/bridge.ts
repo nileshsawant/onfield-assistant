@@ -89,7 +89,16 @@ function spawnBridgeOnce(
         logger.info(`spawn: ncat ${args.join(' ')}`);
 
         const child = cp.spawn('ncat', args, {
-            stdio: ['ignore', 'pipe', 'pipe']
+            stdio: ['ignore', 'pipe', 'pipe'],
+            // --sh-exec forks a `sh -c "ncat <node> <port>"` child per
+            // connection, which inherits a duplicate fd for the listening
+            // socket. If that child hangs (e.g. relaying to a compute
+            // node that just died mid-connection), killing only the
+            // parent ncat leaves the listening port held open by the
+            // orphaned grandchild. detached:true puts the whole tree in
+            // its own process group so stopBridge() can kill all of it
+            // at once via the negative pid.
+            detached: true
         });
 
         let settled = false;
@@ -148,6 +157,19 @@ export async function stopBridge(handle: BridgeHandle, logger: Logger): Promise<
     const child = handle.process;
     if (child.killed || child.exitCode !== null) return;
     logger.info(`stopping ncat bridge (pid=${child.pid}, port=${handle.localPort})`);
+    // Signal the whole process group (negative pid), not just the
+    // tracked parent — per-connection --sh-exec children can outlive
+    // it and keep the listening port held open otherwise (see the
+    // detached:true comment in spawnBridgeOnce). Falls back to killing
+    // just the parent if the group signal fails for any reason.
+    const killGroup = (signal: NodeJS.Signals) => {
+        try {
+            if (child.pid) process.kill(-child.pid, signal);
+            else child.kill(signal);
+        } catch {
+            try { child.kill(signal); } catch { /* already gone */ }
+        }
+    };
     await new Promise<void>((resolve) => {
         // Always resolve via the real 'exit' event, even after SIGKILL —
         // resolving early (before the OS actually reaps the process and
@@ -156,8 +178,8 @@ export async function stopBridge(handle: BridgeHandle, logger: Logger): Promise<
         // use" and left the bridge silently unbound after a reconnect.
         const hardKillTimer = setTimeout(() => {
             if (!child.killed && child.exitCode === null) {
-                logger.warn('ncat SIGTERM timed out; SIGKILL');
-                child.kill('SIGKILL');
+                logger.warn('ncat SIGTERM timed out; SIGKILL (group)');
+                killGroup('SIGKILL');
             }
         }, 3000);
         // Absolute last-resort cap so this can never hang the reconnect
@@ -172,6 +194,6 @@ export async function stopBridge(handle: BridgeHandle, logger: Logger): Promise<
             clearTimeout(giveUpTimer);
             resolve();
         });
-        child.kill('SIGTERM');
+        killGroup('SIGTERM');
     });
 }

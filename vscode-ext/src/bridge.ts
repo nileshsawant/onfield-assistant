@@ -117,18 +117,30 @@ export async function stopBridge(handle: BridgeHandle, logger: Logger): Promise<
     const child = handle.process;
     if (child.killed || child.exitCode !== null) return;
     logger.info(`stopping ncat bridge (pid=${child.pid}, port=${handle.localPort})`);
-    child.kill('SIGTERM');
     await new Promise<void>((resolve) => {
-        const t = setTimeout(() => {
+        // Always resolve via the real 'exit' event, even after SIGKILL —
+        // resolving early (before the OS actually reaps the process and
+        // frees the port) used to race the next startBridge() call for
+        // the same port, which then failed with "address already in
+        // use" and left the bridge silently unbound after a reconnect.
+        const hardKillTimer = setTimeout(() => {
             if (!child.killed && child.exitCode === null) {
                 logger.warn('ncat SIGTERM timed out; SIGKILL');
                 child.kill('SIGKILL');
             }
-            resolve();
         }, 3000);
+        // Absolute last-resort cap so this can never hang the reconnect
+        // flow forever; SIGKILL should make the OS reap the process
+        // well before this fires.
+        const giveUpTimer = setTimeout(() => {
+            logger.warn(`ncat bridge (pid=${child.pid}) did not exit after SIGKILL; giving up waiting`);
+            resolve();
+        }, 8000);
         child.once('exit', () => {
-            clearTimeout(t);
+            clearTimeout(hardKillTimer);
+            clearTimeout(giveUpTimer);
             resolve();
         });
+        child.kill('SIGTERM');
     });
 }

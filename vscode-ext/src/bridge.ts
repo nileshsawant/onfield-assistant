@@ -36,6 +36,14 @@ import type { OfaEndpoint } from './slurm';
  *  spawn time via the child.on('error') handler. */
 const BRIDGE_STARTUP_MS = 1500;
 const STDERR_TAIL_BYTES = 2000;
+/** A failed bind is often transient (a just-killed previous bridge's
+ *  socket not yet released by the OS, or similar) rather than a real
+ *  conflict, so retry a few times with a short delay before giving up
+ *  — bringUp()/tryAdopt() treat a bridge failure as non-fatal and
+ *  never retry themselves, so without this a single transient failure
+ *  left the bridge permanently down until a manual reconnect. */
+const BRIDGE_RETRY_ATTEMPTS = 5;
+const BRIDGE_RETRY_DELAY_MS = 750;
 
 export interface BridgeHandle {
     /** Long-running ncat listener. Kill to tear down the tunnel. */
@@ -45,7 +53,30 @@ export interface BridgeHandle {
     localPort: number;
 }
 
-export function startBridge(
+export async function startBridge(
+    endpoint: OfaEndpoint,
+    localPort: number,
+    logger: Logger
+): Promise<BridgeHandle> {
+    let lastErr: Error | undefined;
+    for (let attempt = 1; attempt <= BRIDGE_RETRY_ATTEMPTS; attempt++) {
+        try {
+            return await spawnBridgeOnce(endpoint, localPort, logger);
+        } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (attempt < BRIDGE_RETRY_ATTEMPTS) {
+                logger.warn(
+                    `bridge start attempt ${attempt}/${BRIDGE_RETRY_ATTEMPTS} failed ` +
+                    `(${lastErr.message.split('\n')[0]}); retrying in ${BRIDGE_RETRY_DELAY_MS}ms`
+                );
+                await new Promise<void>((r) => setTimeout(r, BRIDGE_RETRY_DELAY_MS));
+            }
+        }
+    }
+    throw lastErr;
+}
+
+function spawnBridgeOnce(
     endpoint: OfaEndpoint,
     localPort: number,
     logger: Logger

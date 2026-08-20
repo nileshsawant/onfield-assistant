@@ -2,7 +2,7 @@
   "name": "ofa-vscode",
   "displayName": "OnField Assistant (ofa)",
   "description": "One-click SLURM + ofa connection for VS Code Chat on Kestrel and other HPC systems.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "publisher": "nileshsawant",
   "license": "UNLICENSED",
   "repository": {

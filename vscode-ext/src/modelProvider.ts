@@ -99,8 +99,8 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
                 toolCalling: false,
                 // Vision works when OFA_MODEL is vision-capable
                 // (gemma4:31b, gemma4:31b-it-q8_0, gemma4:26b,
-                // llama4:scout). If OFA_MODEL is set to a
-                // completion-only model (llama3.3:70b, phi4:14b,
+                // llama4:scout, muse-glimmer:30b). If OFA_MODEL is set
+                // to a completion-only model (llama3.3:70b, phi4:14b,
                 // granite4:32b-a9b-h) the ofa server will reject the
                 // images. We advertise imageInput=true because the
                 // deployment default gemma4:31b supports it; users who

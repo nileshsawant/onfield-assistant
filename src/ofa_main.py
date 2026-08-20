@@ -97,6 +97,17 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.1, "num_ctx": 32768, "num_predict": 16384,
         "thought_tags": [],
     },
+    # Meta Muse Glimmer — 30B (27.9B text + 1.92B vision projector),
+    # Apache 2.0, agentic/tool-use model with vision + thinking support.
+    # Sampling matches Ollama's published params.json for this model
+    # (temperature=1, top_k=64, top_p=0.95 — same as gemma4:31b);
+    # repeat_penalty isn't vendor-specified so it keeps the module
+    # default. 128K context per the model page.
+    "muse-glimmer:30b": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 64,
+        "repeat_penalty": 1.15, "num_ctx": 131072, "num_predict": 32768,
+        "thought_tags": [],
+    },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
     #     for chat use: T=0.8, top_p=1.0 (top_p=1 effectively disables

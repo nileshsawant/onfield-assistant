@@ -117,7 +117,8 @@
             "llama3.3:70b",
             "phi4:14b",
             "granite4:32b-a9b-h",
-            "gpt-oss:120b"
+            "gpt-oss:120b",
+            "muse-glimmer:30b"
           ],
           "enumDescriptions": [
             "Do not set OFA_MODEL. bin/ofa falls back to its own default (currently gemma4:31b Q4_K_M) \u2014 the only model with validated safety guards (TESTED_MODELS). Choose this if you want CLI parity.",
@@ -128,7 +129,8 @@
             "Meta Llama 3.3 \u2014 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",
             "Microsoft phi-4 \u2014 14B. Small + strong reasoning. NOTE: no tools capability upstream \u2014 combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
             "IBM Granite 4 \u2014 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95.",
-            "OpenAI gpt-oss \u2014 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card."
+            "OpenAI gpt-oss \u2014 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card.",
+            "Meta Muse Glimmer \u2014 30B (27.9B text + 1.92B vision projector), ~18 GB. Apache 2.0, agentic/tool-use tuned, vision + thinking capable. Sampling: T=1.0, top_p=0.95, top_k=64 per Ollama's published params."
           ],
           "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Extension default is `gemma4:31b-it-q8_0` (higher fidelity than bin/ofa's CLI default of `gemma4:31b`); pick the empty option to inherit bin/ofa's default instead. **Server-wide, not per-model-picker-entry**: all eight `OFA \u00b7 *` entries in the Copilot Chat picker route to the SAME LLM selected here \u2014 they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
         },

@@ -44,13 +44,13 @@ bin/ollama
 docs/_build/
 docs/_autosummary/
 
-# RAG source repos. These are cloned per-install (via install.sh or by
-# a maintainer) and can be large third-party trees — never track them.
-# Individual small in-repo corpora (e.g. repos/vasp/) can be un-ignored
-# with a negation pattern below.
+# RAG source repos. These are cloned/dropped per-install (via install.sh
+# or by a maintainer) and can be large third-party trees — never track
+# them. repos/vasp/ in particular is vendored VASP wiki content whose
+# redistribution rights aren't clear, so it stays local-only like every
+# other repos/* source; see docs/rag-maintenance.md for how to repopulate
+# it on a fresh clone.
 repos/*
-# ...but do track our small, hand-maintained corpora:
-!repos/vasp/
 
 # Ad-hoc migration / one-shot fix scripts left behind at the repo root
 # during rapid iteration. Belong in a branch or gist, not in main.

@@ -64,9 +64,8 @@ picks up fresh chunks.
 ### 1. Git-cloned upstream (HPC docs, source repos)
 
 These are the collections whose source lives in a normal git checkout
-under `repos/` (kept out of the parent repo by [`.gitignore`](https://github.com/nileshsawant/onfield-assistant/blob/main/.gitignore):
-the pattern is `repos/*` with a `!repos/vasp/` allowlist for the
-vendored corpus). Any changes upstream propagate via `git pull`:
+under `repos/` (kept out of the parent repo entirely by [`.gitignore`](https://github.com/nileshsawant/onfield-assistant/blob/main/.gitignore)'s
+`repos/*` pattern). Any changes upstream propagate via `git pull`:
 
 ```bash
 cd $OFA_ROOT/repos/HPC       # or repos/amrex, repos/reframe-universal, etc.
@@ -116,18 +115,13 @@ cp "$SRC"/*.md "$SRC"/*.txt "$DST"/    # verbatim files
 #    unambiguous).
 cd $OFA_ROOT
 ./env/bin/python src/rebuild_indices.py --clear --collection vasp_src
-
-# 3. Commit the file changes if the source dir is git-tracked.
-cd $OFA_ROOT
-git add repos/vasp/
-git commit -m "repos/vasp: refresh corpus from <upstream>"
-git push origin main
 ```
 
-`repos/vasp/` is the only source directory currently git-tracked (the
-`!repos/vasp/` allowlist in [`.gitignore`](https://github.com/nileshsawant/onfield-assistant/blob/main/.gitignore));
-the other `repos/*` roots stay untracked so a `git clone` of the
-parent repo doesn't drag in gigabytes of vendored corpora.
+`repos/vasp/` is **not** git-tracked — it's vendored VASP wiki content
+whose redistribution rights aren't clear, so (unlike a `git pull`
+source) it lives only on disk and is never committed. Every fresh
+clone or new site install needs to repopulate it from the shared drop
+path before `--collection vasp_src` has anything to embed.
 
 Applies today to: `vasp_src`, `marbles_src` (papers side),
 `quantum_computing` (papers side).

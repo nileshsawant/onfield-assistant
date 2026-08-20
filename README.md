@@ -208,13 +208,11 @@ mtime cache doesn't detect renames as such, so it can leave stale
 chunks with old paths). For an in-place edit of existing files, drop
 `--clear`.
 
-`repos/vasp/` is one of the few `repos/*` directories that IS
-git-tracked (see `.gitignore`'s `!repos/vasp/` exception). Commit the
-new files so peer users of the same deploy inherit them:
-
-```bash
-git add repos/vasp/ && git commit -m "repos/vasp: refresh from July drop"
-```
+`repos/vasp/` is **not** git-tracked (VASP wiki content redistribution
+rights aren't clear), so unlike a git-cloned source it lives only on
+disk — nothing to commit here. Every fresh clone or new install needs
+this rsync step run once against the shared drop path before
+`vasp_src` has anything to embed.
 
 #### 3. Update a collection where some source files were deliberately emptied
 

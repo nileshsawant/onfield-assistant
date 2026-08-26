@@ -135,10 +135,15 @@ MODEL_REGISTRY = {
         "thought_tags": [],
     },
     # OpenAI gpt-oss — 116.8B MoE (~5B active), MXFP4, 65 GB weights.
-    # Advertises tools + thinking capability; no vision head. Sourced from
-    # the shared Kestrel install at
-    # /nopt/nlr/apps/kestrel-gpu/software/ollama/models via symlinks into
-    # $OFA_ROOT/models (manifest + 5 blobs), so no bytes are duplicated.
+    # Advertises tools + thinking capability; no vision head. NOT
+    # pulled by default (would need `ollama pull gpt-oss:120b`, ~65 GB).
+    # It used to be symlinked in from /nopt/nlr/apps/kestrel-gpu's
+    # shared ollama install to avoid duplicating the weights, but that
+    # directory is group-restricted to n-apps and unreadable to most
+    # Kestrel users — and one unreadable model manifest makes Ollama's
+    # /api/tags 500 for *every* request, not just requests for that
+    # model, which broke `ofa` entirely for anyone outside n-apps.
+    # Removed the symlinks; pull fresh into $OFA_ROOT/models if needed.
     # Sampling: T=1.0 matches upstream (ollama show reports temperature=1
     # and no other params); OpenAI's model card recommends top_p=1.0
     # (nucleus off) with the default temperature. num_ctx capped at 64K

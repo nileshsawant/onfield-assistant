@@ -18,8 +18,8 @@
 #      $OFA_ROOT/tools/modulefile.lua.template (Lmod).
 #
 # Prereqs:
-#   * bash 4+, curl, tar, coreutils (readlink -f), find. Standard on any
-#     modern HPC login node.
+#   * bash 4+, curl, tar, coreutils (readlink -f), find, unzstd (zstd
+#     package). Standard on any modern HPC login node.
 #   * ~50 GB free disk if you pull the default LLM. ~500 MB for the
 #     Python env + Ollama binary + embedding model alone.
 #   * Outbound HTTPS to github.com / huggingface.co / ollama.com from
@@ -180,9 +180,9 @@ install_python_deps() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Ollama static binary. Ships as a tarball whose top-level layout is
-#    bin/ + lib/, matching the ofa repo's own layout — we untar directly
-#    into $OFA_ROOT.
+# 3. Ollama static binary. Ships as a .tar.zst archive whose top-level
+#    layout is bin/ + lib/, matching the ofa repo's own layout — we
+#    untar directly into $OFA_ROOT. Requires `unzstd` (zstd package).
 # ---------------------------------------------------------------------------
 install_ollama() {
     local ollama_bin="$OFA_ROOT/bin/ollama"
@@ -190,21 +190,32 @@ install_ollama() {
         log "bin/ollama already present; skipping (--force to redo)"
         return 0
     fi
+    if ! command -v unzstd >/dev/null 2>&1; then
+        echo "ERROR: 'unzstd' (zstd package) not found -- required to unpack the Ollama release. Install it and re-run." >&2
+        return 1
+    fi
     local version="${OFA_INSTALL_OLLAMA_VERSION:-latest}"
     local url
     if [[ "$version" == "latest" ]]; then
-        url="https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${OLLAMA_ARCH}.tgz"
+        url="https://github.com/ollama/ollama/releases/latest/download/ollama-linux-${OLLAMA_ARCH}.tar.zst"
     else
-        url="https://github.com/ollama/ollama/releases/download/${version}/ollama-linux-${OLLAMA_ARCH}.tgz"
+        url="https://github.com/ollama/ollama/releases/download/${version}/ollama-linux-${OLLAMA_ARCH}.tar.zst"
     fi
     log "downloading Ollama ($version) for $OLLAMA_ARCH"
-    local tgz
-    tgz="$(mktemp -t ollama.XXXXXX.tgz)"
-    curl -fSL "$url" -o "$tgz"
-    tar -xzf "$tgz" -C "$OFA_ROOT"
+    local archive
+    archive="$(mktemp -t ollama.XXXXXX.tar.zst)"
+    curl -fSL "$url" -o "$archive"
+    tar --use-compress-program=unzstd -xf "$archive" -C "$OFA_ROOT"
     chmod +x "$ollama_bin"
+    # The upstream release ships some backend subdirectories (CUDA/Vulkan
+    # GPU libraries) at mode 750, owned by whoever ran the install. Fine
+    # for a private checkout, but this deploy is meant to be readable by
+    # every user on the site via `module load assistant` -- normalize so
+    # a restrictive umask on the installer's account doesn't silently
+    # lock everyone else out of the GPU backend at runtime.
+    find "$OFA_ROOT/lib" -type d -exec chmod o+rx {} + 2>/dev/null || true
     if [[ "${OFA_INSTALL_KEEP_INSTALLER:-0}" != "1" ]]; then
-        rm -f "$tgz"
+        rm -f "$archive"
     fi
     log "ollama installed at $ollama_bin"
 }

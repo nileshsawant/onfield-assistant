@@ -1578,11 +1578,17 @@ def ensure_ollama_running():
 
     global _ollama_proc
     print("Starting Ollama server...", file=sys.stderr)
+    ollama_log_path = os.path.join(OFA_SCRATCH, ".ofa_ollama.log")
+    try:
+        ollama_log = open(ollama_log_path, "w")
+    except OSError as e:
+        print(f"Warning: could not open {ollama_log_path} for Ollama's log ({e}); discarding output.", file=sys.stderr)
+        ollama_log = subprocess.DEVNULL
     _ollama_proc = subprocess.Popen(
         [OLLAMA_BIN, "serve"],
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=ollama_log,
+        stderr=subprocess.STDOUT,
         preexec_fn=os.setpgrp # <-- Critical: detach Ollama from Bash process group so Ctrl-C doesn't kill it
     )
     # Record the PID so a future invocation can terminate only this daemon
@@ -1604,8 +1610,20 @@ def ensure_ollama_running():
                 return True
         except (httpx.ConnectError, httpx.TimeoutException):
             continue
+        # The daemon can also just die outright (crash, permission error,
+        # missing GPU backend, etc.) well before the 30s poll window ends
+        # — no point waiting out the rest of it once that's happened.
+        if _ollama_proc.poll() is not None:
+            break
 
     print("ERROR: Could not start Ollama server.", file=sys.stderr)
+    try:
+        with open(ollama_log_path) as f:
+            tail = f.read()[-4000:]
+        if tail.strip():
+            print(f"Ollama's own output (see full log at {ollama_log_path}):\n{tail}", file=sys.stderr)
+    except OSError:
+        pass
     sys.exit(1)
 
 

@@ -92,11 +92,14 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
     private readonly configSub: vscode.Disposable;
 
     constructor(private readonly logger: Logger) {
-        // ofa.model changes the underlying LLM's context window, so the
-        // advertised token limits need to refresh even without a
-        // reconnect (setEndpoint() is the only other trigger for that).
+        // ofa.model changes the underlying LLM's context window, and
+        // ofa.enableTools changes the advertised toolCalling capability
+        // while disconnected — both need to refresh without a reconnect
+        // (setEndpoint() is the only other trigger for that).
         this.configSub = vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('ofa.model')) this._onDidChange.fire();
+            if (e.affectsConfiguration('ofa.model') || e.affectsConfiguration('ofa.enableTools')) {
+                this._onDidChange.fire();
+            }
         });
     }
 
@@ -120,6 +123,13 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
     ): Promise<vscode.LanguageModelChatInformation[]> {
         const endpoint = this.endpoint;
         const { maxInputTokens, maxOutputTokens } = getModelLimits();
+        // Reflects whichever ofa --serve is actually running (or, if not
+        // connected yet, the setting the next connect would use) — the
+        // server's --serve-enable-tools flag is fixed at spawn time and
+        // can't change until a disconnect/reconnect.
+        const toolCalling = endpoint
+            ? endpoint.enableTools
+            : vscode.workspace.getConfiguration('ofa').get<boolean>('enableTools', true);
         return OFA_MODES.map(({ id, name, tooltip }) => ({
             id,
             name,
@@ -132,11 +142,11 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
             maxInputTokens,
             maxOutputTokens,
             capabilities: {
-                // ofa --serve --serve-enable-tools translates OpenAI
-                // tool_calls back and forth, but v0.1 of this extension
-                // only forwards text. Flip when tool-call passthrough
-                // lands in a later release.
-                toolCalling: false,
+                // ofa-serve translates OpenAI tool_calls to/from Ollama's
+                // native tool-calling format when started with
+                // --serve-enable-tools. See toOpenAIMessages()/streamSSE()
+                // below for the wire-format translation.
+                toolCalling,
                 // Vision works when OFA_MODEL is vision-capable
                 // (gemma4:31b, gemma4:31b-it-q8_0, gemma4:26b,
                 // llama4:scout, muse-glimmer:30b). If OFA_MODEL is set
@@ -154,7 +164,7 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
     async provideLanguageModelChatResponse(
         model: vscode.LanguageModelChatInformation,
         messages: readonly vscode.LanguageModelChatRequestMessage[],
-        _options: vscode.ProvideLanguageModelChatResponseOptions,
+        options: vscode.ProvideLanguageModelChatResponseOptions,
         progress: vscode.Progress<vscode.LanguageModelResponsePart>,
         token: vscode.CancellationToken
     ): Promise<void> {
@@ -168,14 +178,16 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
             return;
         }
         const url = `${endpoint.baseUrl}/chat/completions`;
-        const openaiMessages = messages.map(toOpenAIMessage);
+        const openaiMessages = messages.flatMap(toOpenAIMessages);
+        const tools = toOpenAITools(options.tools);
         const body = JSON.stringify({
             model: model.id,
             messages: openaiMessages,
-            stream: true
+            stream: true,
+            ...(tools ? { tools } : {})
         });
 
-        this.logger.info(`chat request: model=${model.id} messages=${openaiMessages.length} endpoint=${endpoint.node}:${endpoint.port}`);
+        this.logger.info(`chat request: model=${model.id} messages=${openaiMessages.length} tools=${tools?.length ?? 0} endpoint=${endpoint.node}:${endpoint.port}`);
 
         // AbortController hooks the VS Code CancellationToken up to
         // fetch so 'Stop generating' actually stops the underlying
@@ -289,51 +301,111 @@ type OpenAIContentPart =
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } };
 
+interface OpenAIToolCall {
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+}
+
 interface OpenAIMessage {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'system' | 'tool';
     content: string | OpenAIContentPart[];
+    tool_calls?: OpenAIToolCall[];
+    tool_call_id?: string;
+}
+
+interface OpenAITool {
+    type: 'function';
+    function: { name: string; description?: string; parameters?: object };
+}
+
+/** Convert VS Code's declared tools (present only on Agent-mode
+ *  requests) into the OpenAI `tools` array ofa-serve expects when
+ *  started with --serve-enable-tools. Returns undefined when there
+ *  are none, matching ofa_server.py treating an empty/missing list
+ *  as "tools off" for this request. */
+function toOpenAITools(tools: readonly vscode.LanguageModelChatTool[] | undefined): OpenAITool[] | undefined {
+    if (!tools || tools.length === 0) return undefined;
+    return tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.inputSchema }
+    }));
 }
 
 /**
- * Convert VS Code's LanguageModelChatRequestMessage into the OpenAI
- * chat-completions message shape.
+ * Convert one VS Code chat message into one or more OpenAI messages.
  *
- * Text-only messages collapse to the plain-string form. Any message
- * containing a LanguageModelDataPart (image) is emitted as the array
- * form so the image survives the round-trip: text parts become
- * ``{type:'text', text:...}`` entries; image data parts become
- * ``{type:'image_url', image_url:{url:'data:<mime>;base64,...'}}``.
- * The ofa server's src/ofa_server.py::_split_content is the peer
- * consumer of this array form and extracts the base64 payloads back
- * out for Ollama's ``messages[].images`` field.
- *
- * Tool-call and tool-result parts are still stringified since ofa's
- * BYOK path treats them as text; richer passthrough lands with
- * capabilities.toolCalling.
+ * Assistant tool calls become `tool_calls` on an assistant message.
+ * Tool results only ever appear inside a User-role message per the VS
+ * Code API, but OpenAI (and ofa-serve, which matches results to calls
+ * purely by `tool_call_id`) has no concept of a single message mixing
+ * user text and tool results — so each LanguageModelToolResultPart
+ * becomes its own `role: 'tool'` message, and any surrounding text
+ * parts become separate `role: 'user'` messages.
  */
-function toOpenAIMessage(msg: vscode.LanguageModelChatRequestMessage): OpenAIMessage {
-    const role: OpenAIMessage['role'] =
-        msg.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant';
-    const parts = messageToContentParts(msg);
-    if (parts.length === 0) return { role, content: '' };
-    if (parts.every(p => p.type === 'text')) {
-        return { role, content: parts.map(p => (p as { type: 'text'; text: string }).text).join('') };
+function toOpenAIMessages(msg: vscode.LanguageModelChatRequestMessage): OpenAIMessage[] {
+    if (msg.role === vscode.LanguageModelChatMessageRole.Assistant) {
+        const toolCalls: OpenAIToolCall[] = [];
+        const rest: unknown[] = [];
+        for (const part of msg.content) {
+            if (part instanceof vscode.LanguageModelToolCallPart) {
+                toolCalls.push({
+                    id: part.callId,
+                    type: 'function',
+                    function: { name: part.name, arguments: JSON.stringify(part.input) }
+                });
+            } else {
+                rest.push(part);
+            }
+        }
+        const parts = partsToContentParts(rest);
+        const out: OpenAIMessage = { role: 'assistant', content: contentPartsToWireForm(parts) };
+        if (toolCalls.length > 0) out.tool_calls = toolCalls;
+        return [out];
     }
-    return { role, content: parts };
+
+    const out: OpenAIMessage[] = [];
+    let buffer: unknown[] = [];
+    const flush = () => {
+        if (buffer.length === 0) return;
+        out.push({ role: 'user', content: contentPartsToWireForm(partsToContentParts(buffer)) });
+        buffer = [];
+    };
+    for (const part of msg.content) {
+        if (part instanceof vscode.LanguageModelToolResultPart) {
+            flush();
+            out.push({ role: 'tool', tool_call_id: part.callId, content: toolResultToString(part.content) });
+        } else {
+            buffer.push(part);
+        }
+    }
+    flush();
+    return out.length > 0 ? out : [{ role: 'user', content: '' }];
+}
+
+/** Collapse content parts to a plain string when they're all text
+ *  (the common case), keeping the array form only for multimodal
+ *  (image) messages so text-only messages stay compact on the wire. */
+function contentPartsToWireForm(parts: OpenAIContentPart[]): string | OpenAIContentPart[] {
+    if (parts.length === 0) return '';
+    if (parts.every(p => p.type === 'text')) {
+        return parts.map(p => (p as { type: 'text'; text: string }).text).join('');
+    }
+    return parts;
 }
 
 /** Extract every part of a chat message into OpenAI content-part
  *  form. Unknown part types fall back to a bracketed marker so they
  *  appear in the conversation instead of vanishing silently. */
-function messageToContentParts(msg: vscode.LanguageModelChatRequestMessage): OpenAIContentPart[] {
+function partsToContentParts(parts: ReadonlyArray<unknown>): OpenAIContentPart[] {
     const out: OpenAIContentPart[] = [];
-    for (const part of msg.content) {
+    for (const part of parts) {
         if (part instanceof vscode.LanguageModelTextPart) {
             out.push({ type: 'text', text: part.value });
         } else if (part instanceof vscode.LanguageModelToolCallPart) {
             out.push({ type: 'text', text: `[tool call: ${part.name}(${JSON.stringify(part.input)})]` });
         } else if (part instanceof vscode.LanguageModelToolResultPart) {
-            out.push({ type: 'text', text: `[tool result for ${part.callId}: ${JSON.stringify(part.content)}]` });
+            out.push({ type: 'text', text: `[tool result for ${part.callId}: ${toolResultToString(part.content)}]` });
         } else {
             // LanguageModelDataPart (VS Code 1.98+, only surface for
             // image content today). Duck-type on {data, mimeType} so
@@ -356,6 +428,22 @@ function messageToContentParts(msg: vscode.LanguageModelChatRequestMessage): Ope
         }
     }
     return out;
+}
+
+/** Stringify a tool result's content parts into the plain string
+ *  ofa's `role: tool` messages expect — Ollama has no concept of
+ *  structured tool-result content. */
+function toolResultToString(content: ReadonlyArray<unknown>): string {
+    const chunks: string[] = [];
+    for (const part of content) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+            chunks.push(part.value);
+        } else {
+            const withValue = part as { value?: unknown };
+            chunks.push(typeof withValue.value === 'string' ? withValue.value : JSON.stringify(part));
+        }
+    }
+    return chunks.join('\n');
 }
 
 /** Rough character-count string for token estimation only. Images
@@ -422,11 +510,34 @@ async function streamSSE(
                     if (payload === '') continue;
                     try {
                         const parsed = JSON.parse(payload) as {
-                            choices?: Array<{ delta?: { content?: string } }>;
+                            choices?: Array<{
+                                delta?: {
+                                    content?: string;
+                                    tool_calls?: Array<{
+                                        id?: string;
+                                        function?: { name?: string; arguments?: string };
+                                    }>;
+                                };
+                            }>;
                         };
-                        const delta = parsed.choices?.[0]?.delta?.content;
-                        if (typeof delta === 'string' && delta.length > 0) {
-                            progress.report(new vscode.LanguageModelTextPart(delta));
+                        const delta = parsed.choices?.[0]?.delta;
+                        if (typeof delta?.content === 'string' && delta.content.length > 0) {
+                            progress.report(new vscode.LanguageModelTextPart(delta.content));
+                        }
+                        // ofa-serve always sends one complete tool call per SSE
+                        // chunk (Ollama returns tool_calls as a whole object
+                        // rather than streaming arguments token-by-token like
+                        // real OpenAI), so no cross-chunk accumulation is needed.
+                        for (const tc of delta?.tool_calls ?? []) {
+                            const name = tc.function?.name ?? '';
+                            const argsRaw = tc.function?.arguments ?? '';
+                            let input: object = {};
+                            try {
+                                input = argsRaw ? JSON.parse(argsRaw) : {};
+                            } catch (err) {
+                                logger.warn(`tool call arguments not valid JSON, using {}: ${(err as Error).message}`);
+                            }
+                            progress.report(new vscode.LanguageModelToolCallPart(tc.id ?? '', name, input));
                         }
                     } catch (err) {
                         // Non-JSON data lines (heartbeats, comments) are

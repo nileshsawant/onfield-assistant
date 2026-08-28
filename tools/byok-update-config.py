@@ -96,8 +96,8 @@ def build_provider(port: int, token: str, name: str) -> dict:
                 # BYOK JSON is a static per-model declaration and the
                 # backend model is chosen at 'ofa --serve' startup.
                 "imageInput": True,
-                "maxInputTokens": 32000,
-                "maxOutputTokens": 8192,
+                "maxInputTokens": 229376,
+                "maxOutputTokens": 32768,
             }
             for mid, mname in MODES
         ],

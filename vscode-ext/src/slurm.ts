@@ -35,6 +35,12 @@ export interface OfaEndpoint {
     baseUrl: string;
     /** SLURM job id (from `salloc: Granted job allocation …`). */
     jobId: string;
+    /** Whether this endpoint's `ofa --serve` was started with
+     *  `--serve-enable-tools` — modelProvider.ts reads this to advertise
+     *  `capabilities.toolCalling` accurately, since the `ofa.enableTools`
+     *  setting can change without a reconnect but the running server
+     *  can't. */
+    enableTools: boolean;
     /** Long-running child process; kill to release SLURM. `null` for
      *  endpoints we adopted from a pre-existing SLURM job (see
      *  adoptExisting.ts) — in that case disconnect() falls back to
@@ -164,6 +170,7 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
                     token,
                     baseUrl: `http://${node}:${port}/v1`,
                     jobId,
+                    enableTools: opts.enableTools,
                     process: child
                 });
             }

@@ -31,7 +31,7 @@ const execFile = promisify(cp.execFile);
 const HEALTHZ_TIMEOUT_MS = 5000;
 const SQUEUE_TIMEOUT_MS = 10_000;
 
-export async function adoptExistingAllocation(logger: Logger): Promise<OfaEndpoint | null> {
+export async function adoptExistingAllocation(logger: Logger, enableTools: boolean): Promise<OfaEndpoint | null> {
     // 1. squeue by name.
     let node: string | null = null;
     let jobId: string | null = null;
@@ -120,6 +120,10 @@ export async function adoptExistingAllocation(logger: Logger): Promise<OfaEndpoi
         token,
         baseUrl,
         jobId: jobId!,
+        // Best-effort: we can't probe whether the adopted server was
+        // actually started with --serve-enable-tools, so assume it
+        // matches the caller's current ofa.enableTools setting.
+        enableTools,
         // We don't own the child, so on disconnect() we fall through
         // to `scancel <jobId>` alone (see slurm.ts disconnect()).
         process: null

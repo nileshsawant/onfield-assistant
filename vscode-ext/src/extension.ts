@@ -135,9 +135,9 @@ async function bootstrapConnection(): Promise<void> {
  */
 async function tryAdopt(flow: FlowOptions): Promise<boolean> {
     if (!logger) return false;
-    const adopted = await adoptExistingAllocation(logger);
-    if (!adopted) return false;
     const cfg = vscode.workspace.getConfiguration('ofa');
+    const adopted = await adoptExistingAllocation(logger, cfg.get<boolean>('enableTools', true));
+    if (!adopted) return false;
     const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);
 
     currentEndpoint = adopted;

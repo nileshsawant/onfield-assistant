@@ -85,21 +85,24 @@ def _retrieve_for_mode(query: str, mode: str) -> str:
     if mode == "reframe":
         rhel9 = ofa_main._get_reframe_rag(query)
         base = ofa_main.retrieve_hpc_context(query)
-        return (
+        base_ctx = (
             "=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n"
             f"{rhel9}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base}"
         )
-    if mode == "amrex":
-        return ofa_main.retrieve_amrex_context(query)
-    if mode == "marbles":
-        return ofa_main.retrieve_marbles_context(query)
-    if mode == "quantum-computing":
-        return ofa_main.retrieve_quantum_computing_context(query)
-    if mode == "vasp":
-        return ofa_main.retrieve_vasp_context(query)
-    if mode in ("hpc", "code"):
-        return ofa_main.retrieve_hpc_context(query)
-    return ofa_main.retrieve_context(query)
+    elif mode == "amrex":
+        base_ctx = ofa_main.retrieve_amrex_context(query)
+    elif mode == "marbles":
+        base_ctx = ofa_main.retrieve_marbles_context(query)
+    elif mode == "quantum-computing":
+        base_ctx = ofa_main.retrieve_quantum_computing_context(query)
+    elif mode == "vasp":
+        base_ctx = ofa_main.retrieve_vasp_context(query)
+    elif mode in ("hpc", "code"):
+        base_ctx = ofa_main.retrieve_hpc_context(query)
+    else:
+        base_ctx = ofa_main.retrieve_context(query)
+    # Same per-user private layer the CLI adds, so BYOK clients see it too.
+    return ofa_main._append_private_context(base_ctx, query)
 
 
 def _augment_user_message(content: str, mode: str) -> str:
@@ -915,6 +918,24 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
 
     if no_auth:
         token = ""
+        # Private-RAG content would be served to any unauthenticated caller,
+        # so surface a distinct, stronger warning when a private store exists.
+        try:
+            has_private = os.path.isdir(ofa_main.PRIVATE_VECTORDB_PATH) and bool(
+                __import__("chromadb").PersistentClient(
+                    path=ofa_main.PRIVATE_VECTORDB_PATH
+                ).list_collections()
+            )
+        except Exception:
+            has_private = False
+        if has_private:
+            print(
+                "[ofa-serve] WARNING: --serve-no-auth is active AND you have a "
+                "private RAG store. Retrieved private data would be sent to "
+                "ANY caller that can reach this port with no token. Do NOT use "
+                "--serve-no-auth while private data is indexed.",
+                file=sys.stderr,
+            )
         if host == "0.0.0.0":
             print(
                 "[ofa-serve] WARNING: --serve-no-auth combined with host=0.0.0.0 means "

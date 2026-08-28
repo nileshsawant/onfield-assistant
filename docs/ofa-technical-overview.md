@@ -339,6 +339,20 @@ Eight ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persisten
 
 **Fencing**: retrieved snippets are wrapped via `_fence_rag()` in clearly delimited `=== RETRIEVED REFERENCE ===` tags, with a defence-in-depth reminder telling the model that fenced content is data, not instructions. Mitigates prompt-injection risk from documents we index.
 
+**Private data layer**: each user can index their own data with
+`ofa --add-private <dir>` into a separate per-user ChromaDB store at
+`$OFA_SCRATCH/vectordb-private` (mode `0700`), managed by
+`src/ofa_private_rag.py`, which reuses `rebuild_indices.py`'s chunking so the
+store is format-compatible. `_init_private_rag()` discovers collections via
+`list_collections()` rather than hardcoded names; `retrieve_private_context()`
+runs the same hybrid search and `_append_private_context()` merges the hits
+into whatever the active mode retrieved, labelled `PRIVATE DATA`. It applies
+to every mode and to `ofa --serve`. The store is deliberately separate from
+the shared `vectordb/` because `_init_rag()` stages the latter with
+`rsync --delete`, which would wipe anything colocated. `.ofa_session.json` and
+`.ofa_history` are written `0600` since they persist retrieved snippets, and
+`--serve-no-auth` prints an extra warning when a private store exists.
+
 ### 6.3 Long-term memory (two channels)
 
 Per-user files in `$OFA_SCRATCH`, persistent across sessions:
@@ -650,6 +664,10 @@ check — `npm run typecheck` — which is wired into CI via
 | `--fast` | OpenFOAM single-shot (skip plan stage). |
 | `--model ID` | Override `gemma4:31b-it-q8_0`. |
 | `--list-models` | Print model registry and exit. |
+| `--add-private DIR` | Index a directory into the per-user private RAG store. |
+| `--private-name NAME` | Collection label for `--add-private` (default: dir name). |
+| `--list-private` | List private RAG collections and exit. |
+| `--forget-private NAME` | Delete a private collection (or `all`). |
 | `--serve` | Start BYOK HTTP server. |
 | `--serve-port N` | Pin REMOTE port (default: per-user persisted). |
 | `--serve-local-port N` | Pin LOCAL port (default: per-user persisted). |

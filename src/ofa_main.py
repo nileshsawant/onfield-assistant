@@ -394,6 +394,26 @@ def _resolve_scratch():
 
 OFA_SCRATCH = _resolve_scratch()
 
+# ---------------------------------------------------------------------------
+# Private RAG. Users can index their own data and have it retrieved alongside
+# the shared corpora. Deliberately a SEPARATE ChromaDB store from
+# VECTORDB_PATH: _init_rag() stages the shared store into
+# $OFA_SCRATCH/.ofa_vectordb with `rsync --delete`, so anything written there
+# is destroyed on the next launch.
+#
+# Everything here is per-user (see _resolve_scratch()) and created 0700/0600 —
+# we do not rely on the enclosing scratch directory's mode, which varies by
+# site.
+# ---------------------------------------------------------------------------
+PRIVATE_VECTORDB_PATH = os.environ.get(
+    "OFA_PRIVATE_VECTORDB", os.path.join(OFA_SCRATCH, "vectordb-private")
+)
+PRIVATE_SOURCES_PATH = os.path.join(OFA_SCRATCH, ".ofa_private_sources.json")
+# Retrieved per query, on top of whatever the active mode's own retriever
+# returns. Kept small so private hits sharpen the answer without crowding out
+# the shared corpora.
+PRIVATE_TOP_K = 5
+
 _embed_model = None       # loaded once at startup
 _chroma_collection = None  # loaded once at startup
 _hpc_docs_collection = None
@@ -403,6 +423,10 @@ _marbles_src_collection = None
 _quantum_computing_collection = None
 _vasp_src_collection = None
 _reframe_src_collection = None
+# name -> chroma collection, discovered at init rather than hardcoded so a
+# user can add a corpus without touching the code.
+_private_collections = {}
+_private_rag_ready = False
 
 
 
@@ -418,8 +442,18 @@ SESSION_FILE = os.path.join(OFA_SCRATCH, ".ofa_session.json")
 
 def save_session(messages):
     try:
-        with open(SESSION_FILE, "w") as f:
-            json.dump(messages, f)
+        # 0600: the session persists retrieved context (including private
+        # RAG snippets) and /scratch mode varies by site, so protect it
+        # regardless of the enclosing directory's permissions.
+        fd = os.open(SESSION_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(messages, f)
+        finally:
+            try:
+                os.chmod(SESSION_FILE, 0o600)  # tighten if it pre-existed 0644
+            except OSError:
+                pass
     except OSError as e:
         print(f"Warning: could not save session to {SESSION_FILE}: {e}", file=sys.stderr)
 
@@ -1768,7 +1802,6 @@ def _init_rag():
         local_db = VECTORDB_PATH
 
     client = chromadb.PersistentClient(path=local_db)
-    _chroma_collection = client.get_collection("openfoam")
 
     def _get_optional(name):
         try:
@@ -1776,6 +1809,11 @@ def _init_rag():
         except Exception as e:
             print(f"Info: chromadb collection '{name}' not available ({e.__class__.__name__}); related modes will skip it.", file=sys.stderr)
             return None
+
+    # Optional like the rest: a store without it (a fresh install, or a
+    # site that never ingested the OpenFOAM tutorials) should degrade to
+    # "OpenFOAM mode has no corpus", not abort RAG for every mode.
+    _chroma_collection = _get_optional("openfoam")
 
     _hpc_docs_collection = _get_optional("hpc_docs")
     _of13_src_collection = _get_optional("of13_src")
@@ -1808,6 +1846,50 @@ def _init_rag():
         except Exception as _e:
             print(f"Warning: BM25 prebuild for '{_name}' failed: {_e}", file=sys.stderr)
     print(f"BM25 indices ready: {sorted(k for k, v in _bm25_indices.items() if v is not False)}", file=sys.stderr)
+
+    _init_private_rag()
+
+
+def _init_private_rag():
+    """Open the user's private store, if they have one, and register every
+    collection in it.
+
+    Read straight from PRIVATE_VECTORDB_PATH rather than the rsync'd copy the
+    shared store uses: the private store is already per-user, so there is no
+    cross-user SQLite contention to work around, and copying would duplicate
+    the user's data into a second location.
+    """
+    global _private_collections, _private_rag_ready
+    if _private_rag_ready:
+        return
+    _private_rag_ready = True
+    if not os.path.isdir(PRIVATE_VECTORDB_PATH):
+        return
+    try:
+        import chromadb
+        client = chromadb.PersistentClient(path=PRIVATE_VECTORDB_PATH)
+        for coll in client.list_collections():
+            name = coll.name if hasattr(coll, "name") else str(coll)
+            try:
+                _private_collections[name] = client.get_collection(name)
+            except Exception as e:
+                print(f"Warning: private collection '{name}' could not be opened ({e.__class__.__name__}).", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: private RAG store at {PRIVATE_VECTORDB_PATH} unavailable ({e.__class__.__name__}: {e}).", file=sys.stderr)
+        return
+    if _private_collections:
+        counts = []
+        for name, coll in sorted(_private_collections.items()):
+            try:
+                counts.append(f"{name} ({coll.count()})")
+            except Exception:
+                counts.append(name)
+        print(f"Private RAG ready: {', '.join(counts)}", file=sys.stderr)
+        for name, coll in _private_collections.items():
+            try:
+                _get_bm25_index(coll, f"private:{name}")
+            except Exception as e:
+                print(f"Warning: BM25 prebuild for private '{name}' failed: {e}", file=sys.stderr)
 
 
 def _is_safe_url(url: str) -> tuple[bool, str]:
@@ -2334,6 +2416,17 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
         hist_file = os.path.join(OFA_SCRATCH, ".ofa_history")
         if os.path.exists(hist_file):
             readline.read_history_file(hist_file)
+        else:
+            # Create it 0600 up front; readline.write_history_file preserves
+            # the mode of an existing file. Prompts may echo private data.
+            try:
+                os.close(os.open(hist_file, os.O_WRONLY | os.O_CREAT, 0o600))
+            except OSError:
+                pass
+        try:
+            os.chmod(hist_file, 0o600)  # tighten if it pre-existed 0644
+        except OSError:
+            pass
         import atexit
         atexit.register(readline.write_history_file, hist_file)
     except Exception:
@@ -2692,6 +2785,9 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
                     context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
                 else:
                     context = retrieve_vasp_context(user_input) if vasp_mode else (retrieve_quantum_computing_context(user_input) if quantum_computing_mode else (retrieve_marbles_context(user_input) if marbles_mode else (retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)))))
+                # Applies to every mode, so it lives here rather than in each
+                # retrieve_*_context().
+                context = _append_private_context(context, user_input)
             if context:
                 fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "QUANTUM" if quantum_computing_mode else "VASP" if vasp_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode or marbles_mode) else "OPENFOAM")
                 if reframe_mode:
@@ -3066,6 +3162,62 @@ def retrieve_quantum_computing_context(query: str, top_k: int = 7) -> str:
         context_parts.append(hpc_ctx)
 
     return "\n\n---\n\n".join(context_parts)
+
+
+def retrieve_private_context(query: str, top_k: int = PRIVATE_TOP_K) -> str:
+    """Retrieve from the user's own indexed data, if any.
+
+    Returns "" when the user has no private store, which is the common case —
+    callers can append the result unconditionally. Searches every private
+    collection and interleaves the results, since a user's corpora are usually
+    small and topically distinct enough that ranking across them is not worth
+    the complexity.
+    """
+    _init_rag()
+    if not _private_collections:
+        return ""
+    try:
+        query_embedding = _embed_model.encode([query])[0].tolist()
+    except Exception as e:
+        print(f"Warning: private RAG embedding failed: {e}", file=sys.stderr)
+        return ""
+    parts = []
+    for name in sorted(_private_collections):
+        coll = _private_collections[name]
+        try:
+            docs, metas = _hybrid_search(
+                query=query,
+                query_embedding=query_embedding,
+                collection=coll,
+                coll_name=f"private:{name}",
+                top_k=top_k,
+            )
+        except Exception as e:
+            print(f"Warning: private RAG retrieval failed for '{name}': {e}", file=sys.stderr)
+            continue
+        for doc, meta in zip(docs, metas):
+            meta = meta or {}
+            # rebuild_indices.py writes "filepath"; the older build_index*
+            # collections write "filename".
+            origin = meta.get("filepath") or meta.get("filename") or "?"
+            parts.append(f"[PRIVATE / {name} / {origin}]\n{doc}")
+    return "\n\n---\n\n".join(parts)
+
+
+def _append_private_context(context: str, query: str) -> str:
+    """Append private hits to whatever the active mode retrieved.
+
+    Returns raw text, not a fenced block: every caller runs the combined
+    result through _fence_rag() afterwards, and nesting <rag> tags would
+    muddle the injection guard. The per-chunk ``[PRIVATE / …]`` headers plus
+    the banner below are what mark the boundary.
+    """
+    private = retrieve_private_context(query)
+    if not private:
+        return context
+    block = f"=== PRIVATE DATA (user-indexed) ===\n{private}"
+    return f"{context}\n\n---\n\n{block}" if context else block
+
 
 def retrieve_vasp_context(query: str, top_k: int = 5) -> str:
     """VASP-focused retrieval.
@@ -3930,6 +4082,9 @@ def hpc_single_query(query: str, resume: bool = False, code_mode: bool = False, 
     else:
         context = (retrieve_vasp_context(query) if vasp_mode else (retrieve_quantum_computing_context(query) if quantum_computing_mode else (retrieve_marbles_context(query) if marbles_mode else (retrieve_amrex_context(query) if amrex_mode else retrieve_hpc_context(query))))) if not is_greeting else ""
 
+    if not is_greeting:
+        context = _append_private_context(context, query)
+
     augmented = f"Context Information:\n---\n{_fence_rag(context, label='HPC_DOCS')}\n---\n\nUser Query: {query}" if context else query
     messages = load_session() if resume else None
     if messages:
@@ -4034,6 +4189,25 @@ def main():
              "locally vs only known to the registry."
     )
     parser.add_argument(
+        "--add-private", metavar="DIR",
+        help="Index your own data (a directory) into a per-user private RAG "
+             "store, retrieved automatically alongside the built-in corpora. "
+             "Re-run on the same directory to refresh. Optionally name the "
+             "collection with --private-name."
+    )
+    parser.add_argument(
+        "--private-name", metavar="NAME",
+        help="Collection label for --add-private (default: the directory name)."
+    )
+    parser.add_argument(
+        "--list-private", action="store_true",
+        help="List your private RAG collections and exit."
+    )
+    parser.add_argument(
+        "--forget-private", metavar="NAME",
+        help="Delete a private RAG collection (or 'all' to remove every one)."
+    )
+    parser.add_argument(
         "--serve", action="store_true",
         help="Start an OpenAI-compatible HTTP server that exposes ofa as a "
              "BYOK backend (for VS Code, Cursor, etc.). See --serve-host, "
@@ -4115,6 +4289,18 @@ def main():
     if args.list_models:
         _print_model_registry()
         sys.exit(0)
+
+    # Private-RAG management commands exit before any Ollama / SLURM / RAG
+    # bring-up — they only touch the per-user private store on disk.
+    if args.add_private:
+        from ofa_private_rag import add_private
+        sys.exit(add_private(args.add_private, args.private_name))
+    if args.list_private:
+        from ofa_private_rag import list_private
+        sys.exit(list_private())
+    if args.forget_private:
+        from ofa_private_rag import forget_private
+        sys.exit(forget_private(args.forget_private))
 
     # Handle Ctrl+C and SIGTERM gracefully (sys.exit triggers atexit handlers)
     # Use default KeyboardInterrupt handling for SIGINT

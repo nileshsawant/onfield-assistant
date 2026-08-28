@@ -278,6 +278,49 @@ routine updates (a full HPC-docs rebuild of ~730 chunks completes in
 about 4 minutes). If you already have a compute-node allocation open,
 run there for GPU-speed embedding (~5×).
 
+## Index your own private data
+
+Beyond the shared corpora, each user can index their **own** data into a
+per-user private store that `ofa` retrieves automatically alongside the
+built-in collections — no write access to the shared install required.
+
+```bash
+# Index a directory (re-run to refresh after edits)
+ofa --add-private ~/my-project-notes
+ofa --add-private ~/papers --private-name lit-review   # custom label
+
+# See what you've indexed
+ofa --list-private
+
+# Remove one collection, or everything
+ofa --forget-private my-project-notes
+ofa --forget-private all
+```
+
+After indexing, just ask `ofa` (any mode, CLI or VS Code) — private hits are
+merged into the retrieved context and clearly marked `PRIVATE DATA` in the
+prompt. Supported today: text and code files (`.md`, `.rst`, `.txt`, source
+files, `.tex`, `.ipynb`, config files) and `.pdf`.
+
+**Where it lives.** The private store is a separate ChromaDB instance under
+`$OFA_SCRATCH/vectordb-private`, created `0700`; its metadata file is `0600`.
+It is never written to the shared `vectordb/`. Override the location with
+`OFA_PRIVATE_VECTORDB`.
+
+**What to keep in mind for private data:**
+
+- Retrieved private snippets are sent to whatever client is connected. From
+  the CLI that stays on the compute node, but via VS Code / BYOK they reach
+  your laptop and become part of that editor's chat history.
+- `ofa` writes `$OFA_SCRATCH/.ofa_session.json` and `.ofa_history` `0600`, but
+  `$OFA_SCRATCH` itself is created by the site — confirm its permissions if
+  the data is sensitive.
+- Do **not** run `ofa --serve --serve-no-auth` while private data is indexed;
+  it would serve that data to anyone who can reach the port. `ofa` prints a
+  warning if you do. Auth is on by default.
+- The private store rides in your scratch space; treat it with the same care
+  as any other file you place there.
+
 ## Memory & Session Context
 
 The assistant maintains its transient session state natively in your scratch directory (`~/.ofa_session.json`). Tilde expansion within the tool orchestrator is deliberately handled safely to target your literal home directory instead of generating corrupt relative paths.

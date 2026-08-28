@@ -21,6 +21,7 @@ ofa --code                           # General coding assistant (redundant — t
 ofa --amrex                          # AMReX C++ framework
 ofa --marbles                        # MARBLES (LBM thermal solver on AMReX)
 ofa --quantum-computing              # Quantum computing (rigorous gate / matrix verification)
+ofa --vasp                           # VASP (Vienna Ab initio Simulation Package)
 ofa --rhel9_reframe                  # ReFrame for RHEL9 migration
 ofa --resume                         # Resume your last session
 ofa --openfoam "set up a cavity case" --save ./case   # Single OpenFOAM query + save case files
@@ -38,7 +39,17 @@ export OFA_WALLTIME=04:00:00                  # default: 00:30:00
 Inside any interactive session, type `/help` for the full slash-command menu
 (skills, memory inspect/edit, model switch, history, save case, shell escape).
 
-### From VS Code Chat (BYOK)
+### From VS Code Chat
+
+The recommended path is the bundled extension (`vscode-ext/`), installed on
+the Kestrel-remote side of a Remote-SSH session. It runs the `--serve`
+bring-up for you, so there is no tunnel to manage and no token to paste:
+`OFA: Connect` from the command palette, then pick any `ofa · …` entry in the
+Chat model picker. See §5.4 and the
+[repo README](https://github.com/nileshsawant/onfield-assistant#use-ofa-from-vs-code-chat-the-onfield-assistant-extension).
+
+For other editors, or a laptop-local VS Code that is not attached to Kestrel,
+start the server by hand:
 
 ```bash
 # On Kestrel
@@ -48,11 +59,11 @@ ofa --serve --serve-enable-tools
 `ofa --serve` prints a labelled connection block with the exact `ssh -L` line
 (compute-node hostname + ports already filled in), the BYOK URL, and the
 bearer token. Paste the `ssh -L` in a laptop terminal, then register the URL
-and token in VS Code's `chatLanguageModels.json`.
-
-The helper [`tools/byok-update-config.py`](../tools/byok-update-config.py)
-generates the VS Code config in one shot. Full walkthrough including the
-known VS Code-side gotchas: [`docs/byok-vscode.md`](byok-vscode.md).
+and token in VS Code's `chatLanguageModels.json`. The helper
+[`tools/byok-update-config.py`](../tools/byok-update-config.py) generates that
+config in one shot. Full walkthrough including the known VS Code-side
+gotchas: [`docs/byok-vscode.md`](byok-vscode.md). Do not set up both routes —
+the model picker ends up with two redundant groups.
 
 ### Discoverability
 
@@ -104,13 +115,13 @@ The remainder of this document covers what's in the repo, how the pieces fit tog
                 │   │  (ofa_main)  │   - auto-allocates GPU via salloc│
                 │   └──────┬───────┘   - sets OFA_ROOT, OLLAMA_MODELS │
                 │          │                                          │
-                │          ├── prompts/    (5 mode prompts + common)  │
-                │          ├── vectordb/   (6 ChromaDB collections,   │
-                │          │                 ~27.5K indexed docs)     │
+                │          ├── prompts/    (8 mode prompts + common)  │
+                │          ├── vectordb/   (8 ChromaDB collections,   │
+                │          │                 ~30.1K indexed docs)     │
                 │          ├── repos/      (live git clones for RAG   │
                 │          │                 grep + ad-hoc reads)     │
                 │          ├── models/     (Ollama weights, e.g.      │
-                │          │                 gemma4:31b-it-q8_0)     │
+                │          │                 gemma4:31b-it-q8_0)      │
                 │          └── $OFA_SCRATCH/  (per-user state:        │
                 │                 .ofa_session.json, prefs, lessons,  │
                 │                 serve port, api key, history)      │
@@ -153,7 +164,7 @@ CLI behaviour:
 - **Auto-allocation**: `bin/ofa` detects whether it's running inside a SLURM job. If not, it `salloc`s a quarter-node H100 allocation (defaults: debug partition, 30 min, 32 cores, 80 GB RAM, 1 GPU) and re-exec's itself on the compute node.
 - **Ollama bootstrap**: `ensure_ollama_running()` starts a per-user `ollama serve` on a UID-derived port if none is already running, then waits for `/api/tags` to respond.
 - **Session resume**: `--resume` reloads `$OFA_SCRATCH/.ofa_session.json`. Sessions auto-compress when they grow past 100 KB (see §6.6).
-- **Interactive slash commands**: `/help`, `/clear`, `/history`, `/cwd`, `/retry`, `/memory`, `/remember <text>`, `/forget [prefs|lessons|all]`, `/skills`, `/skill <name>`, `/skill off <name>`, `/models`, plus shell escapes (`$ <cmd>`) and file inlining (`@<path>`).
+- **Interactive slash commands**: `/help`, `/clear`, `/compact`, `/history`, `/cwd`, `/retry`, `/memory`, `/remember <text>`, `/forget [prefs|lessons|all]`, `/skills`, `/skill <name>`, `/skill off <name>`, `/models`, plus shell escapes (`$ <cmd>`) and file inlining (`@<path>`).
 - **Tool execution**: the model emits fenced `=== TOOL ===` blocks; `_run_react_loop` parses them, executes (bash, file read/write, planned-file generation), feeds output back, and continues until the model stops asking for tools or the consecutive-error limit (3) is hit.
 
 ### 5.2 BYOK HTTP server (`ofa --serve`)
@@ -308,18 +319,19 @@ System-prompt construction is in `load_system_prompt(prompt_type)`. After the pe
 
 ### 6.2 RAG (retrieval-augmented generation)
 
-Six ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persistent client, default cosine distance, 384-dim Sentence-Transformers embeddings):
+Eight ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persistent client, default cosine distance, 384-dim Sentence-Transformers embeddings). Counts below are live as of this revision — re-read them with `chromadb.PersistentClient(path='vectordb').list_collections()` rather than trusting this table, since the corpora are rebuilt independently of the docs:
 
 | Collection | Documents | Source |
 |---|---:|---|
-| `of13_src` | 10,221 | OpenFOAM 13 source tree (`repos/openfoam-13/`) |
 | `amrex_src` | 11,305 | AMReX source (`repos/amrex/`) |
+| `of13_src` | 10,221 | OpenFOAM 13 source tree (`repos/OpenFOAM-dev/`) |
 | `openfoam` | 4,068 | OpenFOAM tutorials (cleaned via `rebuild_tutorials_*.py`) |
-| `hpc_docs` | 953 | Kestrel documentation (Markdown) |
-| `reframe_src` | 875 | ReFrame source tree (RHEL9 migration tests) |
-| `marbles_src` | 151 | MARBLES source |
-| `quantum_computing` | 0† | Quantum-computing code + papers (populated by `src/rebuild_indices.py` when `repos/quantum-code/` and `repos/quantum-papers/` are populated) |
-| **Total** | **27,573** | — |
+| `quantum_computing` | 2,115 | Quantum-computing code + papers (`repos/quantum-code/`, `repos/quantum-papers/`) |
+| `marbles_src` | 924 | MARBLES source (`repos/marblesThermal/`) |
+| `hpc_docs` | 730 | Kestrel documentation (Markdown) |
+| `reframe_src` | 620 | ReFrame source tree (RHEL9 migration tests) |
+| `vasp_src` | 150 | VASP documentation (`repos/vasp/`, not git-tracked — see [RAG maintenance](rag-maintenance.md)) |
+| **Total** | **30,133** | — |
 
 **Hybrid retrieval**: each retriever combines dense (ChromaDB embedding similarity) and sparse (BM25 over tokens) scores. BM25 indices are pre-built at startup via `_init_rag()` and cached in memory for the session — first-query latency was prohibitive before the prebuild was introduced. The merge weights are tuned per retriever (see `retrieve_context`, `retrieve_hpc_context`, `retrieve_amrex_context`, `retrieve_marbles_context`, `retrieve_quantum_computing_context`, `_get_reframe_rag`).
 
@@ -347,7 +359,7 @@ Both channels share the implementation in `_save_marker_block(text, label, chann
 
 Both channels are injected into every request's system prompt (§6.1). The model is instructed in `common.txt` that PREFS overrides LESSONS on conflict (the user is ground truth).
 
-The whole memory machinery is also unit-tested — see [test_ofa_memory.py](file:///tmp/test_ofa_memory.py), 14 tests covering extraction, dedup, caps, atomic write under simulated `os.replace` failure, and the byte-cap eviction.
+The whole memory machinery was also unit-tested — see `test_ofa_memory.py`, 14 tests covering extraction, dedup, caps, atomic write under simulated `os.replace` failure, and the byte-cap eviction (see the caveat in §11 — the suites are not currently in the repo).
 
 ### 6.4 Skills
 
@@ -383,7 +395,7 @@ When `messages` exceeds 100 KB, `manage_session_context()` walks oldest → newe
 
 Compression stops when below target (75 % of cap). If progress is made but the result is still over cap, a yellow `/clear` hint is emitted. If compression can free nothing, the function stays silent — earlier versions printed `[System: Context size (N) near limit. Compressing old logs...]` every turn even when no compression was possible, which was the original UX bug that drove the refactor ([commit df81e1b](https://github.com/nileshsawant/onfield-assistant/commit/df81e1b)).
 
-Eight unit tests cover this in [test_ofa_compress.py](file:///tmp/test_ofa_compress.py).
+Eight unit tests covered this in `test_ofa_compress.py` (see the caveat in §11 — the suites are not currently in the repo).
 
 ---
 
@@ -395,33 +407,43 @@ Eight unit tests cover this in [test_ofa_compress.py](file:///tmp/test_ofa_compr
 $OFA_ROOT/
 ├── bin/ofa                      # SLURM-aware shell wrapper
 ├── src/
-│   ├── ofa_main.py             # ~3,600 LOC: CLI, agent loop, RAG, memory
-│   ├── ofa_server.py           # ~ 870 LOC: BYOK HTTP shim
-│   ├── ofa_client.py           # ~ 360 LOC: stdlib-only Python client
+│   ├── ofa_main.py             # ~4,200 LOC: CLI, agent loop, RAG, memory
+│   ├── ofa_server.py           # ~1,040 LOC: BYOK HTTP shim
+│   ├── ofa_client.py           # ~  390 LOC: stdlib-only Python client
+│   ├── ofa_site.py             # site.toml loader (portability layer)
 │   ├── build_index.py          # legacy index builder
 │   ├── build_index_v2.py       # current index builder
 │   ├── ingest_amrex.py         # AMReX source ingestion
 │   ├── ingest_reframe.py       # ReFrame source ingestion
+│   ├── pdf_extract.py          # PDF → text for the papers corpora
+│   ├── rebuild_indices.py      # rebuild all collections
 │   ├── rebuild_tutorials_clean.py
 │   └── rebuild_tutorials_of13.py
+├── vscode-ext/                  # VS Code extension (TypeScript; see §5.4)
 ├── tools/
 │   └── byok-update-config.py   # VS Code chatLanguageModels.json helper
 ├── prompts/                    # 8 mode prompts + common.txt + cpp/plan helpers + skills/
-├── vectordb/                   # ChromaDB persistent store (6 collections)
+├── vectordb/                   # ChromaDB persistent store (8 collections)
 ├── repos/                      # live git clones for RAG + grep
 ├── models/                     # Ollama model weights (gemma4:31b-it-q8_0, etc.)
+├── embedding_model/             # bundled BAAI/bge-small-en-v1.5 weights
 ├── env/                        # bundled Python 3.13 virtualenv
+├── install.sh                  # one-command install on a new HPC
+├── site.example.toml           # annotated site config template
+├── collections.toml            # RAG collection definitions
 ├── docs/
 │   ├── byok-vscode.md          # BYOK setup walkthrough
 │   ├── byok-vscode-chatLanguageModels.example.json
+│   ├── rag-maintenance.md      # corpus rebuild playbook
 │   └── ofa-technical-overview.md   # this file
 ├── ARCHITECTURE.md             # high-level architecture notes
 └── README.md
 ```
 
-Total tracked source: **~6,500 LOC** across 10 Python files (excluding tests and prompts).
+Total Python under `src/`: **~5,600 LOC** across 12 files, plus the
+TypeScript extension in `vscode-ext/src/`.
 
-### 7.2 `src/ofa_main.py` walkthrough (3,544 LOC)
+### 7.2 `src/ofa_main.py` walkthrough (~4,200 LOC)
 
 Logical sections, in roughly the order they appear:
 
@@ -446,7 +468,7 @@ Logical sections, in roughly the order they appear:
 | `single_query` / `hpc_single_query` (~2300–3070) | One-shot CLI mode and the plan→generate-per-file pattern used by `--save`. |
 | `main` (~3350–3540) | Argparse, dispatch to interactive vs single-query vs `--serve`. |
 
-### 7.3 `src/ofa_server.py` walkthrough (815 LOC)
+### 7.3 `src/ofa_server.py` walkthrough (~1,040 LOC)
 
 Linear file, easier to read top-to-bottom:
 
@@ -549,8 +571,8 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 | Subsequent replies | ~1–5 s for short turns, ~10–30 s for plan-then-generate file batches |
 | Throughput | ~30–60 tokens/sec generation on a single H100 |
 | RAG retrieval | < 200 ms per query (ChromaDB warm; BM25 caches in memory) |
-| Index size on disk | ~500 MB (`vectordb/`) |
-| Model weights | ~34 GB (`models/`) |
+| Index size on disk | ~740 MB (`vectordb/`) |
+| Model weights | ~34 GB for the default model; `models/` holds ~250 GB across all nine pulled models |
 
 The dominant latency on first reply is GPU warm-up; on subsequent replies it's token generation. RAG and prompt construction are insignificant by comparison.
 
@@ -558,17 +580,26 @@ The dominant latency on first reply is GPU warm-up; on subsequent replies it's t
 
 ## 11. Testing
 
-Three hermetic test suites, all stdlib `unittest`. Currently run manually (`python3 /tmp/test_ofa_*.py`); not yet wired into CI.
+> **The suites described below are not currently in the repository.** They
+> were written to `/tmp` during development and `/tmp` has since been
+> cleaned, so nothing here is runnable or verifiable today. The table is
+> retained as a specification of the coverage that existed at commit
+> `a24a58b` and as a starting point for reinstating them under a
+> `tests/` directory wired into CI.
+
+Four hermetic suites, all stdlib `unittest`, no network and no GPU.
 
 | Suite | Cases | Coverage |
 |---|---:|---|
-| [test_ofa_memory.py](file:///tmp/test_ofa_memory.py) | 14 | `_save_marker_block` extraction, multi-block, bullet stripping, dedup, caps, byte-cap eviction, atomic write under simulated `os.replace` failure, `extract_and_save_*` wrappers. |
-| [test_ofa_skills.py](file:///tmp/test_ofa_skills.py) | 15 | Listing (empty, with README, with non-`.md`), summary parsing + truncation, sorting, missing dir, loading + path-traversal refusal, `_active_skill_names` parsing, integration. |
-| [test_ofa_compress.py](file:///tmp/test_ofa_compress.py) | 7 | Session-history compression: old tool outputs, @file pastes, protected-tail silent no-op, under-threshold no-op, partial-progress + `/clear` hint, fence-tag preservation. |
-| [test_ofa_server.py](file:///tmp/test_ofa_server.py) | 26 | BYOK HTTP: routing, auth (5 header formats), `/healthz`, `/v1/models`, blocking, streaming SSE, options pass-through, system-msg drop, RAG only on last user msg, mode routing, greetings bypass, key-file lifecycle, no-auth mode, tool_calls passthrough (8 cases). |
+| `test_ofa_memory.py` | 14 | `_save_marker_block` extraction, multi-block, bullet stripping, dedup, caps, byte-cap eviction, atomic write under simulated `os.replace` failure, `extract_and_save_*` wrappers. |
+| `test_ofa_skills.py` | 15 | Listing (empty, with README, with non-`.md`), summary parsing + truncation, sorting, missing dir, loading + path-traversal refusal, `_active_skill_names` parsing, integration. |
+| `test_ofa_compress.py` | 7 | Session-history compression: old tool outputs, @file pastes, protected-tail silent no-op, under-threshold no-op, partial-progress + `/clear` hint, fence-tag preservation. |
+| `test_ofa_server.py` | 26 | BYOK HTTP: routing, auth (5 header formats), `/healthz`, `/v1/models`, blocking, streaming SSE, options pass-through, system-msg drop, RAG only on last user msg, mode routing, greetings bypass, key-file lifecycle, no-auth mode, tool_calls passthrough (8 cases). |
 | **Total** | **62** | — |
 
-All 62 pass at this commit (`a24a58b`).
+All 62 passed at commit `a24a58b`. Note that `vscode-ext/` has its own
+check — `npm run typecheck` — which is wired into CI via
+`.github/workflows/vscode-ext.yml`.
 
 ---
 
@@ -592,19 +623,26 @@ All 62 pass at this commit (`a24a58b`).
 | `OFA_ACCOUNT` | user's SLURM default | salloc account. |
 | `OFA_PARTITION` | `debug` | salloc partition. |
 | `OFA_WALLTIME` | `00:30:00` | salloc walltime. |
-| `OFA_PORT` | UID-derived | Ollama port. |
+| `OFA_GRES` | `gpu:1` | salloc GRES. |
+| `OFA_JOB_NAME` | `ofa` | salloc job name (the VS Code extension sets `ofa-vscode`). |
+| `OFA_OLLAMA_PORT` | UID-derived | Pin the per-user `ollama serve` port. (`OFA_PORT` is an internal module global, not an env var.) |
+| `OFA_MODELS_JSON` | (unset) | Path to an external model registry merged over `MODEL_REGISTRY`. |
+| `OFA_SITE_TOML` | `$OFA_ROOT/site.toml` | Site config file (see `src/ofa_site.py`). |
+| `OFA_PROTECTED_PREFIXES` | deploy roots | Extra path prefixes the agent refuses to write to. |
 | `NO_COLOR` | (unset) | Disables ANSI colour. |
 
 ### 12.2 CLI flags (selected)
 
 | Flag | Effect |
 |---|---|
-| (none) | OpenFOAM mode, interactive. |
+| (none) | General coding assistant — equivalent to `--code`. OpenFOAM was the default only in versions ≤ 1.0. |
+| `--openfoam` | OpenFOAM case / dictionary generator. |
 | `--hpc` | Kestrel HPC documentation mode. |
 | `--code` | General coding assistant. |
 | `--amrex` | AMReX C++ framework assistant. |
 | `--marbles` | MARBLES (LBM thermal solver on AMReX) assistant. |
 | `--quantum-computing` | Quantum-computing assistant (rigorous math verification). |
+| `--vasp` | VASP assistant. |
 | `--rhel9_reframe` | ReFrame testing for RHEL9 migration. |
 | `--resume` | Reload `.ofa_session.json`. |
 | `--save DIR` | Write the assistant's `=== FILE ===` blocks into `DIR`. |
@@ -618,14 +656,16 @@ All 62 pass at this commit (`a24a58b`).
 | `--serve-host ADDR` | Bind address (default `0.0.0.0`). |
 | `--serve-api-key-file PATH` | Bearer-token file (default `$OFA_SCRATCH/.ofa_api_key`). |
 | `--serve-no-auth` | Disable bearer-token auth. **Local dev only.** |
-| `--serve-enable-tools` | Forward `tools` / `tool_choice` to Ollama; translate `tool_calls` back. Experimental. |
+| `--serve-quiet` | Suppress the per-request log line (used by the VS Code extension). |
+| `--serve-enable-tools` | Forward `tools` / `tool_choice` to Ollama; translate `tool_calls` back. |
 
 ### 12.3 Slash commands (interactive mode)
 
 ```
 quit | exit | q       — exit
 /clear                — reset conversation (keeps system prompt, drops loaded skills)
-/history              — show session size
+/compact              — aggressively compress history now (strips old RAG/tool blocks, keeps prose + last 2 turns intact)
+/history              — show session size with a per-bucket breakdown
 /cwd                  — show current working directory
 /retry                — re-prompt the model and demand a proper tool fence
 /memory               — show what's stored in long-term memory

@@ -110,7 +110,7 @@ The remainder of this document covers what's in the repo, how the pieces fit tog
                 │          ├── repos/      (live git clones for RAG   │
                 │          │                 grep + ad-hoc reads)     │
                 │          ├── models/     (Ollama weights, e.g.      │
-                │          │                 gemma4:31b)              │
+                │          │                 gemma4:31b-it-q8_0)     │
                 │          └── $OFA_SCRATCH/  (per-user state:        │
                 │                 .ofa_session.json, prefs, lessons,  │
                 │                 serve port, api key, history)      │
@@ -128,7 +128,7 @@ Three layers, in order of how a request flows through them:
 
 1. **Surface** — either the interactive CLI (terminal stdin/stdout, agent loop) or the BYOK HTTP server (`POST /v1/chat/completions`).
 2. **Domain layer** — the same in both surfaces: system-prompt selection, long-term memory injection, RAG retrieval, optional skill content.
-3. **Inference layer** — Ollama running `gemma4:31b` on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`.
+3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`.
 
 ---
 
@@ -146,6 +146,7 @@ Three layers, in order of how a request flows through them:
 | `ofa --marbles` | MARBLES LBM thermal solver | `prompts/marbles.txt` | `retrieve_marbles_context` (MARBLES primary + light AMReX) |
 | `ofa --quantum-computing` | Quantum computing (code + papers, rigorous math verification) | `prompts/quantum-computing.txt` | `retrieve_quantum_computing_context` |
 | `ofa --rhel9_reframe` | ReFrame for RHEL9 | `prompts/reframe.txt` | `_get_reframe_rag` + `retrieve_hpc_context` |
+| `ofa --vasp` | VASP (Vienna Ab initio Simulation Package) | `prompts/vasp.txt` | `retrieve_vasp_context` |
 
 CLI behaviour:
 
@@ -246,10 +247,37 @@ except Exception as e:
     print(f"[ai summary skipped: {e}]")
 ```
 
-Any of the five `ofa` modes (`ofa-openfoam`, `ofa-hpc`, `ofa-code`,
-`ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`) can be passed as `model=`. Images pair
+Any of the eight `ofa` modes (`ofa-openfoam`, `ofa-hpc`, `ofa-code`,
+`ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`,
+`ofa-vasp`) can be passed as `model=`. Images pair
 with any mode — Gemma 4's vision head handles them regardless of
 which system prompt is loaded.
+
+### 5.4 VS Code extension (`vscode-ext/`)
+
+The recommended way to drive `ofa` from VS Code Chat, and a wrapper
+around §5.2 rather than a separate protocol. Installed on the
+Kestrel-remote side of a Remote-SSH session, it:
+
+- registers the eight modes via `vscode.lm.registerLanguageModelChatProvider`
+  (vendor `ofa`), so they appear in the Chat picker without any
+  laptop-side `chatLanguageModels.json`;
+- runs the `salloc`/`srun`/`ofa --serve` chain by delegating to
+  `bin/ofa`, then scrapes the connection banner for node, port, and
+  bearer token;
+- keeps a login-node `ncat` relay so VS Code reaches the compute node
+  across reallocations;
+- derives the advertised `maxInputTokens`/`maxOutputTokens` from the
+  selected model's `num_ctx`, mirroring `MODEL_REGISTRY` in
+  `MODEL_CONTEXT` (`vscode-ext/src/modelProvider.ts`);
+- translates VS Code's tool calls to and from OpenAI `tool_calls`, which
+  `ofa --serve --serve-enable-tools` then maps onto Ollama's native
+  format, so Agent mode can apply edits and run commands.
+
+Because both the extension and the server run Kestrel-side, the bearer
+token never reaches the laptop and VS Code's secret storage is not
+involved — the opposite of the BYOK route, where the `apiKey` in
+`chatLanguageModels.json` is only a hint.
 
 ---
 
@@ -378,10 +406,10 @@ $OFA_ROOT/
 │   └── rebuild_tutorials_of13.py
 ├── tools/
 │   └── byok-update-config.py   # VS Code chatLanguageModels.json helper
-├── prompts/                    # 7 mode prompts + common.txt + skills/
+├── prompts/                    # 8 mode prompts + common.txt + cpp/plan helpers + skills/
 ├── vectordb/                   # ChromaDB persistent store (6 collections)
 ├── repos/                      # live git clones for RAG + grep
-├── models/                     # Ollama model weights (gemma4:31b, etc.)
+├── models/                     # Ollama model weights (gemma4:31b-it-q8_0, etc.)
 ├── env/                        # bundled Python 3.13 virtualenv
 ├── docs/
 │   ├── byok-vscode.md          # BYOK setup walkthrough
@@ -559,7 +587,7 @@ All 62 pass at this commit (`a24a58b`).
 | `OFA_TOP_K` | 64 | Top-k sampling. |
 | `OFA_REPEAT_PENALTY` | 1.15 | Penalise repetition. |
 | `OFA_NUM_PREDICT` | 32768 | Max tokens per response. |
-| `OFA_NUM_CTX` | 65536 | Context-window tokens. |
+| `OFA_NUM_CTX` | per-model (262144 for the default) | Context-window tokens. Taken from `MODEL_REGISTRY`; the bare 65536 constant is only the fallback for models absent from it. |
 | `OFA_NUM_GPU` | 99 | GPU layers (99 = all). |
 | `OFA_ACCOUNT` | user's SLURM default | salloc account. |
 | `OFA_PARTITION` | `debug` | salloc partition. |

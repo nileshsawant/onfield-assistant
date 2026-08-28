@@ -1,5 +1,23 @@
 # Use `ofa` from VS Code (BYOK)
 
+> **Most VS Code users should not follow this page.** If you edit code
+> on Kestrel over Remote-SSH, install the bundled **OnField Assistant
+> extension** instead — it registers the same eight modes, allocates the
+> SLURM node, opens the bridge, and handles the bearer token for you, so
+> there is no tunnel to babysit, no JSON to edit, and no API key to
+> paste. See
+> [the VS Code section of the repo README](https://github.com/nileshsawant/onfield-assistant#use-ofa-from-vs-code-chat-the-onfield-assistant-extension).
+>
+> Setting up **both** this page and the extension leaves you with two
+> redundant groups in the model picker — `OFA (Kestrel)` from BYOK and
+> `OnField Assistant (Kestrel)` from the extension — pointing at the
+> same server. Pick one.
+>
+> This page remains the reference for cases the extension does not
+> cover: a laptop-local VS Code talking to a Kestrel-side `ofa`, other
+> editors, or any client that speaks OpenAI-style
+> `/v1/chat/completions`.
+
 `ofa --serve` exposes an OpenAI-compatible HTTP server. VS Code's
 Bring-Your-Own-Key (BYOK) feature can route Chat requests through it,
 so VS Code Chat gets `ofa`'s mode-specific system prompts, RAG over
@@ -83,28 +101,28 @@ customendpoint`). Replace `<LOCAL_PORT>` and the apiKey:
     "models": [
       { "id": "ofa-openfoam", "name": "OFA · OpenFOAM",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-hpc", "name": "OFA · Kestrel HPC",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-code", "name": "OFA · Code",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-amrex", "name": "OFA · AMReX",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-marbles", "name": "OFA · MARBLES (LBM)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-reframe", "name": "OFA · ReFrame (RHEL9)",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-quantum-computing", "name": "OFA · Quantum Computing",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 },
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 },
       { "id": "ofa-vasp", "name": "OFA · VASP",
         "url": "http://localhost:<LOCAL_PORT>/v1/chat/completions",
-        "toolCalling": true, "imageInput": true, "maxInputTokens": 32000, "maxOutputTokens": 8192 }
+        "toolCalling": true, "imageInput": true, "maxInputTokens": 225280, "maxOutputTokens": 32768 }
     ]
   }
 ]
@@ -113,18 +131,31 @@ customendpoint`). Replace `<LOCAL_PORT>` and the apiKey:
 A drop-in template is also at
 `$OFA_ROOT/docs/byok-vscode-chatLanguageModels.example.json`.
 
+The token limits above assume the default `gemma4:31b-it-q8_0`:
+`num_ctx (262144) - num_predict (32768) - RAG headroom (4096)`. Unlike
+the extension, which derives these per model at runtime, BYOK JSON is
+static — so if you point `OFA_MODEL` at a smaller-context model
+(`phi4:14b` is 16384), lower `maxInputTokens` to match or Ollama will
+silently truncate the oldest tokens, including the system prompt and
+retrieved context. `MODEL_REGISTRY` in `src/ofa_main.py` lists every
+model's `num_ctx`.
+
 `toolCalling: true` is required even when you don't intend to use Agent
-mode — the picker silently hides models that declare `false`.
+mode — the picker silently hides models that declare `false`. Whether
+tool calls actually reach the model depends on the server having been
+started with `--serve-enable-tools`; this static JSON cannot detect
+that, so a mismatch just means the model never emits tool calls.
 
 `imageInput: true` enables the image-upload UI (paperclip icon in
 Copilot Chat) so you can attach screenshots, plots, or diagrams. Vision
 passthrough works when `OFA_MODEL` (or `ofa --model`) is set to a
 vision-capable model: `gemma4:31b-it-q8_0` (default), `gemma4:31b`,
-`gemma4:26b`, or `llama4:scout`. If you switch to a completion-only
-model (`llama3.3:70b`, `phi4:14b`, `granite4:32b-a9b-h`), the paperclip
-still shows but the ofa server will reject any request that contains
-images — the BYOK JSON is a static per-model declaration; the actual
-backend LLM is fixed at `ofa --serve` startup.
+`gemma4:26b`, `llama4:scout`, or `muse-glimmer:30b`. If you switch to a
+completion-only model (`llama3.3:70b`, `phi4:14b`,
+`granite4:32b-a9b-h`), the paperclip still shows but the ofa server will
+reject any request that contains images — the BYOK JSON is a static
+per-model declaration; the actual backend LLM is fixed at `ofa --serve`
+startup.
 
 ### 4. Activate the models in VS Code (this is where the apiKey actually goes)
 

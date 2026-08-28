@@ -10,7 +10,7 @@
 - **User & porting guide:** [Getting started](getting-started.md) — end-to-end usage, CLI flags, installation on a new HPC, and the VS Code extension walkthrough.
 - **VS Code / other clients:** [Use ofa from VS Code](byok-vscode.md) — the manual BYOK route over an ssh tunnel. Superseded by the extension for Remote-SSH users; still the reference for other editors.
 - **Architecture:** [High-level layout](architecture.md) and the [in-depth technical overview](ofa-technical-overview.md).
-- **RAG maintenance:** [Updating the RAG corpora](rag-maintenance.md) — operator playbook for git-tracked, vendored, and copyright-restricted corpora.
+- **RAG maintenance:** [Updating the RAG corpora](rag-maintenance.md) — operator playbook for git-tracked, vendored, and copyright-restricted corpora, plus the per-user private-data layer (`ofa --add-private`).
 - **API reference:** [Python API](api.rst) — every module, class, and function in `src/`, hyperlinked, with `[source]` jumps to the exact line on GitHub.
 
 ```{toctree}

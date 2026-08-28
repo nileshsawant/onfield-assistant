@@ -393,6 +393,38 @@ safety guards were validated against those models' output style;
 other models still work but have not been separately re-validated.
 Approve destructive-command prompts carefully.
 
+## Per-user private data (`ofa --add-private`)
+
+Everything above concerns the **shared** corpora an operator maintains in
+`$OFA_VECTORDB`. Separately, each user can index their **own** data into a
+private store that `ofa` retrieves alongside the shared collections, with no
+write access to the shared install:
+
+```bash
+ofa --add-private ~/my-notes [--private-name LABEL]   # index / refresh
+ofa --list-private                                    # inspect
+ofa --forget-private LABEL   # or 'all'               # delete
+```
+
+Operator-relevant facts:
+
+- The store is a **separate** ChromaDB at `$OFA_SCRATCH/vectordb-private`
+  (override with `OFA_PRIVATE_VECTORDB`), created `0700`; the sources manifest
+  `$OFA_SCRATCH/.ofa_private_sources.json` is `0600`. It is never written to
+  the shared `vectordb/`, and is deliberately outside the `rsync --delete`
+  staging that `_init_rag()` applies to the shared store.
+- Ingestion (`src/ofa_private_rag.py`) reuses this pipeline's chunking, so a
+  private collection is format-identical to a shared one. Supported inputs:
+  the `code`/text extensions plus `.pdf`, `.docx`, and `.xlsx`. Office
+  extraction is text-only and lossy.
+- Collections are discovered at load via `list_collections()`, so users add
+  corpora without any config edit. Names are prefixed `priv-`.
+- Retrieved private snippets are labelled `PRIVATE DATA` in the prompt and
+  pass through the same `_fence_rag()` injection guard as shared corpora.
+- Do **not** advise users to run `ofa --serve --serve-no-auth` while private
+  data is indexed — it would serve that data to any unauthenticated caller
+  reachable on the port. `ofa` warns when this combination is used.
+
 ## Which collection feeds which mode
 
 For reference when deciding which collection to rebuild:

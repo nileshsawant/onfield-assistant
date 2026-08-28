@@ -4,7 +4,7 @@
  * v0.1 case (a): Remote-SSH to Kestrel only. Auto-detects the Kestrel
  * host, spawns `salloc … srun … ofa --serve` on the login node,
  * parses the connection banner, registers a LanguageModelChatProvider
- * for the seven ofa modes, and health-probes the endpoint. When the
+ * for the eight ofa modes, and health-probes the endpoint. When the
  * SLURM allocation expires, silently re-allocates and re-registers a
  * fresh provider — VS Code Chat's next request against the same
  * thread transparently lands on the new endpoint.

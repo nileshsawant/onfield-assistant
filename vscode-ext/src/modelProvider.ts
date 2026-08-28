@@ -1,7 +1,7 @@
 /**
- * LanguageModelChatProvider registration for the seven ofa modes.
+ * LanguageModelChatProvider registration for the eight ofa modes.
  *
- * When we register this provider with vendor 'ofa', all seven models
+ * When we register this provider with vendor 'ofa', all eight models
  * appear in the VS Code Chat model picker automatically — no manual
  * chatLanguageModels.json editing required. When the user selects one
  * and asks a question, VS Code invokes
@@ -17,7 +17,7 @@ import type { Logger } from './logger';
 import type { OfaEndpoint } from './slurm';
 
 /**
- * The seven ofa modes advertised as separate models. `id` is what the
+ * The eight ofa modes advertised as separate models. `id` is what the
  * ofa server routes on (matches its /v1/models output); `name` is what
  * the user sees in the picker.
  */

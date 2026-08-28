@@ -300,7 +300,9 @@ ofa --forget-private all
 After indexing, just ask `ofa` (any mode, CLI or VS Code) — private hits are
 merged into the retrieved context and clearly marked `PRIVATE DATA` in the
 prompt. Supported today: text and code files (`.md`, `.rst`, `.txt`, source
-files, `.tex`, `.ipynb`, config files) and `.pdf`.
+files, `.tex`, `.ipynb`, config files), `.pdf`, and Office `.docx` / `.xlsx`.
+Office extraction is text-only and lossy — it drops styling, comments,
+tracked changes, and (for spreadsheets) formulas, keeping computed values.
 
 **Where it lives.** The private store is a separate ChromaDB instance under
 `$OFA_SCRATCH/vectordb-private`, created `0700`; its metadata file is `0600`.

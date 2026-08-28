@@ -48,9 +48,87 @@ CODE_EXTENSIONS = [
     ".yml", ".json", ".cfg", ".ini", ".tex", ".ipynb", ".inp", ".i",
 ]
 
+# Office formats extracted to plain text (lossy — see extractors below).
+# Handled separately from CODE_EXTENSIONS because they are binary and need
+# python-docx / openpyxl rather than a plain read_text().
+OFFICE_EXTENSIONS = [".docx", ".xlsx"]
+
 
 def _err(msg: str) -> None:
     print(msg, file=sys.stderr)
+
+
+def _extract_docx(path: Path) -> str:
+    """Flatten a .docx to text: paragraphs, then each table row as
+    tab-joined cells. Loses styling, comments, tracked changes, and
+    embedded objects — enough for retrieval, not a faithful render."""
+    from docx import Document
+    doc = Document(str(path))
+    lines = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells]
+            if any(cells):
+                lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+def _extract_xlsx(path: Path) -> str:
+    """Flatten a .xlsx to text, one line per non-empty row, prefixed by
+    sheet name. Reads computed values, not formulas (data_only=True), so a
+    workbook never opened in Excel may show blanks for formula cells."""
+    from openpyxl import load_workbook
+    wb = load_workbook(filename=str(path), read_only=True, data_only=True)
+    lines = []
+    for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+            cells = ["" if v is None else str(v) for v in row]
+            if any(c.strip() for c in cells):
+                lines.append(f"[{ws.title}] " + "\t".join(cells))
+    wb.close()
+    return "\n".join(lines)
+
+
+def _process_office_file(path: Path, root: Path, collection: str) -> list:
+    """Return (chunk_id, doc, metadata) triples for a .docx/.xlsx file,
+    matching rebuild_indices.process_code_file's shape."""
+    ext = path.suffix.lower()
+    try:
+        text = _extract_docx(path) if ext == ".docx" else _extract_xlsx(path)
+    except Exception as e:
+        _err(f"  [!] {path}: {ext} extraction failed ({e}); skipped")
+        return []
+    if not text.strip():
+        return []
+    relpath = path.relative_to(root).as_posix()
+    prefix = f"[{root.name} {ext.lstrip('.')} - {relpath}]"
+    out = []
+    for i, chunk in enumerate(_ri.chunk_text(text, _ri.CODE_CHUNK, _ri.CODE_OVERLAP)):
+        out.append((
+            _ri.stable_id(collection, str(path), i),
+            f"{prefix}\n{chunk}",
+            {
+                "source_type": "office",
+                "source_root": root.name,
+                "filepath": relpath,
+                "chunk_index": i,
+            },
+        ))
+    return out
+
+
+def _walk_office(root: Path):
+    """Yield .docx/.xlsx files under root, skipping the same noise dirs as
+    the shared walkers and Office lock files (~$foo.docx)."""
+    ext_set = {e.lower() for e in OFFICE_EXTENSIONS}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _ri._SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if fn.startswith("~$"):
+                continue
+            p = Path(dirpath) / fn
+            if p.suffix.lower() in ext_set:
+                yield p
 
 
 def _secure_mkdir(path: str, mode: int = 0o700) -> None:
@@ -124,13 +202,15 @@ def add_private(directory: str, collection_label: str | None = None) -> int:
 
     code_files = list(_ri.walk_code(root, CODE_EXTENSIONS))
     pdf_files = list(_ri.walk_pdfs(root))
-    if not code_files and not pdf_files:
+    office_files = list(_walk_office(root))
+    if not code_files and not pdf_files and not office_files:
         _err(f"ERROR: no supported files under {root}.")
-        _err(f"       Supported: {', '.join(CODE_EXTENSIONS)}, .pdf")
+        _err(f"       Supported: {', '.join(CODE_EXTENSIONS)}, "
+             f"{', '.join(OFFICE_EXTENSIONS)}, .pdf")
         return 1
 
-    print(f"Indexing {len(code_files)} text/code + {len(pdf_files)} PDF "
-          f"file(s) from {root}", file=sys.stderr)
+    print(f"Indexing {len(code_files)} text/code + {len(pdf_files)} PDF + "
+          f"{len(office_files)} office file(s) from {root}", file=sys.stderr)
     print(f"  -> private collection '{coll_name}' at {PRIVATE_VECTORDB_PATH}",
           file=sys.stderr)
 
@@ -142,6 +222,8 @@ def add_private(directory: str, collection_label: str | None = None) -> int:
             triples.extend(_ri.process_pdf_file(p, root, coll_name))
         except Exception as e:
             _err(f"  [!] {p}: PDF extraction failed ({e}); skipped")
+    for p in office_files:
+        triples.extend(_process_office_file(p, root, coll_name))
 
     if not triples:
         _err("ERROR: nothing extractable (all files empty or unreadable).")
@@ -170,7 +252,7 @@ def add_private(directory: str, collection_label: str | None = None) -> int:
         "label": label,
         "directory": str(root),
         "chunks": total,
-        "files": len(code_files) + len(pdf_files),
+        "files": len(code_files) + len(pdf_files) + len(office_files),
     }
     _save_sources(sources)
 

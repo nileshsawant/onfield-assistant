@@ -8,7 +8,7 @@
 #
 # Top-level imports observed across src/:
 #   chromadb, ddgs, httpx, lxml, numpy, pdfplumber, pypdf, rank_bm25,
-#   sentence_transformers
+#   sentence_transformers, docx (python-docx), openpyxl
 # Everything else (transformers, torch, huggingface_hub, pypdfium2,
 # jinja2, pydantic, requests, …) is a transitive dep of the above and
 # does not need to be listed here.
@@ -18,7 +18,9 @@ ddgs
 httpx
 lxml
 numpy
+openpyxl
 pdfplumber
 pypdf
+python-docx
 rank-bm25
 sentence-transformers

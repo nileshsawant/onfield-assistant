@@ -42,9 +42,9 @@ const OFA_MODES: ReadonlyArray<{
  *  key is bin/ofa's own fallback when ofa.model is left empty
  *  (currently gemma4:31b-it-q8_0). */
 const MODEL_CONTEXT: Readonly<Record<string, { numCtx: number; numPredict: number }>> = {
-    '':                       { numCtx: 131072, numPredict: 32768 },
+    '':                       { numCtx: 262144, numPredict: 32768 },
     'gemma4:31b':              { numCtx: 65536,  numPredict: 32768 },
-    'gemma4:31b-it-q8_0':      { numCtx: 131072, numPredict: 32768 },
+    'gemma4:31b-it-q8_0':      { numCtx: 262144, numPredict: 32768 },
     'gemma4:26b':              { numCtx: 65536,  numPredict: 32768 },
     'llama4:scout':            { numCtx: 131072, numPredict: 16384 },
     'llama3.3:70b':            { numCtx: 32768,  numPredict: 16384 },

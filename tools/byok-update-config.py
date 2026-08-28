@@ -96,7 +96,9 @@ def build_provider(port: int, token: str, name: str) -> dict:
                 # BYOK JSON is a static per-model declaration and the
                 # backend model is chosen at 'ofa --serve' startup.
                 "imageInput": True,
-                "maxInputTokens": 229376,
+                # Matches getModelLimits() in vscode-ext/src/modelProvider.ts:
+                # num_ctx(262144) - num_predict(32768) - RAG headroom(4096).
+                "maxInputTokens": 225280,
                 "maxOutputTokens": 32768,
             }
             for mid, mname in MODES

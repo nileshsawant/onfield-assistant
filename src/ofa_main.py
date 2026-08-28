@@ -68,15 +68,21 @@ MODEL_REGISTRY = {
     # default (MODEL fallback + vscode-ext's ofa.model default). Same
     # base weights as gemma4:31b, higher precision than that Q4_K_M
     # variant. Reaches ~95% of bf16 quality at roughly half the VRAM
-    # footprint of the bf16 variants, leaving ~46 GB free on an H100
-    # 80 GB for KV cache — the right pick when long context (repo-scale
-    # views, multi-file review) matters more than a coding-tuned base.
+    # footprint of the bf16 variants — the right pick when long context
+    # (repo-scale views, multi-file review) matters more than a
+    # coding-tuned base.
+    # num_ctx is the model's full architectural context_length (262144,
+    # read from the GGUF metadata). Affordable because only 10 of 60
+    # layers use full attention; the other 50 are sliding-window capped
+    # at 1024 tokens and cost the same at any context size. Measured KV
+    # cache: 10.8 GiB at 131072, 20.8 GiB at 262144 (f16) — so ~55 GB
+    # total with weights on an 80 GB H100.
     # NOTE: Google's coding-specialized 31B (gemma4:31b-coding-mtp-bf16)
     # is Apple-MLX only on Ollama; on Linux/H100 the next-best coding
     # pick is this Q8_0 general variant.
     "gemma4:31b-it-q8_0": {
         "temperature": 1.0, "top_p": 0.95, "top_k": 64,
-        "repeat_penalty": 1.15, "num_ctx": 131072, "num_predict": 32768,
+        "repeat_penalty": 1.15, "num_ctx": 262144, "num_predict": 32768,
         "thought_tags": [],
     },
     "gemma4:26b": {

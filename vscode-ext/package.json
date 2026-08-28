@@ -2,7 +2,7 @@
   "name": "ofa-vscode",
   "displayName": "OnField Assistant (ofa)",
   "description": "One-click SLURM + ofa connection for VS Code Chat on Kestrel and other HPC systems.",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "publisher": "nileshsawant",
   "license": "UNLICENSED",
   "repository": {
@@ -123,7 +123,7 @@
           "enumDescriptions": [
             "Do not set OFA_MODEL. bin/ofa falls back to its own default (currently gemma4:31b-it-q8_0) \u2014 same value this setting defaults to. Choose this if you want the extension to always track bin/ofa's default rather than pinning it here.",
             "Google Gemma 4 \u2014 31B, ~19 GB (Q4_K_M). In TESTED_MODELS. Same base weights as the Q8 default but lower fidelity; pick this if you need the VRAM for other things.",
-            "(default) Google Gemma 4 \u2014 31B Q8_0 (~34 GB). In TESTED_MODELS. Higher precision than the Q4 variant above, ~46 GB free for KV cache on H100 \u2014 lets num_ctx go to 131072. Same base weights as gemma4:31b.",
+            "(default) Google Gemma 4 \u2014 31B Q8_0 (~34 GB). In TESTED_MODELS. Higher precision than the Q4 variant above. Runs at the model's full 262144 context: only 10 of 60 layers use full attention, so the KV cache is just ~21 GiB at 256K. Same base weights as gemma4:31b.",
             "Google Gemma 4 \u2014 26B, smaller sibling of the default. Same sampling.",
             "Meta Llama 4 Scout \u2014 108B MoE. Long context (capped at 128K). Sampling: T=0.6, top_p=0.9.",
             "Meta Llama 3.3 \u2014 70B dense. No vision, no thinking. Sampling: T=0.6, top_p=0.9.",

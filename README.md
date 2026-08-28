@@ -26,8 +26,8 @@ module load assistant
 ofa --help
 ```
 
-If you'd rather drive `ofa` from VS Code Chat (Copilot Chat's model
-picker fed by a laptop-side BYOK config) instead of the shell, skip
+If you'd rather drive `ofa` from VS Code Chat (the eight modes appear
+directly in Copilot Chat's model picker) instead of the shell, skip
 straight to [Use `ofa` from VS Code Chat](#use-ofa-from-vs-code-chat-the-onfield-assistant-extension)
 below — that section handles the module load automatically inside a
 one-click SLURM allocation. The CLI examples in this section are for
@@ -289,10 +289,10 @@ Any permanent global preferences (e.g., "always use 4 spaces for indentation") m
 
 VS Code's Chat / Copilot Chat picker can drive `ofa` if you install the
 bundled OnField Assistant extension on the Kestrel-remote side. The
-extension handles the SLURM allocation and the login-node TCP bridge for
-you; on the laptop side you register the eight `ofa` modes as BYOK
-models. End-to-end verified flow (Mac laptop + Kestrel + VS Code
-Remote-SSH):
+extension registers the eight `ofa` modes as a `LanguageModelChatProvider`
+and handles the SLURM allocation, the login-node TCP bridge, and the API
+key for you — **nothing needs to be configured on your laptop**.
+End-to-end verified flow (Mac laptop + Kestrel + VS Code Remote-SSH):
 
 1. **Attach VS Code to Kestrel.** Standard Remote-SSH — open a new
    window connected to your Kestrel login node.
@@ -304,56 +304,65 @@ Remote-SSH):
    Reload when prompted. The extension shows up under **SSH: KESTREL**
    as `ofa-vscode`.
 
-3. **Bring up the server.** `Cmd+Shift+P` → **OnField Assistant:
-   Connect**. This allocates a debug GPU node, launches
+3. **Bring up the server.** `Cmd+Shift+P` → **OFA: Connect**. This
+   allocates a debug GPU node, launches
    `ofa --serve --serve-enable-tools`, and opens an `ncat` TCP bridge
-   on login-node port `49643`. Watch the **Output** panel
-   (`Cmd+Shift+U` → **OnField Assistant** channel) for progress. Wait
-   for the connect-success toast — and copy the bearer token printed
-   in the log (line matching `apiKey = ofa-…`).
+   on login-node port `49643`. Watch progress with
+   **OFA: Show Logs**. Wait for the connect-success toast.
 
-4. **Register the models on your laptop.** From a native Mac terminal:
+4. **Chat.** Open Copilot Chat (`Cmd+Ctrl+I`). Click the model picker
+   at the bottom of the panel and pick any entry under **OnField
+   Assistant (Kestrel)** — e.g. `ofa · hpc`. Ask mode works for
+   Q&A; Agent mode additionally lets the model apply edits and run
+   commands via tool calls.
 
-   ```bash
-   scp kestrel.hpc.nlr.gov:/nopt/nrel/apps/cpu_stack/software/openfoam/assistant/tools/byok-update-config.py ~/byok-update-config.py
-   python3 ~/byok-update-config.py --token ofa-<paste-your-token>
-   ```
+**Tear down** with `Cmd+Shift+P` → **OFA: Disconnect** — this releases
+the SLURM job and closes the bridge. Subsequent sessions only need
+step 3; if a previous allocation is still alive the extension adopts it
+automatically on startup instead of queueing a new one.
 
-   The script edits `~/Library/Application Support/Code/User/chatLanguageModels.json`,
-   backing it up to `.bak` on first run, appending `OFA (Kestrel)`
-   with all 8 modes, and leaving any existing Copilot / other BYOK
-   providers untouched.
+### How the extension handles keys and ports
 
-5. **Reload + plant the API key in secret storage.** In VS Code:
+You never copy a token. `ofa --serve` generates (or reuses) a bearer
+token at `$OFA_SCRATCH/.ofa_api_key` and prints it in its startup
+banner; the extension scrapes that line, keeps the value in memory for
+the lifetime of the connection, and sends it as an
+`Authorization: Bearer …` header on every request. Because both the
+extension and the server run on the Kestrel side, the token never
+crosses to your laptop and is never written to any VS Code config.
 
-   * `Cmd+Shift+P` → **Developer: Reload Window**.
-   * `Cmd+Shift+P` → **Chat: Manage Language Models**.
-   * Hover the **OFA (Kestrel)** row → click the gear icon →
-     **Update API Key** → paste the same token again.
-     **This step is required** — the `apiKey` field in the JSON is
-     only a hint; Copilot Chat reads the real token from VS Code's
-     per-provider secret storage, which is only populated via this
-     UI flow. Skipping it yields `missing or invalid Authorization
-     header` on the first request.
-   * In the same view, click the eye icon on each `OFA · …` row so
-     the eight models become visible in the picker.
+This is the main difference from the older BYOK route, where you pasted
+the token into **Chat: Manage Language Models → gear → Update API Key**
+because Copilot Chat read it from VS Code's per-provider secret storage.
+The extension bypasses secret storage entirely.
 
-6. **Chat.** Open Copilot Chat (`Cmd+Ctrl+I`). Click the model picker
-   at the bottom of the panel, type `OFA`, pick e.g.
-   **OFA · Kestrel HPC**. Set the mode selector at the top to
-   **Ask**, send a test message.
+Ports likewise need no attention: the compute-node listen port is
+chosen per user and persisted in `$OFA_SCRATCH/.ofa_serve_port`, while
+the login-node bridge is pinned to `49643`
+(`ofa.laptopSideBridgePort`). The bridge is re-established on every
+connect, so a new SLURM allocation on a different node needs no
+reconfiguration.
 
-The bearer token and login-node bridge port are stable across
-allocations (the server reuses `$OFA_SCRATCH/.ofa_api_key`; the
-extension pins port `49643` via the `ofa.laptopSideBridgePort`
-setting), so steps 4–5 are one-time on a given laptop. Subsequent
-allocations only need step 3 (**OnField Assistant: Connect**).
+Token limits are derived from the model you select in `ofa.model`
+rather than hardcoded, so the picker advertises the real context window
+(the default `gemma4:31b-it-q8_0` runs at its full 262144-token
+context). Changing `ofa.model` requires
+**OFA: Disconnect** → **OFA: Connect**, since the backing LLM is chosen
+when `ofa --serve` starts.
 
-**Tear down** with `Cmd+Shift+P` → **OnField Assistant: Disconnect**
-— this releases the SLURM job and closes the bridge.
+### Deprecated: the manual BYOK route
 
-Full BYOK reference, troubleshooting table, and manual JSON template:
-[`docs/byok-vscode.md`](docs/byok-vscode.md).
+Earlier versions required registering the modes yourself in a
+laptop-side `chatLanguageModels.json` via
+`tools/byok-update-config.py`. The extension replaces that, and running
+both leaves you with **two redundant groups** in the model picker —
+`OFA (Kestrel)` from BYOK and `OnField Assistant (Kestrel)` from the
+extension — pointing at the same server. If you see both, delete the
+`OFA (Kestrel)` provider (via **Chat: Manage Language Models**, or by
+removing that object from `chatLanguageModels.json`) and reload.
+
+The BYOK path is still documented for non-VS-Code clients and manual
+setups: [`docs/byok-vscode.md`](docs/byok-vscode.md).
 
 ## Bring your own agent
 

@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Register all eight OFA modes in your VS Code BYOK config.
 
+SUPERSEDED for VS Code users: the ofa-vscode extension registers these
+same eight modes itself (as a LanguageModelChatProvider) and handles the
+token and ports automatically. Running both leaves two redundant groups
+in the model picker pointing at the same server. Use this script only
+for setups the extension can't cover, e.g. a laptop-local VS Code that
+is not attached to Kestrel via Remote-SSH.
+
 Run this on your **laptop** (Mac/Linux), once. Safe to re-run; only edits
 the "OFA (Kestrel)" provider entry and leaves Copilot or other BYOK
 providers alone. Makes a `.bak` copy of the file the first time.
@@ -82,9 +89,11 @@ def build_provider(port: int, token: str, name: str) -> dict:
                 "name": mname,
                 "url": f"http://localhost:{port}/v1/chat/completions",
                 # MUST be true: the VS Code Chat model picker silently hides
-                # models that declare toolCalling=false. The ofa server
-                # ignores tool_calls at the protocol level, so this is a
-                # cosmetic concession.
+                # models that declare toolCalling=false. Unlike the
+                # extension, which advertises the server's real
+                # --serve-enable-tools state, BYOK JSON is static and
+                # cannot know it — so tool calls reach the model only if
+                # the server happens to be running with tools enabled.
                 "toolCalling": True,
                 # imageInput=True enables the paperclip image-upload UI
                 # in Copilot Chat. Vision passthrough works when

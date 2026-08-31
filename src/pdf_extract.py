@@ -36,9 +36,16 @@ _CID_RE = re.compile(r"\(cid:\d+\)")
 # ofa_main.chat_stream, so nothing leaves the node.
 _OCR_RESOLUTION = 150          # DPI for page render; 150 is legible without huge PNGs
 _OCR_TIMEOUT_S = 180           # per-page vision call ceiling
-# A page "needs" OCR when the text layer is clearly degraded: many unmapped
-# glyphs relative to its length, or almost no extractable text at all.
-_OCR_CID_RATIO = 0.005         # >0.5% of chars were (cid:N) tokens
+# A page "needs" OCR when the text layer is clearly degraded. Two triggers:
+#   * cid ratio — unmapped glyphs relative to length. Kept low (0.1%) on
+#     purpose: on a mostly-clean page, even a handful of (cid:N) tokens are
+#     almost always the symbols of an equation the text layer couldn't
+#     represent — exactly the content OCR exists to rescue.
+#   * absolute cid count — a short page could hide several broken glyphs
+#     without crossing the ratio, so trip on a small absolute count too.
+#   * near-empty page — likely figure-only or scanned.
+_OCR_CID_RATIO = 0.001         # >0.1% of chars were (cid:N) tokens
+_OCR_CID_ABS = 3               # ...or at least this many, regardless of length
 _OCR_MIN_TEXT = 200            # fewer than this many chars on a non-trivial page
 
 _OCR_PROMPT = (
@@ -63,7 +70,10 @@ def _needs_ocr(raw_text: str) -> bool:
     n = len(raw_text)
     if n < _OCR_MIN_TEXT:
         return True
-    return (_count_cid(raw_text) / max(n, 1)) > _OCR_CID_RATIO
+    cid = _count_cid(raw_text)
+    if cid >= _OCR_CID_ABS:
+        return True
+    return (cid / max(n, 1)) > _OCR_CID_RATIO
 
 
 def _render_page_png_b64(page, resolution: int = _OCR_RESOLUTION) -> str | None:

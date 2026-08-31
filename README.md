@@ -305,21 +305,30 @@ files, `.tex`, `.ipynb`, config files), `.pdf`, and Office `.docx` / `.xlsx`.
 Office extraction is text-only and lossy — it drops styling, comments,
 tracked changes, and (for spreadsheets) formulas, keeping computed values.
 
-**Scanned / equation-heavy PDFs (vision OCR).** Text-layer extraction mangles
-dense math and scanned pages (garbled symbols, `(cid:N)` artifacts). Add
-`--private-ocr auto` to re-read degraded pages with the local vision model —
-nothing leaves the node:
+**Scanned / equation-heavy PDFs (vision OCR).** Plain PDF indexing uses fast
+text-layer extraction, which mangles dense math and scanned pages (garbled
+symbols, `(cid:N)` artifacts). **OCR is off by default** — you turn it on
+per-run with `--private-ocr`, which re-reads pages with the local vision
+model (nothing leaves the node):
+
+| `--private-ocr` value | Behaviour |
+| --- | --- |
+| *(omitted)* / `off` | **Default.** Text-layer extraction only. Fast, no GPU pass over images. |
+| `auto` | OCR *only* pages whose text layer looks broken; clean pages stay fast. Best for scientific papers. |
+| `force` | OCR *every* page. Use for fully-scanned documents. Slow. |
 
 ```bash
-ofa --add-private ~/papers --private-ocr auto    # OCR only degraded pages
+ofa --add-private ~/papers                       # text-only (default, no OCR)
+ofa --add-private ~/papers --private-ocr auto    # OCR degraded pages only
 ofa --add-private ~/scans  --private-ocr force   # OCR every page (slow)
 ```
 
-`auto` OCRs only pages whose text layer looks broken (keeping clean pages
-fast); `force` does every page. Both require a vision-capable `OFA_MODEL`
-(the default `gemma4:31b-it-q8_0` qualifies) and a GPU allocation for
-reasonable speed. OCR renders each page to an image and asks the model to
-transcribe it to Markdown + LaTeX.
+`auto`/`force` require a vision-capable `OFA_MODEL` (the default
+`gemma4:31b-it-q8_0` qualifies) and a GPU allocation for reasonable speed —
+each OCR'd page is rendered to an image and transcribed to Markdown + LaTeX
+by the model (~seconds per page). To add OCR to a collection you already
+indexed, just re-run `--add-private` on the same directory with the flag; it
+re-indexes in place.
 
 **Where it lives.** The private store is a separate ChromaDB instance under
 `$OFA_SCRATCH/vectordb-private`, created `0700`; its metadata file is `0600`.

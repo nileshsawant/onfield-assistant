@@ -305,6 +305,22 @@ files, `.tex`, `.ipynb`, config files), `.pdf`, and Office `.docx` / `.xlsx`.
 Office extraction is text-only and lossy — it drops styling, comments,
 tracked changes, and (for spreadsheets) formulas, keeping computed values.
 
+**Scanned / equation-heavy PDFs (vision OCR).** Text-layer extraction mangles
+dense math and scanned pages (garbled symbols, `(cid:N)` artifacts). Add
+`--private-ocr auto` to re-read degraded pages with the local vision model —
+nothing leaves the node:
+
+```bash
+ofa --add-private ~/papers --private-ocr auto    # OCR only degraded pages
+ofa --add-private ~/scans  --private-ocr force   # OCR every page (slow)
+```
+
+`auto` OCRs only pages whose text layer looks broken (keeping clean pages
+fast); `force` does every page. Both require a vision-capable `OFA_MODEL`
+(the default `gemma4:31b-it-q8_0` qualifies) and a GPU allocation for
+reasonable speed. OCR renders each page to an image and asks the model to
+transcribe it to Markdown + LaTeX.
+
 **Where it lives.** The private store is a separate ChromaDB instance under
 `$OFA_SCRATCH/vectordb-private`, created `0700`; its metadata file is `0600`.
 It is never written to the shared `vectordb/`. Override the location with

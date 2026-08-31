@@ -286,11 +286,13 @@ def process_pdf_file(
     path: Path, root: Path, collection: str,
     *,
     page_ranges: dict | None = None,
+    ocr: str = "off",
 ) -> list[tuple[str, str, dict]]:
     """Extract a PDF, return list of ``(chunk_id, doc, metadata)`` tuples.
 
     Each PDF page becomes at least one chunk. Long pages are split
-    further with ``PAPER_CHUNK`` / ``PAPER_OVERLAP``.
+    further with ``PAPER_CHUNK`` / ``PAPER_OVERLAP``. ``ocr`` is forwarded
+    to ``extract_pages`` ("off" | "auto" | "force").
     """
     try:
         from pdf_extract import extract_pages
@@ -313,7 +315,7 @@ def process_pdf_file(
     out = []
     chunk_idx = 0
     for page_num, page_text in extract_pages(
-        path, start_page=start_page, end_page=end_page,
+        path, start_page=start_page, end_page=end_page, ocr=ocr,
     ):
         for sub_chunk in chunk_text(page_text, PAPER_CHUNK, PAPER_OVERLAP):
             prefix = f"[{root.name} paper - {relpath}, page {page_num}]"

@@ -666,6 +666,7 @@ check — `npm run typecheck` — which is wired into CI via
 | `--list-models` | Print model registry and exit. |
 | `--add-private DIR` | Index a directory into the per-user private RAG store. |
 | `--private-name NAME` | Collection label for `--add-private` (default: dir name). |
+| `--private-ocr off\|auto\|force` | Vision-OCR for PDFs during `--add-private` (local model; `auto` = degraded pages only). |
 | `--list-private` | List private RAG collections and exit. |
 | `--forget-private NAME` | Delete a private collection (or `all`). |
 | `--serve` | Start BYOK HTTP server. |

@@ -32,6 +32,86 @@ _MIN_PAGE_CHARS = 20   # skip pages with less usable text than this
 # pollutes chunks / embeddings, so drop it.
 _CID_RE = re.compile(r"\(cid:\d+\)")
 
+# Vision-OCR tuning. Rendered pages go to a local vision model via
+# ofa_main.chat_stream, so nothing leaves the node.
+_OCR_RESOLUTION = 150          # DPI for page render; 150 is legible without huge PNGs
+_OCR_TIMEOUT_S = 180           # per-page vision call ceiling
+# A page "needs" OCR when the text layer is clearly degraded: many unmapped
+# glyphs relative to its length, or almost no extractable text at all.
+_OCR_CID_RATIO = 0.005         # >0.5% of chars were (cid:N) tokens
+_OCR_MIN_TEXT = 200            # fewer than this many chars on a non-trivial page
+
+_OCR_PROMPT = (
+    "Transcribe ALL text from this page image to Markdown, exactly as it "
+    "appears and in natural reading order (respect columns). Render every "
+    "mathematical expression in LaTeX: inline as $...$ and displayed "
+    "equations as $$...$$. Do not summarise, explain, or add commentary — "
+    "output only the transcription."
+)
+
+
+def _count_cid(raw_before_clean: str) -> int:
+    return len(_CID_RE.findall(raw_before_clean))
+
+
+def _needs_ocr(raw_text: str) -> bool:
+    """Heuristic: does this page's text layer look too degraded to trust?
+
+    Runs against the RAW extract (before _clean_page_text strips cid tokens),
+    so the cid ratio is measurable.
+    """
+    n = len(raw_text)
+    if n < _OCR_MIN_TEXT:
+        return True
+    return (_count_cid(raw_text) / max(n, 1)) > _OCR_CID_RATIO
+
+
+def _render_page_png_b64(page, resolution: int = _OCR_RESOLUTION) -> str | None:
+    """Render a pdfplumber page to a base64 PNG using pdfplumber's own
+    to_image() (no poppler / pdf2image needed). Returns None on failure."""
+    import base64
+    import io
+    try:
+        img = page.to_image(resolution=resolution).original  # PIL image
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        print(f"[pdf_extract] page render failed: {e}", file=sys.stderr)
+        return None
+
+
+def _ocr_page(page) -> str:
+    """Transcribe one page via the local ofa vision model. Returns "" on
+    any failure so the caller can fall back to the text-layer extract.
+
+    Imported lazily to avoid a hard dependency cycle (ofa_main imports this
+    module's extract_pages) and so non-OCR ingestion never pays the cost.
+    """
+    b64 = _render_page_png_b64(page)
+    if not b64:
+        return ""
+    try:
+        import ofa_main
+    except ImportError:
+        print("[pdf_extract] OCR requested but ofa_main not importable; "
+              "skipping OCR for this page.", file=sys.stderr)
+        return ""
+    if not ofa_main.model_supports_vision():
+        print(f"[pdf_extract] OCR requested but model '{ofa_main.MODEL}' has no "
+              "vision support; skipping OCR. Set OFA_MODEL to a vision-capable "
+              "model (e.g. gemma4:31b-it-q8_0).", file=sys.stderr)
+        return ""
+    messages = [{"role": "user", "content": _OCR_PROMPT, "images": [b64]}]
+    try:
+        out = "".join(ofa_main.chat_stream(
+            messages, num_predict=4096, temperature=0.0,
+        ))
+        return out.strip()
+    except Exception as e:
+        print(f"[pdf_extract] OCR vision call failed: {e}", file=sys.stderr)
+        return ""
+
 
 def _clean_page_text(text: str) -> str:
     text = _CID_RE.sub("", text)
@@ -46,6 +126,7 @@ def extract_pages(
     *,
     start_page: int = 1,
     end_page: int | None = None,
+    ocr: str = "off",
 ) -> Iterator[tuple[int, str]]:
     """Yield ``(page_number, text)`` tuples for each non-empty page of *pdf_path*.
 
@@ -57,6 +138,16 @@ def extract_pages(
     (1-based, inclusive; ``None`` = read to end) stops after it. Use these
     to ingest only a chapter or appendix of a large textbook without
     embedding its front-matter, table of contents, or unrelated chapters.
+
+    ``ocr`` controls vision-OCR via the local ofa model (nothing leaves the
+    node):
+      * ``"off"`` (default) — text-layer extraction only.
+      * ``"auto"`` — OCR only pages whose text layer looks degraded
+        (``_needs_ocr``: many unmapped glyphs, or almost no text). Best
+        for scientific PDFs where most pages are fine but equation-dense
+        ones aren't.
+      * ``"force"`` — OCR every page. Slow; use for scanned documents with
+        no usable text layer at all.
 
     Raises ``ImportError`` if pdfplumber isn't installed. Raises
     ``FileNotFoundError`` if the PDF doesn't exist. Per-page extraction
@@ -92,16 +183,24 @@ def extract_pages(
                 # loses inter-word spaces ("mergesquantummechanics"), which
                 # wrecks both retrieval and the model's comprehension. A
                 # smaller tolerance keeps genuine word gaps.
-                # NOTE: this does NOT fix two-column reading order (pdfplumber
-                # reads the flat text layer left-to-right) nor unmapped math
-                # glyphs / "(cid:N)" tokens, which are font-encoding losses no
-                # text extractor can recover — only OCR would.
-                text = page.extract_text(x_tolerance=1.5) or ""
+                raw = page.extract_text(x_tolerance=1.5) or ""
             except Exception as e:
                 print(f"[pdf_extract] {pdf_path.name} page {i}: {e}",
                       file=sys.stderr)
                 continue
-            text = _clean_page_text(text)
+
+            use_ocr = ocr == "force" or (ocr == "auto" and _needs_ocr(raw))
+            if use_ocr:
+                print(f"[pdf_extract] OCR page {i} of {pdf_path.name}...",
+                      file=sys.stderr)
+                ocr_text = _ocr_page(page)
+                # Only accept OCR if it produced more than the text layer;
+                # a failed/empty vision call must not blank out a page that
+                # had usable (if imperfect) text.
+                text = ocr_text if len(ocr_text) > len(_clean_page_text(raw)) else _clean_page_text(raw)
+            else:
+                text = _clean_page_text(raw)
+
             if len(text.strip()) < _MIN_PAGE_CHARS:
                 continue
             yield i, text
@@ -109,12 +208,12 @@ def extract_pages(
         pdf.close()
 
 
-def extract_all(pdf_path: Path) -> str:
+def extract_all(pdf_path: Path, *, ocr: str = "off") -> str:
     """Convenience: return the whole PDF as one text blob with page
     markers so downstream chunking can still surface page numbers via
     regex if needed."""
     parts = []
-    for page_num, text in extract_pages(pdf_path):
+    for page_num, text in extract_pages(pdf_path, ocr=ocr):
         parts.append(f"[page {page_num}]\n{text}")
     return "\n\n".join(parts)
 

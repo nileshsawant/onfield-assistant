@@ -186,7 +186,8 @@ def _sanitize_collection_name(raw: str) -> str:
     return name[:63].rstrip("-.")
 
 
-def add_private(directory: str, collection_label: str | None = None) -> int:
+def add_private(directory: str, collection_label: str | None = None,
+                ocr: str = "off") -> int:
     """Index every supported file under *directory* into the private store.
 
     Re-running with the same collection upserts (stable chunk IDs), so an
@@ -219,7 +220,7 @@ def add_private(directory: str, collection_label: str | None = None) -> int:
         triples.extend(_ri.process_code_file(p, root, coll_name))
     for p in pdf_files:
         try:
-            triples.extend(_ri.process_pdf_file(p, root, coll_name))
+            triples.extend(_ri.process_pdf_file(p, root, coll_name, ocr=ocr))
         except Exception as e:
             _err(f"  [!] {p}: PDF extraction failed ({e}); skipped")
     for p in office_files:

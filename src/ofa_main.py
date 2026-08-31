@@ -32,6 +32,20 @@ OFA_PORT = None         # type: int | None
 OLLAMA_HOST = None      # type: str | None
 
 MODEL = os.environ.get("OFA_MODEL", "gemma4:31b-it-q8_0")
+
+# Models with a vision head, for gating image input / OCR. Kept here as the
+# single source of truth; mirrored in vscode-ext modelProvider.ts.
+VISION_MODELS = frozenset({
+    "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
+    "llama4:scout", "muse-glimmer:30b",
+})
+
+
+def model_supports_vision(model: str | None = None) -> bool:
+    """True if the given model id (default: active MODEL) can accept images."""
+    return (model or MODEL) in VISION_MODELS
+
+
 PROMPTS_DIR = os.path.join(OFA_ROOT, "prompts")
 OPENFOAM_PROMPT_PATH = os.path.join(PROMPTS_DIR, "openfoam.txt")
 HPC_PROMPT_PATH = os.path.join(PROMPTS_DIR, "hpc.txt")
@@ -4200,6 +4214,14 @@ def main():
         help="Collection label for --add-private (default: the directory name)."
     )
     parser.add_argument(
+        "--private-ocr", choices=["off", "auto", "force"], default="off",
+        help="Vision-OCR for PDFs during --add-private, via the local model "
+             "(nothing leaves the node). 'auto' OCRs only pages whose text "
+             "layer looks degraded (garbled equations, scanned pages); "
+             "'force' OCRs every page (slow); 'off' (default) is text-only. "
+             "Requires a vision-capable OFA_MODEL."
+    )
+    parser.add_argument(
         "--list-private", action="store_true",
         help="List your private RAG collections and exit."
     )
@@ -4294,7 +4316,7 @@ def main():
     # bring-up — they only touch the per-user private store on disk.
     if args.add_private:
         from ofa_private_rag import add_private
-        sys.exit(add_private(args.add_private, args.private_name))
+        sys.exit(add_private(args.add_private, args.private_name, args.private_ocr))
     if args.list_private:
         from ofa_private_rag import list_private
         sys.exit(list_private())

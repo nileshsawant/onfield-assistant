@@ -1997,7 +1997,12 @@ def _get_bm25_index(collection, name):
         try:
             import re
             from rank_bm25 import BM25Okapi
-            docs = collection.get()
+            # Only documents + metadatas are needed for BM25. Chroma's
+            # .get() returns embeddings by default; for the big collections
+            # (amrex_src/of13_src, ~10k docs of 384-dim vectors each) those
+            # materialise as Python float lists and cost tens of GB of RAM,
+            # which OOM-killed users under the per-session cgroup limit.
+            docs = collection.get(include=["documents", "metadatas"])
             _bm25_docs_cache[name] = docs
             token_pattern = r'[a-zA-Z0-9\-]+'
             tokenized_docs = [re.findall(token_pattern, d.lower()) for d in docs["documents"]]
@@ -2958,7 +2963,8 @@ def _get_hpc_bm25():
         try:
             import re
             from rank_bm25 import BM25Okapi
-            _hpc_all_docs = _hpc_docs_collection.get()
+            # documents + metadatas only — never embeddings (see _get_bm25_index).
+            _hpc_all_docs = _hpc_docs_collection.get(include=["documents", "metadatas"])
             token_pattern = r'[a-zA-Z0-9\-]+'
             tokenized_docs = [re.findall(token_pattern, doc.lower()) for doc in _hpc_all_docs["documents"]]
             _bm25_hpc = BM25Okapi(tokenized_docs)

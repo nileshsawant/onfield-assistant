@@ -102,6 +102,16 @@ def _ocr_page(page) -> str:
               "vision support; skipping OCR. Set OFA_MODEL to a vision-capable "
               "model (e.g. gemma4:31b-it-q8_0).", file=sys.stderr)
         return ""
+    # The --add-private dispatch exits before ofa's normal Ollama bring-up
+    # (so text-only ingest never starts a daemon), which leaves OLLAMA_HOST
+    # unset. OCR does need the model, so ensure the daemon here. Idempotent:
+    # returns fast if a daemon is already up.
+    try:
+        ofa_main.ensure_ollama_running()
+    except Exception as e:
+        print(f"[pdf_extract] could not start Ollama for OCR ({e}); "
+              "skipping OCR.", file=sys.stderr)
+        return ""
     messages = [{"role": "user", "content": _OCR_PROMPT, "images": [b64]}]
     try:
         out = "".join(ofa_main.chat_stream(

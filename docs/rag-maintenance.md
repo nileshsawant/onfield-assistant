@@ -417,12 +417,14 @@ Operator-relevant facts:
   private collection is format-identical to a shared one. Supported inputs:
   the `code`/text extensions plus `.pdf`, `.docx`, and `.xlsx`. Office
   extraction is text-only and lossy.
-- For scanned or equation-dense PDFs, `--private-ocr auto|force` re-reads
-  pages with the local vision model (renders page → image → Markdown+LaTeX
-  transcription). `auto` only touches pages whose text layer looks degraded.
-  Requires a vision-capable `OFA_MODEL` and, realistically, a GPU node. The
-  same `ocr=` argument exists on `pdf_extract.extract_pages` /
-  `rebuild_indices.process_pdf_file` for shared corpora.
+- For scanned or equation-dense PDFs, vision-OCR re-reads pages with the
+  local model (renders page → image → Markdown+LaTeX transcription).
+  `--private-ocr` defaults to `auto`, which OCRs only pages whose text layer
+  looks degraded; `force` does every page, `off` disables it. Needs a
+  vision-capable `OFA_MODEL` (downgrades to text-only with a notice
+  otherwise). The same `ocr=` argument exists on
+  `pdf_extract.extract_pages` / `rebuild_indices.process_pdf_file` for
+  shared corpora, where it defaults to `off`.
 - Collections are discovered at load via `list_collections()`, so users add
   corpora without any config edit. Names are prefixed `priv-`.
 - Retrieved private snippets are labelled `PRIVATE DATA` in the prompt and

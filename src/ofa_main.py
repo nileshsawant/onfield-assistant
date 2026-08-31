@@ -4214,12 +4214,13 @@ def main():
         help="Collection label for --add-private (default: the directory name)."
     )
     parser.add_argument(
-        "--private-ocr", choices=["off", "auto", "force"], default="off",
+        "--private-ocr", choices=["off", "auto", "force"], default="auto",
         help="Vision-OCR for PDFs during --add-private, via the local model "
-             "(nothing leaves the node). 'auto' OCRs only pages whose text "
-             "layer looks degraded (garbled equations, scanned pages); "
-             "'force' OCRs every page (slow); 'off' (default) is text-only. "
-             "Requires a vision-capable OFA_MODEL."
+             "(nothing leaves the node). Default 'auto': OCR only pages whose "
+             "text layer looks degraded (garbled equations, scanned pages), "
+             "leaving clean pages on the fast text path. 'force' OCRs every "
+             "page (slow); 'off' disables OCR entirely (text-only). "
+             "'auto'/'force' need a vision-capable OFA_MODEL."
     )
     parser.add_argument(
         "--list-private", action="store_true",

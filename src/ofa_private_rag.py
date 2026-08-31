@@ -187,11 +187,16 @@ def _sanitize_collection_name(raw: str) -> str:
 
 
 def add_private(directory: str, collection_label: str | None = None,
-                ocr: str = "off") -> int:
+                ocr: str = "auto") -> int:
     """Index every supported file under *directory* into the private store.
 
     Re-running with the same collection upserts (stable chunk IDs), so an
     edited corpus can be refreshed by pointing at the same directory again.
+
+    ``ocr`` ("auto" | "force" | "off") controls vision-OCR of PDF pages.
+    Default "auto" self-heals degraded pages (garbled equations / scans);
+    it downgrades to "off" with one notice if the active model has no vision
+    head, rather than emitting a per-page skip.
     """
     root = Path(directory).expanduser().resolve()
     if not root.is_dir():
@@ -209,6 +214,20 @@ def add_private(directory: str, collection_label: str | None = None,
         _err(f"       Supported: {', '.join(CODE_EXTENSIONS)}, "
              f"{', '.join(OFFICE_EXTENSIONS)}, .pdf")
         return 1
+
+    # If OCR is on but the model can't do vision, downgrade once here so the
+    # user gets a single clear line instead of one skip per degraded page.
+    if ocr != "off" and pdf_files:
+        try:
+            import ofa_main
+            if not ofa_main.model_supports_vision():
+                _err(f"Note: --private-ocr={ocr} requested but model "
+                     f"'{ofa_main.MODEL}' has no vision head; indexing PDFs "
+                     f"text-only. Set OFA_MODEL to a vision-capable model "
+                     f"(e.g. gemma4:31b-it-q8_0) to OCR degraded pages.")
+                ocr = "off"
+        except ImportError:
+            pass
 
     print(f"Indexing {len(code_files)} text/code + {len(pdf_files)} PDF + "
           f"{len(office_files)} office file(s) from {root}", file=sys.stderr)

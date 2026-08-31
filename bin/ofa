@@ -25,8 +25,28 @@ if [ -x "$OFA_ROOT/env/bin/python3" ]; then
     unset _ofa_site_env
 fi
 
-# If not inside a SLURM allocation, request a GPU node automatically
-if [ -z "$SLURM_JOB_ID" ]; then
+# Some subcommands never touch the GPU/LLM — they inspect state or print
+# help, then exit before any Ollama bring-up. Detect them here and run
+# directly on the login node instead of burning a GPU allocation. Keep this
+# list in sync with the early-exit dispatch in src/ofa_main.py.
+#   --list-models        prints the model registry
+#   --list-private       lists private RAG collections
+#   --forget-private     deletes a private RAG collection
+#   -h / --help          argparse help
+# NOTE: --add-private is intentionally NOT here — it auto-OCRs PDFs by
+# default, which needs the vision model on a GPU.
+_ofa_no_gpu=""
+for _arg in "$@"; do
+    case "$_arg" in
+        --list-models|--list-private|--forget-private|-h|--help)
+            _ofa_no_gpu="1"
+            ;;
+    esac
+done
+
+# If not inside a SLURM allocation, request a GPU node automatically —
+# unless this is a GPU-free subcommand.
+if [ -z "$SLURM_JOB_ID" ] && [ -z "$_ofa_no_gpu" ]; then
     if [ -z "${OFA_ACCOUNT:-}" ] && [ -n "${OFA_SCHEDULER_ACCOUNT_DISCOVERY:-}" ]; then
         ACCOUNT="$(bash -c "$OFA_SCHEDULER_ACCOUNT_DISCOVERY")"
     else

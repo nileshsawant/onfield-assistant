@@ -18,12 +18,27 @@ Design notes:
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Iterator
 
 
 _MIN_PAGE_CHARS = 20   # skip pages with less usable text than this
+
+# pdfplumber emits a literal "(cid:N)" token whenever a glyph has no
+# Unicode mapping in the PDF's font (common for math symbols in older
+# scientific PDFs). The token carries no recoverable information and only
+# pollutes chunks / embeddings, so drop it.
+_CID_RE = re.compile(r"\(cid:\d+\)")
+
+
+def _clean_page_text(text: str) -> str:
+    text = _CID_RE.sub("", text)
+    # Collapse the runs of spaces that removing cid tokens can leave behind,
+    # without touching newlines (page layout still matters for chunking).
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return text
 
 
 def extract_pages(
@@ -72,11 +87,21 @@ def extract_pages(
             if end_page is not None and i > end_page:
                 break
             try:
-                text = page.extract_text() or ""
+                # x_tolerance=1.5 (default 3.0) is the single biggest lever
+                # for scientific PDFs: at the default, tightly-set body text
+                # loses inter-word spaces ("mergesquantummechanics"), which
+                # wrecks both retrieval and the model's comprehension. A
+                # smaller tolerance keeps genuine word gaps.
+                # NOTE: this does NOT fix two-column reading order (pdfplumber
+                # reads the flat text layer left-to-right) nor unmapped math
+                # glyphs / "(cid:N)" tokens, which are font-encoding losses no
+                # text extractor can recover — only OCR would.
+                text = page.extract_text(x_tolerance=1.5) or ""
             except Exception as e:
                 print(f"[pdf_extract] {pdf_path.name} page {i}: {e}",
                       file=sys.stderr)
                 continue
+            text = _clean_page_text(text)
             if len(text.strip()) < _MIN_PAGE_CHARS:
                 continue
             yield i, text

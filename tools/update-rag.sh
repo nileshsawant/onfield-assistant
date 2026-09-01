@@ -24,11 +24,16 @@ export OFA_ROOT
 PYTHON="$OFA_ROOT/env/bin/python3"
 REBUILD="$OFA_ROOT/src/rebuild_indices.py"
 
-# Declarative map: collection -> "repo_subdir<TAB>branch". Only collections
-# whose sources are git clones we control belong here. Keep in sync with
-# collections.toml. A collection with multiple git sources (e.g. marbles,
-# quantum_computing) lists them space-separated in the repos field, still
-# paired with a branch each via the "dir:branch" form.
+# Declarative map: collection -> space-separated "dir:branch" source specs.
+# Keep in sync with collections.toml. Each source dir may be:
+#   * a git clone            -> pulled on the given branch
+#   * a container of clones  -> each nested clone pulled on its OWN branch
+#     (the :branch here is then ignored; e.g. quantum-code holds several
+#     independent project repos)
+#   * a non-git snapshot     -> nothing to pull, rebuild only (e.g. the
+#     vendored *-papers PDF drops, vasp)
+# pull_repo() auto-detects which shape each dir is, so a source can change
+# shape over time without editing this map.
 declare -A REPO_MAP=(
     [hpc_docs]="HPC:gh-pages"
     [reframe_src]="reframe-universal:rh9"
@@ -61,8 +66,32 @@ else
     COLLECTIONS=("$@")
 fi
 
-# Pull each git source backing the requested collections. Dedupe repos so a
-# repo shared by two collections is only pulled once per run.
+# Never let git block this unattended job on an interactive prompt: SSH in
+# batch mode (fail instead of asking for a key/password) with a short
+# connect timeout, and disable git's credential prompt.
+export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"
+export GIT_TERMINAL_PROMPT=0
+
+# Fetch + hard-align one clone to a branch. These are read-only mirror
+# clones for RAG, so a hard reset is safe and avoids merge prompts if
+# someone touched the working tree. Branch defaults to the checked-out one.
+_pull_one() {
+    local path="$1" branch="${2:-}"
+    [ -z "$branch" ] && branch="$(git -C "$path" branch --show-current 2>/dev/null)"
+    [ -z "$branch" ] && { log "ERROR: no branch for $path (detached HEAD?)"; return 1; }
+    log "pull $(basename "$path") ($branch)"
+    git -C "$path" fetch --quiet origin "$branch" \
+        && git -C "$path" checkout --quiet "$branch" \
+        && git -C "$path" reset --hard --quiet "origin/$branch" \
+        || { log "ERROR: git pull failed for $path"; return 1; }
+}
+
+# Pull the git source backing a collection. Three shapes are handled:
+#   1. the dir is itself a clone            -> pull it on the mapped branch
+#   2. the dir contains nested clones       -> pull each on its own branch
+#      (e.g. repos/quantum-code holds several independent project repos)
+#   3. the dir is a non-git snapshot        -> nothing to pull (rebuild only)
+# Dedupe by dir so a source shared by two collections is pulled once.
 declare -A _pulled=()
 pull_repo() {
     local spec="$1" dir branch
@@ -70,18 +99,23 @@ pull_repo() {
     local path="$OFA_ROOT/repos/$dir"
     if [ -n "${_pulled[$dir]:-}" ]; then return 0; fi
     _pulled[$dir]=1
-    if [ ! -d "$path/.git" ]; then
-        log "WARN: $path is not a git clone; skipping pull (will still rebuild)"
-        return 0
+
+    if [ -d "$path/.git" ]; then
+        _pull_one "$path" "$branch"
+        return
     fi
-    log "pull $dir ($branch)"
-    # Fetch + hard-align to the tracked branch. These are read-only mirror
-    # clones for RAG, so a hard reset is safe and avoids merge prompts if
-    # someone touched the working tree.
-    git -C "$path" fetch --quiet origin "$branch" \
-        && git -C "$path" checkout --quiet "$branch" \
-        && git -C "$path" reset --hard --quiet "origin/$branch" \
-        || { log "ERROR: git pull failed for $dir"; return 1; }
+
+    # Not a clone itself — look for nested clones one level down.
+    local rc=0 found=0 sub
+    for sub in "$path"/*/; do
+        [ -d "$sub/.git" ] || continue
+        found=1
+        _pull_one "${sub%/}" "" || rc=1   # nested repos use their own branch
+    done
+    if [ "$found" -eq 0 ]; then
+        log "note: $dir is a non-git snapshot; rebuild only (nothing to pull)"
+    fi
+    return "$rc"
 }
 
 rc=0

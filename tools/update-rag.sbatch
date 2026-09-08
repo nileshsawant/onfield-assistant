@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ofa-rag-update
 #SBATCH --account=hpcapps
-#SBATCH --partition=debug
+##SBATCH --partition=debug
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=32
 #SBATCH --mem=80G
@@ -63,14 +63,23 @@ echo "[$(date '+%F %T')] ofa-rag-update job ${SLURM_JOB_ID:-<local>} starting: c
 # --- resubmit the successor FIRST -----------------------------------------
 # Submit before running the work so a failure in the update itself doesn't
 # break the recurring chain (we'd rather keep trying tomorrow than stop).
-# Guard against accidental runaway chains if the partition rejects --begin.
+#
+# Pin sbatch to /nopt/slurm/current explicitly. Inside a compute-node job
+# the environment can shadow PATH/LD_LIBRARY_PATH with a newer SLURM build
+# (e.g. 25.05.6) that requires a glibc the RHEL8 compute nodes don't have,
+# so a bare `sbatch` dies with "GLIBC_2.34 not found" and silently breaks
+# the chain. The `current` symlink (25.05.5) links against the base glibc
+# and works on both RHEL8 and RHEL9. Clear LD_LIBRARY_PATH for this one
+# call so the matching libslurmfull.so is used, not a shadowed newer one.
+_SBATCH="/nopt/slurm/current/bin/sbatch"
+[ -x "$_SBATCH" ] || _SBATCH="$(command -v sbatch 2>/dev/null)"
 _acct_arg=""
 [ -n "${SLURM_JOB_ACCOUNT:-}" ] && _acct_arg="--account=$SLURM_JOB_ACCOUNT"
-if command -v sbatch >/dev/null 2>&1; then
-    if sbatch --begin="$INTERVAL" $_acct_arg \
+if [ -n "$_SBATCH" ]; then
+    if env -u LD_LIBRARY_PATH "$_SBATCH" --begin="$INTERVAL" $_acct_arg \
               --export=ALL,OFA_RAG_UPDATE_INTERVAL="$INTERVAL" \
               "$OFA_ROOT/tools/update-rag.sbatch" "${COLLECTIONS[@]}"; then
-        echo "[$(date '+%F %T')] queued next run at: $INTERVAL"
+        echo "[$(date '+%F %T')] queued next run at: $INTERVAL (via $_SBATCH)"
     else
         echo "[$(date '+%F %T')] WARNING: could not queue successor; chain will stop after this run" >&2
     fi

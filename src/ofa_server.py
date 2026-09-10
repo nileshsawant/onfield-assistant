@@ -56,6 +56,13 @@ from ofa_site import load_site as _load_site
 # at server-construction time (tests can monkey-patch before that).
 ofa_main = None  # set by ``serve()`` after we import the real module
 
+# gemma4 occasionally returns a turn with neither content nor tool_calls,
+# which the client renders as "Sorry, no response was returned." We retry
+# the generation server-side this many extra times before giving up. Safe
+# because a retry only happens when the previous attempt streamed nothing
+# to the client (only the content-free role chunk was sent).
+_EMPTY_TURN_RETRIES = 2
+
 
 # ---- model-id ↔ ofa mode mapping ----------------------------------------
 # We advertise five distinct "models" to VS Code so the user can switch
@@ -687,40 +694,56 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
         finish_reason = "stop"
+        emitted = False
         try:
-            if tools:
-                # Tools-on path: stream raw Ollama chunks so we can pull
-                # out tool_calls structure.
-                ollama_opts = dict(ofa_main.get_model_options())
-                ollama_opts.update(opts)
-                tool_index = 0
-                for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
-                    msg = chunk.get("message") or {}
-                    text = msg.get("content") or ""
-                    if text:
+            # Retry the whole generation if an attempt streams nothing at
+            # all (empty gemma turn). Only the content-free role chunk has
+            # been sent so far, so a fresh attempt is invisible to the
+            # client. Once any content/tool delta is written, `emitted`
+            # is True and we never retry (a mid-stream error is real).
+            for attempt in range(_EMPTY_TURN_RETRIES + 1):
+                if tools:
+                    # Tools-on path: stream raw Ollama chunks so we can pull
+                    # out tool_calls structure.
+                    ollama_opts = dict(ofa_main.get_model_options())
+                    ollama_opts.update(opts)
+                    tool_index = 0
+                    for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
+                        msg = chunk.get("message") or {}
+                        text = msg.get("content") or ""
+                        if text:
+                            emitted = True
+                            self.wfile.write(_sse_chunk(model_id, completion_id, created,
+                                                        {"content": text}))
+                            self.wfile.flush()
+                        tcs = msg.get("tool_calls") or []
+                        for tc in tcs:
+                            emitted = True
+                            openai_tc = _ollama_tool_call_to_openai(tc, tool_index)
+                            tool_index += 1
+                            self.wfile.write(_sse_chunk(
+                                model_id, completion_id, created,
+                                {"tool_calls": [openai_tc]},
+                            ))
+                            self.wfile.flush()
+                        if chunk.get("done"):
+                            finish_reason = "tool_calls" if tool_index > 0 else "stop"
+                            break
+                else:
+                    # Existing text-only path.
+                    for chunk in ofa_main.chat_stream(messages, **opts):
+                        if not chunk:
+                            continue
+                        emitted = True
                         self.wfile.write(_sse_chunk(model_id, completion_id, created,
-                                                    {"content": text}))
+                                                    {"content": chunk}))
                         self.wfile.flush()
-                    tcs = msg.get("tool_calls") or []
-                    for tc in tcs:
-                        openai_tc = _ollama_tool_call_to_openai(tc, tool_index)
-                        tool_index += 1
-                        self.wfile.write(_sse_chunk(
-                            model_id, completion_id, created,
-                            {"tool_calls": [openai_tc]},
-                        ))
-                        self.wfile.flush()
-                    if chunk.get("done"):
-                        finish_reason = "tool_calls" if tool_index > 0 else "stop"
-                        break
-            else:
-                # Existing text-only path.
-                for chunk in ofa_main.chat_stream(messages, **opts):
-                    if not chunk:
-                        continue
-                    self.wfile.write(_sse_chunk(model_id, completion_id, created,
-                                                {"content": chunk}))
-                    self.wfile.flush()
+                if emitted:
+                    break
+                if attempt < _EMPTY_TURN_RETRIES:
+                    print(f"[ofa-serve] empty turn from {model_id}; "
+                          f"retrying ({attempt + 1}/{_EMPTY_TURN_RETRIES})",
+                          file=sys.stderr)
         except (BrokenPipeError, ConnectionResetError):
             # Client disconnected mid-stream — nothing to do.
             return

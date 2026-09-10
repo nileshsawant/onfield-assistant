@@ -68,3 +68,8 @@ repos/*
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# SLURM job logs (transient runtime output; may capture the ofa --serve
+# apiKey banner or other per-run secrets — never commit these).
+/*.out
+ofa-rag-update-*.out

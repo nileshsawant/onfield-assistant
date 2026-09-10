@@ -26,6 +26,7 @@ share/python-wheels/
 vectordb/
 models/
 embedding_model/
+reranker_model/
 
 # Per-site config (see site.example.toml). Kept out of git so `git pull`
 # never clobbers a downstream install's overrides. Missing file falls

@@ -33,6 +33,49 @@ OLLAMA_HOST = None      # type: str | None
 
 MODEL = os.environ.get("OFA_MODEL", "gemma4:31b-it-q8_0")
 
+# EXPERIMENTAL — OFF BY DEFAULT. CPU-hosted subagent for RAG query
+# expansion: a small model rewrites the user's query with synonyms / domain
+# terms before embedding + hybrid search, to improve recall. Runs on CPU
+# (num_gpu=0) so it never competes with the main model for VRAM.
+#
+# Why off by default: measured end-to-end latency on a Kestrel CPU
+# allocation is impractical for the on-critical-path use — a cold 3B load
+# is ~40s and CPU prompt-eval adds ~17s even for a tiny prompt, so the
+# first expansion can cost 60-90s BEFORE retrieval starts. (The ~68 tok/s
+# figure from early benchmarking measured only warm generation and was
+# misleading.) The plumbing is kept, fully wired and unit-safe, as reusable
+# infrastructure for a future async/background expansion or a faster
+# small-model / GPU-side setup. Enable with OFA_SUBAGENT=1 to experiment
+# (bump OFA_SUBAGENT_TIMEOUT accordingly). Best-effort: any failure or
+# timeout falls back to the original query, so retrieval never breaks.
+SUBAGENT_ENABLED = os.environ.get("OFA_SUBAGENT", "0") == "1"
+SUBAGENT_MODEL = os.environ.get("OFA_SUBAGENT_MODEL", "llama3.2:3b")
+# Generous enough to absorb the one-time cold model load (a 3B on CPU can
+# take 10-20s to load); warm calls return in ~1s.
+SUBAGENT_TIMEOUT = float(os.environ.get("OFA_SUBAGENT_TIMEOUT", "20.0"))
+
+# CPU cross-encoder reranker for RAG. A cross-encoder scores each (query,
+# chunk) pair jointly — far more accurate at relevance than the bi-encoder
+# vector + BM25 fusion, which scores query and chunks separately. Unlike an
+# LLM, it is a single forward pass per pair (no autoregressive decode), so
+# it is fast on CPU and a good use of the allocation's spare cores. When
+# enabled, _hybrid_search fetches more candidates then reranks to top_k.
+# Best-effort: any load/predict failure falls back to the fusion order.
+# Bundled model dir: reranker_model/ (cross-encoder/ms-marco-MiniLM-L-12-v2,
+# non-Chinese, Apache; ~700ms/query on CPU reranking 40 candidates).
+# Off by default: A/B showed it helps AMReX-style symbol queries but does
+# NOT beat the baseline fusion on OpenFOAM C++ (of13_src) — MS-MARCO
+# cross-encoders don't model source-code relevance well, and the strong
+# code-trained rerankers are either Chinese-origin or non-commercial
+# (jina-reranker-v2). Kept as opt-in (OFA_RERANK=1) rather than default.
+RERANK_ENABLED = os.environ.get("OFA_RERANK", "0") == "1"
+RERANK_MODEL_PATH = os.environ.get(
+    "OFA_RERANK_MODEL", os.path.join(OFA_ROOT, "reranker_model")
+)
+# How many fused candidates to rerank. Higher = better recall into the
+# reranker, more CPU. 40 is a reasonable default for ~500-char chunks.
+RERANK_CANDIDATES = int(os.environ.get("OFA_RERANK_CANDIDATES", "40"))
+
 # Models with a vision head, for gating image input / OCR. Kept here as the
 # single source of truth; mirrored in vscode-ext modelProvider.ts.
 VISION_MODELS = frozenset({
@@ -429,6 +472,7 @@ PRIVATE_SOURCES_PATH = os.path.join(OFA_SCRATCH, ".ofa_private_sources.json")
 PRIVATE_TOP_K = 5
 
 _embed_model = None       # loaded once at startup
+_reranker = None          # cross-encoder, lazy-loaded on first rerank
 _chroma_collection = None  # loaded once at startup
 _hpc_docs_collection = None
 _of13_src_collection = None
@@ -1994,6 +2038,46 @@ _CASE_SKIP = {
 _bm25_indices = {}
 _bm25_docs_cache = {}
 
+_RERANKER_UNAVAILABLE = False  # set True after a load failure
+
+
+def _get_reranker():
+    """Lazy-load the cross-encoder reranker once. Returns None if disabled,
+    unavailable, or on any load failure (caller then skips reranking)."""
+    global _reranker, _RERANKER_UNAVAILABLE
+    if not RERANK_ENABLED or _RERANKER_UNAVAILABLE:
+        return None
+    if _reranker is not None:
+        return _reranker
+    try:
+        from sentence_transformers import CrossEncoder
+        _reranker = CrossEncoder(RERANK_MODEL_PATH, device="cpu")
+    except Exception as e:
+        _RERANKER_UNAVAILABLE = True
+        print(f"Info: reranker unavailable ({e.__class__.__name__}); "
+              f"using fusion order this session.", file=sys.stderr)
+        return None
+    return _reranker
+
+
+def _rerank(query, docs, metas, top_k):
+    """Reorder (docs, metas) by cross-encoder relevance to *query*, keeping
+    the top_k. Best-effort: returns the input order (truncated) on any
+    failure so retrieval never breaks."""
+    ce = _get_reranker()
+    if ce is None or not docs:
+        return docs[:top_k], metas[:top_k]
+    try:
+        scores = ce.predict([(query, d) for d in docs])
+        order = sorted(range(len(docs)), key=lambda i: scores[i], reverse=True)
+        order = order[:top_k]
+        return [docs[i] for i in order], [metas[i] for i in order]
+    except Exception as e:
+        print(f"Info: rerank failed ({e.__class__.__name__}); "
+              f"using fusion order.", file=sys.stderr)
+        return docs[:top_k], metas[:top_k]
+
+
 def _get_bm25_index(collection, name):
     global _bm25_indices, _bm25_docs_cache
     if name not in _bm25_indices and collection is not None:
@@ -2017,12 +2101,17 @@ def _get_bm25_index(collection, name):
 def _hybrid_search(query: str, query_embedding: list, collection, coll_name: str, top_k: int, where_filter=None):
     if collection is None:
         return [], []
-        
+
+    # When reranking, gather a wider candidate pool from each retriever so
+    # the cross-encoder has more to choose from, then rerank down to top_k.
+    rerank_on = _get_reranker() is not None
+    pool = max(top_k, RERANK_CANDIDATES) if rerank_on else top_k
+
     # 1. Vector Search
     where_args = where_filter if where_filter else None
     res = collection.query(
         query_embeddings=[query_embedding], 
-        n_results=top_k, 
+        n_results=pool, 
         where=where_args,
         include=["documents", "metadatas"]
     )
@@ -2062,7 +2151,7 @@ def _hybrid_search(query: str, query_embedding: list, collection, coll_name: str
                 bm25_docs.append(doc)
                 bm25_metas.append(meta)
                 added += 1
-                if added >= top_k:
+                if added >= pool:
                     break
 
     # 3. Reciprocal Rank Fusion (RRF)
@@ -2077,8 +2166,14 @@ def _hybrid_search(query: str, query_embedding: list, collection, coll_name: str
         meta_map[doc] = meta
         
     sorted_docs = sorted(rrf_scores.keys(), key=lambda d: rrf_scores[d], reverse=True)
+
+    if rerank_on:
+        # Rerank the wider fused pool with the cross-encoder, keep top_k.
+        pool_docs = sorted_docs[:pool]
+        pool_metas = [meta_map[d] for d in pool_docs]
+        return _rerank(query, pool_docs, pool_metas, top_k)
+
     top_fused = sorted_docs[:top_k]
-    
     return top_fused, [meta_map[d] for d in top_fused]
 
 
@@ -2105,6 +2200,79 @@ def _extract_case_names(query: str) -> list:
     return [c for c in candidates if c not in _CASE_SKIP and len(c) >= 4]
 
 
+_SUBAGENT_UNAVAILABLE = False  # set True after first failure to stop retrying
+
+
+def _expand_query(query: str) -> str:
+    """Use the CPU subagent to append retrieval-friendly synonyms/terms to
+    *query*, improving hybrid-search recall.
+
+    Best-effort: returns the original query unchanged on any failure, on
+    timeout, or if disabled. Never raises. The subagent runs on CPU
+    (num_gpu=0) so it does not touch the main model's VRAM.
+
+    Timeouts are treated as transient: the FIRST call pays a one-time
+    model-load cost (cold load of a 3B can take 10-20s) but subsequent
+    calls are fast (~1s) because the model stays resident. So a timeout
+    does not disable the subagent — only a hard failure (connection
+    refused, model-not-found) does, since those won't fix themselves.
+    """
+    global _SUBAGENT_UNAVAILABLE
+    if not SUBAGENT_ENABLED or _SUBAGENT_UNAVAILABLE or not query.strip():
+        return query
+    if not OLLAMA_HOST:
+        return query
+    prompt = (
+        "You expand search queries for a code/documentation retrieval system. "
+        "Given the user query, output ONLY a single line of 5-10 additional "
+        "search keywords and domain synonyms (space-separated, no prose, no "
+        "punctuation beyond spaces) that would help find relevant code and "
+        "docs. Do not repeat the query verbatim.\n\n"
+        f"Query: {query}\nKeywords:"
+    )
+    try:
+        resp = httpx.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={
+                "model": SUBAGENT_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "think": False,
+                # keep_alive so the model stays resident between queries —
+                # amortises the cold-load cost across a session.
+                "keep_alive": "30m",
+                # num_ctx capped small: query expansion needs only a tiny
+                # window, and Ollama otherwise defaults a 3B to a 128K
+                # context and allocates ~14 GB of CPU KV cache, which makes
+                # even prompt-eval take tens of seconds on CPU. 2048 is
+                # ample for the prompt + 60-token output and keeps it fast.
+                "options": {"num_gpu": 0, "num_ctx": 2048,
+                            "num_predict": 60, "temperature": 0.3},
+            },
+            timeout=SUBAGENT_TIMEOUT,
+        )
+        resp.raise_for_status()
+        extra = (resp.json().get("response") or "").strip()
+    except httpx.TimeoutException:
+        # Likely the one-time cold model load. Don't disable — the model is
+        # probably resident now and the next call will be fast.
+        print("Info: query-expansion subagent timed out (likely cold load); "
+              "using raw query this time.", file=sys.stderr)
+        return query
+    except Exception as e:
+        # Hard failure (endpoint down, model not pulled): stop trying this
+        # session so we don't pay the timeout on every query.
+        _SUBAGENT_UNAVAILABLE = True
+        print(f"Info: query-expansion subagent unavailable ({e.__class__.__name__}); "
+              f"using raw queries this session.", file=sys.stderr)
+        return query
+    # Keep the first line only and strip anything that looks like prose.
+    extra = extra.splitlines()[0].strip() if extra else ""
+    if not extra or len(extra) > 400:
+        return query
+    return f"{query} {extra}"
+
+
 def retrieve_context(query: str, top_k: int = 12) -> str:
     """Retrieve relevant OpenFOAM file chunks from the vector database using Hybrid Search.
 
@@ -2114,7 +2282,8 @@ def retrieve_context(query: str, top_k: int = 12) -> str:
     made gemma4 more prone to returning an empty turn."""
     try:
         _init_rag()
-        
+
+        query = _expand_query(query)
         semantic_query = query
         q_lower = query.lower()
         if 'pytorch' in q_lower or 'tensorflow' in q_lower or 'conda' in q_lower:
@@ -2993,6 +3162,7 @@ def _get_reframe_rag(query: str, top_k: int = 6):
         static_rh9 = ""
         
     _init_rag()
+    query = _expand_query(query)
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
     
@@ -3021,6 +3191,7 @@ def retrieve_amrex_context(query: str, top_k: int = 6) -> str:
     share of top_k. Does NOT touch ``marbles_src`` — use
     :func:`retrieve_marbles_context` for that mode."""
     _init_rag()
+    query = _expand_query(query)
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
 
@@ -3102,6 +3273,7 @@ def retrieve_marbles_context(query: str, top_k: int = 6) -> str:
     for LBM developers.
     """
     _init_rag()
+    query = _expand_query(query)
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
 
@@ -3170,6 +3342,7 @@ def retrieve_quantum_computing_context(query: str, top_k: int = 8) -> str:
     Kestrel.
     """
     _init_rag()
+    query = _expand_query(query)
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
 
@@ -3275,6 +3448,7 @@ def retrieve_vasp_context(query: str, top_k: int = 6) -> str:
     stays grounded when users ask about running VASP on Kestrel.
     """
     _init_rag()
+    query = _expand_query(query)
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
 

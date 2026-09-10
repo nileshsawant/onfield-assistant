@@ -244,6 +244,28 @@ install_embedding_model() {
 }
 
 # ---------------------------------------------------------------------------
+# 4b. Reranker model — cross-encoder/ms-marco-MiniLM-L-12-v2 (~130 MB,
+#     CPU-friendly, Apache). Used only when OFA_RERANK=1 (off by default),
+#     so a fresh install is fully functional without it — but we bundle it
+#     so the opt-in path works with no extra steps.
+# ---------------------------------------------------------------------------
+install_reranker_model() {
+    if [[ -f "$OFA_ROOT/reranker_model/config.json" && $FORCE -eq 0 ]]; then
+        log "reranker_model/ already populated; skipping (--force to redo)"
+        return 0
+    fi
+    local model_id="${OFA_INSTALL_RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-12-v2}"
+    log "downloading reranker model $model_id"
+    if ! "$OFA_ROOT/env/bin/huggingface-cli" --help >/dev/null 2>&1; then
+        "$OFA_ROOT/env/bin/pip" install --quiet 'huggingface-hub[cli]'
+    fi
+    mkdir -p "$OFA_ROOT/reranker_model"
+    "$OFA_ROOT/env/bin/huggingface-cli" download "$model_id" \
+        --local-dir "$OFA_ROOT/reranker_model"
+    log "reranker model at $OFA_ROOT/reranker_model"
+}
+
+# ---------------------------------------------------------------------------
 # 5. LLM pull — big, so opt-out. Starts a temporary ollama daemon if none
 #    is running, does the pull, then kills the daemon.
 # ---------------------------------------------------------------------------
@@ -463,6 +485,7 @@ main() {
     install_python_deps
     install_ollama
     install_embedding_model
+    install_reranker_model
     pull_default_model
     site_wizard
     rebuild_indices

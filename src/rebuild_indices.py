@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fnmatch
 import json
 import os
 import re
@@ -68,6 +69,8 @@ PAPER_CHUNK   = 3_000    # PDF page / markdown paragraphs
 PAPER_OVERLAP = 300
 
 BATCH_SIZE = 256
+# ChromaDB caps a single upsert at ~5461 records; stay safely under it.
+UPSERT_BATCH = 4000
 
 
 # ---------------------------------------------------------------------------
@@ -161,16 +164,28 @@ _SKIP_DIRS = {
 }
 
 
-def walk_code(root: Path, extensions: list[str]) -> Iterable[Path]:
-    """Yield source files under *root* matching any of *extensions*."""
+def walk_code(root: Path, extensions: list[str], exclude: list[str] | None = None) -> Iterable[Path]:
+    """Yield source files under *root* matching any of *extensions*.
+
+    *exclude* is an optional list of glob patterns matched against each
+    file's path relative to *root* (POSIX form). A file matching any
+    pattern is skipped — used to drop symlink-duplicate trees (OpenFOAM
+    ``lnInclude/``) and vendored apps that add noise to a collection.
+    """
     ext_set = {e.lower() for e in extensions}
+    exclude = exclude or []
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune noisy dirs in place so we don't descend into them.
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
         for fn in filenames:
             p = Path(dirpath) / fn
-            if p.suffix.lower() in ext_set:
-                yield p
+            if p.suffix.lower() not in ext_set:
+                continue
+            if exclude:
+                rel = p.relative_to(root).as_posix()
+                if any(fnmatch.fnmatch(rel, pat) for pat in exclude):
+                    continue
+            yield p
 
 
 def walk_pdfs(root: Path) -> Iterable[Path]:
@@ -390,7 +405,8 @@ def rebuild_collection(
         extra = {"page_ranges": src.get("page_ranges", {})}
         if src_type == "code":
             exts = src.get("extensions", [".txt", ".md"])
-            for p in walk_code(root, exts):
+            excl = src.get("exclude", [])
+            for p in walk_code(root, exts, excl):
                 entries.append((p, "code", root, extra))
         elif src_type == "pdf":
             for p in walk_pdfs(root):
@@ -514,13 +530,17 @@ def rebuild_collection(
             show_progress_bar=False,
         )
         print(f"  embedding done in {time.time() - t0:.1f}s; upserting…")
-        # ChromaDB upsert handles duplicate IDs cleanly.
-        coll.upsert(
-            ids=pending_ids,
-            documents=pending_docs,
-            metadatas=pending_metas,
-            embeddings=embeddings.tolist(),
-        )
+        # ChromaDB rejects a single upsert larger than its max batch
+        # (~5461); large collections (amrex_src, of13_src) exceed it, so
+        # upsert in slices. upsert handles duplicate IDs cleanly.
+        emb_list = embeddings.tolist()
+        for b in range(0, len(pending_ids), UPSERT_BATCH):
+            coll.upsert(
+                ids=pending_ids[b:b + UPSERT_BATCH],
+                documents=pending_docs[b:b + UPSERT_BATCH],
+                metadatas=pending_metas[b:b + UPSERT_BATCH],
+                embeddings=emb_list[b:b + UPSERT_BATCH],
+            )
 
     total = coll.count()
     print(f"  [+] {added} added/updated  [=] {skipped} unchanged  "

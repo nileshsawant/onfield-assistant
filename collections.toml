@@ -13,9 +13,10 @@
 #
 # Scope: this file lists the collections whose sources are git-pullable
 # repos or PDF drop-folders under $OFA_ROOT/repos/. The OpenFOAM tutorial
-# and source-tree collections (``openfoam``, ``of13_src``) are NOT listed
-# here because they use special case-dict-aware chunking that lives in
-# ``build_index_v2.py`` — use that script to rebuild them.
+# + case-dict collection (``openfoam``) is NOT listed here because it uses
+# special case-dict-aware chunking that lives in ``build_index_v2.py`` —
+# use that script to rebuild it. The OpenFOAM C++ source-tree collection
+# (``of13_src``) IS managed here (plain code chunking, lnInclude excluded).
 #
 # Path resolution:
 #   * Paths starting with "/" are absolute.
@@ -50,6 +51,40 @@ type       = "code"
 extensions = [".H", ".cpp", ".h", ".f90"]
 
 # ---------------------------------------------------------------------------
+# OpenFOAM 13 C++ source tree (github.com/OpenFOAM/OpenFOAM-dev -> repos/).
+# Migrated here from a one-off indexer whose on-disk collection had grown
+# ~50% duplicate chunks from lnInclude/ symlink farms (each header indexed
+# under both its real path and its lnInclude/ symlink). lnInclude is
+# excluded here so headers are indexed once. Retrieved only when a query
+# signals C++/source intent (see retrieve_context source-routing).
+# ---------------------------------------------------------------------------
+
+[collections.of13_src]
+description = "OpenFOAM 13 C++ source tree."
+[[collections.of13_src.sources]]
+path       = "repos/OpenFOAM-dev/src"
+type       = "code"
+extensions = [".H", ".C"]
+exclude    = ["**/lnInclude/**"]
+
+# ---------------------------------------------------------------------------
+# AMReX tutorials / example apps (github.com/AMReX-Codes/amrex-tutorials).
+# Kept in a SEPARATE collection from amrex_src on purpose: amrex_src is the
+# library's own internals (Src/), which are the wrong layer to imitate when
+# writing a user application and were causing the model to emit broken,
+# brace-orphaned code. These are self-contained, compilable example apps —
+# the correct exemplars for "write me an AMReX program". retrieve_amrex_context
+# pulls from here FIRST.
+# ---------------------------------------------------------------------------
+
+[collections.amrex_tutorials]
+description = "AMReX self-contained example apps and guided tutorials."
+[[collections.amrex_tutorials.sources]]
+path       = "repos/amrex-tutorials"
+type       = "code"
+extensions = [".H", ".cpp", ".h", ".f90", ".rst", ".md"]
+
+# ---------------------------------------------------------------------------
 # ReFrame test framework.
 # ---------------------------------------------------------------------------
 
@@ -59,6 +94,11 @@ description = "ReFrame + universal test framework sources."
 path       = "repos/reframe-universal"
 type       = "code"
 extensions = [".py", ".sh", ".md"]
+# Exclude the vendored MLCommons deepcam benchmark app: it is ML training
+# code bundled as a ReFrame test payload, not ReFrame framework/test code,
+# and its hundreds of files were dominating retrieval for this collection.
+# The ReFrame test WRAPPER for deepcam (tests/deepcam/*.py) is kept.
+exclude    = ["tests/deepcam/src/**"]
 
 # ---------------------------------------------------------------------------
 # MARBLES — code + user's thesis + supporting LBM papers.

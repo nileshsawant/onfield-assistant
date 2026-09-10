@@ -40,6 +40,7 @@ declare -A REPO_MAP=(
     [marbles_src]="marblesThermal:moving-body marbles-papers:main"
     [quantum_computing]="quantum-code:main quantum-papers:main"
     [vasp_src]="vasp:main"
+    [amrex_tutorials]="amrex-tutorials:main"
 )
 
 _ts() { date '+%Y-%m-%d %H:%M:%S'; }

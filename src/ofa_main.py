@@ -433,6 +433,7 @@ _chroma_collection = None  # loaded once at startup
 _hpc_docs_collection = None
 _of13_src_collection = None
 _amrex_src_collection = None
+_amrex_tutorials_collection = None
 _marbles_src_collection = None
 _quantum_computing_collection = None
 _vasp_src_collection = None
@@ -1774,7 +1775,7 @@ def _terminate_stale_ollama():
 
 def _init_rag():
     """Load the embedding model and ChromaDB collection once."""
-    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _marbles_src_collection, _reframe_src_collection, _quantum_computing_collection, _vasp_src_collection
+    global _embed_model, _chroma_collection, _hpc_docs_collection, _of13_src_collection, _amrex_src_collection, _amrex_tutorials_collection, _marbles_src_collection, _reframe_src_collection, _quantum_computing_collection, _vasp_src_collection
     if _embed_model is not None:
         return
     import chromadb
@@ -1832,6 +1833,7 @@ def _init_rag():
     _hpc_docs_collection = _get_optional("hpc_docs")
     _of13_src_collection = _get_optional("of13_src")
     _amrex_src_collection = _get_optional("amrex_src")
+    _amrex_tutorials_collection = _get_optional("amrex_tutorials")
     _marbles_src_collection = _get_optional("marbles_src")
     _reframe_src_collection = _get_optional("reframe_src")
     _quantum_computing_collection = _get_optional("quantum_computing")
@@ -1847,6 +1849,7 @@ def _init_rag():
         ("hpc_docs",           _hpc_docs_collection),
         ("of13_src",           _of13_src_collection),
         ("amrex_src",          _amrex_src_collection),
+        ("amrex_tutorials",    _amrex_tutorials_collection),
         ("marbles_src",        _marbles_src_collection),
         ("reframe_src",        _reframe_src_collection),
         ("quantum_computing",  _quantum_computing_collection),
@@ -2102,8 +2105,13 @@ def _extract_case_names(query: str) -> list:
     return [c for c in candidates if c not in _CASE_SKIP and len(c) >= 4]
 
 
-def retrieve_context(query: str, top_k: int = 10) -> str:
-    """Retrieve relevant OpenFOAM file chunks from the vector database using Hybrid Search."""
+def retrieve_context(query: str, top_k: int = 12) -> str:
+    """Retrieve relevant OpenFOAM file chunks from the vector database using Hybrid Search.
+
+    top_k is moderately generous (12): the deployment model has a huge
+    (262144-token) context window so retrieval recall, not context budget,
+    limits answer quality — but kept below the max because oversized prompts
+    made gemma4 more prone to returning an empty turn."""
     try:
         _init_rag()
         
@@ -2161,7 +2169,7 @@ def retrieve_context(query: str, top_k: int = 10) -> str:
         
         if wants_source and _of13_src_collection is not None:
             try:
-                docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_of13_src_collection, coll_name="of13_src", top_k=3)
+                docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_of13_src_collection, coll_name="of13_src", top_k=4)
                 for s_doc, s_meta in zip(docs, metas):
                     s_header = f"[OpenFOAM 13 C++ Source Code - src/{s_meta.get('filepath', '?')}]"
                     context_parts.append(f"{s_header}\n{s_doc}\n")
@@ -2973,7 +2981,7 @@ def _get_hpc_bm25():
     return _bm25_hpc, _hpc_all_docs
 
 
-def _get_reframe_rag(query: str, top_k: int = 5):
+def _get_reframe_rag(query: str, top_k: int = 6):
     rh9_module_file = os.environ.get(
         "OFA_RHEL9_MODULE_FILE",
         os.path.join(OFA_ROOT, "data", "rhel9_module_structure.txt"),
@@ -3000,20 +3008,38 @@ def _get_reframe_rag(query: str, top_k: int = 5):
     dynamic_rh9 = "\n\n---\n\n".join(context_parts)
     return f"{static_rh9}\n\n{dynamic_rh9}".strip()
 
-def retrieve_amrex_context(query: str, top_k: int = 5) -> str:
-    """AMReX-only retrieval. Grabs top-k results from ``amrex_src`` plus a
-    small slice of ``hpc_docs`` (module paths / SLURM) so the model has
-    Kestrel context for a real build/run. Does NOT touch ``marbles_src`` —
-    use :func:`retrieve_marbles_context` for that mode."""
+def retrieve_amrex_context(query: str, top_k: int = 6) -> str:
+    """AMReX-only retrieval.
+
+    Pulls TUTORIALS/EXAMPLE apps first (``amrex_tutorials``), then a smaller
+    slice of library internals (``amrex_src``), plus a little ``hpc_docs`` for
+    build/run. The ordering matters: amrex_src is AMReX's own ``Src/`` tree —
+    the wrong layer to imitate when writing a user application, and mid-brace
+    1500-2000 char chunks of it were causing the model to emit syntactically
+    broken code. The tutorials are self-contained, compilable example programs,
+    so they are the correct exemplars and are placed first / given the larger
+    share of top_k. Does NOT touch ``marbles_src`` — use
+    :func:`retrieve_marbles_context` for that mode."""
     _init_rag()
     query_embedding = _embed_model.encode([query])[0].tolist()
     context_parts = []
 
+    # 1. Tutorials / example apps first — the good exemplars.
+    if _amrex_tutorials_collection is not None:
+        try:
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_tutorials_collection, coll_name="amrex_tutorials", top_k=top_k)
+            for s_doc, s_meta in zip(docs, metas):
+                s_header = f"[AMReX Tutorial / Example App - {s_meta.get('filepath', '?')}]"
+                context_parts.append(f"{s_header}\n{s_doc}\n")
+        except Exception:
+            pass
+
+    # 2. Smaller slice of library internals for API signatures / deep detail.
     if _amrex_src_collection is not None:
         try:
-            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_src_collection, coll_name="amrex_src", top_k=top_k)
+            docs, metas = _hybrid_search(query=query, query_embedding=query_embedding, collection=_amrex_src_collection, coll_name="amrex_src", top_k=3)
             for s_doc, s_meta in zip(docs, metas):
-                s_header = f"[AMReX Core Source Code - {s_meta.get('filepath', '?')}]"
+                s_header = f"[AMReX Core Library Internals (reference only, do not imitate structure) - {s_meta.get('filepath', '?')}]"
                 context_parts.append(f"{s_header}\n{s_doc}\n")
         except Exception:
             pass
@@ -3061,7 +3087,7 @@ def _read_pinned_kestrel_doc(relpath: str, label: str) -> str:
     return f"[{label} — {relpath}]\n{text.strip()}\n"
 
 
-def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
+def retrieve_marbles_context(query: str, top_k: int = 6) -> str:
     """MARBLES-focused retrieval.
 
     Queries ``marbles_src`` primarily (top-k), with a smaller ``amrex_src``
@@ -3130,7 +3156,7 @@ def retrieve_marbles_context(query: str, top_k: int = 5) -> str:
 
     return "\n\n---\n\n".join(context_parts)
 
-def retrieve_quantum_computing_context(query: str, top_k: int = 7) -> str:
+def retrieve_quantum_computing_context(query: str, top_k: int = 8) -> str:
     """Quantum-computing focused retrieval.
 
     Queries the single ``quantum_computing`` collection, which mixes
@@ -3239,7 +3265,7 @@ def _append_private_context(context: str, query: str) -> str:
     return f"{context}\n\n---\n\n{block}" if context else block
 
 
-def retrieve_vasp_context(query: str, top_k: int = 5) -> str:
+def retrieve_vasp_context(query: str, top_k: int = 6) -> str:
     """VASP-focused retrieval.
 
     Queries the ``vasp_src`` collection (tutorials + general notes +

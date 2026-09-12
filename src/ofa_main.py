@@ -181,16 +181,20 @@ MODEL_REGISTRY = {
     # (25 GB, == :30b/:latest), 30b-a3b-q8_0 (35 GB, registered here as the
     # quality/VRAM sweet spot matching gemma4:31b-it-q8_0's tier),
     # 30b-a3b-bf16 (66 GB). MoE with only 3B active means fast inference
-    # despite the 30B total. Model's native context is 1M; we cap num_ctx
-    # at 262144 to keep the KV cache affordable on one 80 GB H100 (raise
-    # via OFA_NUM_CTX if you need more and can spare the VRAM). Ollama's
-    # chat template emits <think>...</think> for the reasoning stream, so
-    # thought_tags hides it in the CLI on top of ofa's own <thought>.
-    # Sampling: NVIDIA recommends greedy-ish low temp for agentic use;
-    # keep it conservative (T=0.6) with nucleus on.
+    # (~208 tok/s on the H100).
+    # num_ctx is the model's FULL native 1048576 (1M). Affordable because
+    # this is a Nemotron-H HYBRID (nemotron_h_moe): most layers are Mamba-2
+    # with a constant-size recurrent state, so only the few attention layers
+    # hold a growing KV cache. Measured: weights + full 1M KV = 43.3 GB of
+    # 80 GB, 100% on GPU (verified via `ollama ps`). Unlike a dense
+    # transformer (gemma), long context here does NOT blow up VRAM.
+    # Ollama's chat template emits <think>...</think> for the reasoning
+    # stream, so thought_tags hides it in the CLI on top of ofa's own
+    # <thought>. Sampling: NVIDIA recommends greedy-ish low temp for
+    # agentic use; keep it conservative (T=0.6) with nucleus on.
     "nemotron-3.5-lightning:30b-a3b-q8_0": {
         "temperature": 0.6, "top_p": 0.95, "top_k": 40,
-        "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,
+        "repeat_penalty": 1.05, "num_ctx": 1048576, "num_predict": 32768,
         "thought_tags": [("<think>", "</think>")],
     },
     # Microsoft phi-4 — small, strong reasoning.

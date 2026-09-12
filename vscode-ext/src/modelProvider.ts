@@ -52,7 +52,7 @@ const MODEL_CONTEXT: Readonly<Record<string, { numCtx: number; numPredict: numbe
     'granite4:32b-a9b-h':      { numCtx: 131072, numPredict: 16384 },
     'gpt-oss:120b':            { numCtx: 65536,  numPredict: 32768 },
     'muse-glimmer:30b':        { numCtx: 131072, numPredict: 32768 },
-    'nemotron-3.5-lightning:30b-a3b-q8_0': { numCtx: 262144, numPredict: 32768 }
+    'nemotron-3.5-lightning:30b-a3b-q8_0': { numCtx: 1048576, numPredict: 32768 }
 };
 /** Extra tokens to reserve on top of num_predict for the RAG-augmented
  *  prompt ofa server adds server-side (Copilot only sees the user's raw

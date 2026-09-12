@@ -118,7 +118,8 @@
             "phi4:14b",
             "granite4:32b-a9b-h",
             "gpt-oss:120b",
-            "muse-glimmer:30b"
+            "muse-glimmer:30b",
+            "nemotron-3.5-lightning:30b-a3b-q8_0"
           ],
           "enumDescriptions": [
             "Do not set OFA_MODEL. bin/ofa falls back to its own default (currently gemma4:31b-it-q8_0) \u2014 same value this setting defaults to. Choose this if you want the extension to always track bin/ofa's default rather than pinning it here.",
@@ -130,7 +131,8 @@
             "Microsoft phi-4 \u2014 14B. Small + strong reasoning. NOTE: no tools capability upstream \u2014 combining with `ofa.enableTools=true` silently degrades to Ask-mode behavior (schema forwards, tool_calls never emitted).",
             "IBM Granite 4 \u2014 32B MoE (~19 GB active). Tools-capable. Sampling: T=0.7, top_p=0.95.",
             "OpenAI gpt-oss \u2014 116.8B MoE (~5B active), MXFP4, ~65 GB. Tools + thinking, no vision. Sourced from shared Kestrel install via symlink (no duplicate bytes). Sampling: T=1.0, top_p=1.0 per OpenAI card.",
-            "Meta Muse Glimmer \u2014 30B (27.9B text + 1.92B vision projector), ~18 GB. Apache 2.0, agentic/tool-use tuned, vision + thinking capable. Sampling: T=1.0, top_p=0.95, top_k=64 per Ollama's published params."
+            "Meta Muse Glimmer — 30B (27.9B text + 1.92B vision projector), ~18 GB. Apache 2.0, agentic/tool-use tuned, vision + thinking capable. Sampling: T=1.0, top_p=0.95, top_k=64 per Ollama's published params.",
+            "NVIDIA Nemotron 3.5 Lightning — 30B MoE (3B active), Q8_0 (~35 GB). Non-Chinese. Tools + thinking, NO vision. Hybrid Mamba-transformer: runs the FULL 1M-token context on one H100 (weights + KV = ~43 GB). Fast (~208 tok/s). Sampling: T=0.6, top_p=0.95, top_k=40. NOT yet in TESTED_MODELS — validate before relying on it."
           ],
           "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Default here (`gemma4:31b-it-q8_0`) matches bin/ofa's own CLI default; pick the empty option to explicitly inherit whatever bin/ofa's default is rather than pinning it. **Server-wide, not per-model-picker-entry**: all eight `OFA \u00b7 *` entries in the Copilot Chat picker route to the SAME LLM selected here \u2014 they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
         },

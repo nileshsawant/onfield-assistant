@@ -175,6 +175,24 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.15, "num_ctx": 131072, "num_predict": 32768,
         "thought_tags": [],
     },
+    # NVIDIA Nemotron 3.5 Lightning — 30B mixture-of-experts, 3B active
+    # params, built for always-on agents (tools + thinking, no vision).
+    # Non-Chinese. On Linux/H100 use the GGUF (non-MLX) tags: 30b-a3b-q4_K_M
+    # (25 GB, == :30b/:latest), 30b-a3b-q8_0 (35 GB, registered here as the
+    # quality/VRAM sweet spot matching gemma4:31b-it-q8_0's tier),
+    # 30b-a3b-bf16 (66 GB). MoE with only 3B active means fast inference
+    # despite the 30B total. Model's native context is 1M; we cap num_ctx
+    # at 262144 to keep the KV cache affordable on one 80 GB H100 (raise
+    # via OFA_NUM_CTX if you need more and can spare the VRAM). Ollama's
+    # chat template emits <think>...</think> for the reasoning stream, so
+    # thought_tags hides it in the CLI on top of ofa's own <thought>.
+    # Sampling: NVIDIA recommends greedy-ish low temp for agentic use;
+    # keep it conservative (T=0.6) with nucleus on.
+    "nemotron-3.5-lightning:30b-a3b-q8_0": {
+        "temperature": 0.6, "top_p": 0.95, "top_k": 40,
+        "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,
+        "thought_tags": [("<think>", "</think>")],
+    },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
     #     for chat use: T=0.8, top_p=1.0 (top_p=1 effectively disables

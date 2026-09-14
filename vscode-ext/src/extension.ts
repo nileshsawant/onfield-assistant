@@ -252,6 +252,8 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         gres: cfg.get<string>('slurm.gres', 'gpu:1'),
         enableTools: cfg.get<boolean>('enableTools', true),
         model: cfg.get<string>('model', ''),
+        backend: cfg.get<string>('backend', 'ollama'),
+        litellmBaseUrl: cfg.get<string>('litellm.baseUrl', ''),
         ofaBinPath
     };
     const healthIntervalSec = cfg.get<number>('healthProbeIntervalSeconds', 30);

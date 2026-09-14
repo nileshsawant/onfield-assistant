@@ -417,6 +417,104 @@ def load_or_create_api_key(path: str) -> str:
 #     JSON for VS Code's complex agent tool schemas. We'd rather the
 #     opt-in user know they're trying experimental territory.
 
+def _litellm_chat_raw(messages, tools, tool_choice, options):
+    """Stream from the LiteLLM (OpenAI) proxy, re-shaped into the same
+    Ollama-like chunk dicts ``_handle_stream`` / ``_handle_blocking``
+    already consume: ``{"message": {"content": ..., "tool_calls": [...]},
+    "done": bool}``.
+
+    tool_calls are OpenAI-native here, so no cross-format translation is
+    needed — but OpenAI streams tool_calls in fragments (name in the first
+    delta, arguments string across many). We accumulate per-index and emit
+    the assembled tool_calls in Ollama's shape (arguments as a parsed dict)
+    on the final chunk so the existing handler's
+    ``_ollama_tool_call_to_openai`` can process them uniformly.
+    """
+    import httpx  # noqa: PLC0415
+    key = ofa_main._litellm_api_key()
+    if not key:
+        raise RuntimeError("no LiteLLM API key (OFA_LITELLM_API_KEY or "
+                           "$OFA_SCRATCH/.ofa_litellm_key)")
+    # options is ofa's Ollama-style opts dict; translate to OpenAI params.
+    oai_opts = {}
+    if "temperature" in options:
+        oai_opts["temperature"] = options["temperature"]
+    if "top_p" in options:
+        oai_opts["top_p"] = options["top_p"]
+    if options.get("num_predict"):
+        oai_opts["max_tokens"] = int(options["num_predict"])
+    payload = {
+        "model": ofa_main.MODEL,
+        "messages": ofa_main._to_openai_messages(messages),
+        "stream": True,
+        **oai_opts,
+    }
+    if tools:
+        payload["tools"] = tools
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    tc_acc: dict = {}  # index -> {"id","name","args"}
+    with httpx.stream(
+        "POST",
+        f"{ofa_main.OFA_LITELLM_BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {key}",
+                 "Content-Type": "application/json"},
+        json=payload,
+        timeout=300.0,
+    ) as resp:
+        if resp.status_code != 200:
+            body = resp.read().decode("utf-8", "replace")[:500]
+            raise RuntimeError(f"LiteLLM HTTP {resp.status_code}: {body}")
+        for line in resp.iter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = obj.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            content = delta.get("content")
+            if content:
+                yield {"message": {"content": content}, "done": False}
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = tc_acc.setdefault(idx, {"id": None, "name": None, "args": ""})
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["args"] += fn["arguments"]
+    # Emit assembled tool_calls (Ollama shape: arguments as a dict) + done.
+    assembled = []
+    for idx in sorted(tc_acc):
+        slot = tc_acc[idx]
+        try:
+            args = json.loads(slot["args"]) if slot["args"] else {}
+        except json.JSONDecodeError:
+            args = {}
+        assembled.append({"function": {"name": slot["name"], "arguments": args}})
+    final: dict = {"message": {}, "done": True}
+    if assembled:
+        final["message"]["tool_calls"] = assembled
+    yield final
+
+
+def _chat_raw(messages, tools, tool_choice, options):
+    """Dispatch to the active backend's raw-chunk streamer."""
+    if ofa_main.OFA_BACKEND == "litellm":
+        yield from _litellm_chat_raw(messages, tools, tool_choice, options)
+    else:
+        yield from _ollama_chat_raw(messages, tools, tool_choice, options)
+
+
 def _ollama_chat_raw(messages, tools, tool_choice, options):
     """Stream raw Ollama /api/chat response chunks (full dicts, not just
     text). Bypasses ``ofa_main.chat_stream`` because we need ``tool_calls``
@@ -708,7 +806,7 @@ class _Handler(BaseHTTPRequestHandler):
                     ollama_opts = dict(ofa_main.get_model_options())
                     ollama_opts.update(opts)
                     tool_index = 0
-                    for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
+                    for chunk in _chat_raw(messages, tools, tool_choice, ollama_opts):
                         msg = chunk.get("message") or {}
                         text = msg.get("content") or ""
                         if text:
@@ -776,7 +874,7 @@ class _Handler(BaseHTTPRequestHandler):
                 text_parts: list[str] = []
                 tool_calls: list[dict] = []
                 tool_index = 0
-                for chunk in _ollama_chat_raw(messages, tools, tool_choice, ollama_opts):
+                for chunk in _chat_raw(messages, tools, tool_choice, ollama_opts):
                     msg = chunk.get("message") or {}
                     if msg.get("content"):
                         text_parts.append(msg["content"])
@@ -931,6 +1029,11 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
     import ofa_main as _ofa_main  # noqa: PLC0415 — deliberate lazy import
     ofa_main = _ofa_main
 
+    if ofa_main.OFA_BACKEND == "litellm":
+        print(f"[ofa-serve] LLM backend = LiteLLM "
+              f"({ofa_main.OFA_LITELLM_BASE_URL}), model '{ofa_main.MODEL}'. "
+              f"Prompts + retrieved context are sent to that endpoint.",
+              file=sys.stderr)
     ofa_main.ensure_ollama_running()
     print("[ofa-serve] loading RAG index…", file=sys.stderr)
     ofa_main._init_rag()

@@ -76,6 +76,55 @@ RERANK_MODEL_PATH = os.environ.get(
 # reranker, more CPU. 40 is a reasonable default for ~500-char chunks.
 RERANK_CANDIDATES = int(os.environ.get("OFA_RERANK_CANDIDATES", "40"))
 
+# ---------------------------------------------------------------------------
+# LLM backend selection. Default "ollama" = fully local inference (the
+# original ofa behaviour: nothing leaves the node). "litellm" routes model
+# calls to an OpenAI-compatible proxy (e.g. a lab's internal LiteLLM
+# gateway) for frontier-model quality on hard cases.
+#
+# IMPORTANT — data flow: in litellm mode the prompt AND the retrieved RAG
+# context are sent to OFA_LITELLM_BASE_URL. That is a deliberate change from
+# ofa's local-only default, so it is opt-in and announced at startup. RAG
+# embeddings still run locally (CPU); litellm mode needs NO GPU.
+#
+# The API key is read from OFA_LITELLM_API_KEY, falling back to a 0600 file
+# at $OFA_SCRATCH/.ofa_litellm_key (resolved lazily — see _litellm_api_key()).
+# It is never logged, printed, or committed.
+OFA_BACKEND = os.environ.get("OFA_BACKEND", "ollama").strip().lower()
+# base_url should include the OpenAI version segment, e.g.
+# https://litellm.example.gov/v1 — ofa POSTs to <base_url>/chat/completions.
+OFA_LITELLM_BASE_URL = os.environ.get("OFA_LITELLM_BASE_URL", "").rstrip("/")
+# Whether to treat the litellm MODEL as vision-capable (VISION_MODELS can't
+# gate remote models). Frontier models (Gemini, GPT-4o) usually are.
+LITELLM_VISION = os.environ.get("OFA_LITELLM_VISION", "1") == "1"
+
+
+def _litellm_api_key() -> str:
+    """Return the LiteLLM API key from env or a 0600 file, or "" if unset.
+
+    Resolved lazily so OFA_SCRATCH (defined later in this module) is
+    available. Never logs the key. If the fallback file exists but is not
+    0600, a warning is printed (world/group-readable secrets on a shared
+    filesystem are a real risk) but the key is still returned.
+    """
+    key = os.environ.get("OFA_LITELLM_API_KEY", "").strip()
+    if key:
+        return key
+    path = os.path.join(OFA_SCRATCH, ".ofa_litellm_key")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    if st.st_mode & 0o077:
+        print(f"Warning: {path} is group/world-accessible; run "
+              f"`chmod 600 {path}` to protect your LiteLLM key.", file=sys.stderr)
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 # Models with a vision head, for gating image input / OCR. Kept here as the
 # single source of truth; mirrored in vscode-ext modelProvider.ts.
 VISION_MODELS = frozenset({
@@ -85,7 +134,14 @@ VISION_MODELS = frozenset({
 
 
 def model_supports_vision(model: str | None = None) -> bool:
-    """True if the given model id (default: active MODEL) can accept images."""
+    """True if the given model id (default: active MODEL) can accept images.
+
+    For the litellm backend we can't consult the local VISION_MODELS set
+    (the model is remote), so honour the OFA_LITELLM_VISION flag instead
+    (default on — frontier models are usually multimodal).
+    """
+    if OFA_BACKEND == "litellm":
+        return LITELLM_VISION
     return (model or MODEL) in VISION_MODELS
 
 
@@ -1656,7 +1712,12 @@ def ensure_ollama_running():
     The chosen TCP port is persisted to `<OFA_SCRATCH>/.ofa_ollama.port` and
     the daemon's PID to `<OFA_SCRATCH>/.ofa_ollama.pid`. Concurrent `ofa`
     invocations by the same user reuse the same daemon when possible.
+
+    No-op when OFA_BACKEND=litellm: inference is remote, so there is no
+    local daemon to start (and no GPU needed).
     """
+    if OFA_BACKEND == "litellm":
+        return
     global OFA_PORT, OLLAMA_HOST
     _pick_ollama_endpoint()
 
@@ -2374,8 +2435,118 @@ def retrieve_context(query: str, top_k: int = 12) -> str:
         print(f"Warning: RAG retrieval failed ({e}), proceeding without context.", file=sys.stderr)
         return fetch_url_context(query)
 
+def _to_openai_messages(messages: list) -> list:
+    """Convert ofa's internal Ollama-style messages to OpenAI chat format.
+
+    ofa attaches images to a message under an ``images`` key (list of raw
+    base64 strings, Ollama's convention). OpenAI expects a content array
+    with ``{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}``
+    entries. Messages without images pass through with their string content.
+    """
+    out = []
+    for m in messages:
+        imgs = m.get("images")
+        if not imgs:
+            out.append({"role": m["role"], "content": m.get("content", "")})
+            continue
+        parts = []
+        text = m.get("content", "")
+        if text:
+            parts.append({"type": "text", "text": text})
+        for b64 in imgs:
+            # ofa stores bare base64; wrap as a data URL if not already one.
+            url = b64 if b64.startswith("data:") else f"data:image/png;base64,{b64}"
+            parts.append({"type": "image_url", "image_url": {"url": url}})
+        out.append({"role": m["role"], "content": parts})
+    return out
+
+
+def _litellm_options(option_overrides: dict) -> dict:
+    """OpenAI-valid sampling params for the litellm path.
+
+    Ollama-only keys (num_ctx, num_gpu, num_batch, repeat_penalty, think)
+    are meaningless to an OpenAI-compatible proxy and are dropped. num_predict
+    maps to max_tokens.
+    """
+    reg = MODEL_REGISTRY.get(MODEL, {})
+    def pick(k, envk, default):
+        if envk in os.environ:
+            return type(default)(os.environ[envk])
+        return option_overrides.get(k, reg.get(k, default))
+    out = {
+        "temperature": float(pick("temperature", "OFA_TEMPERATURE", LLM_TEMPERATURE)),
+        "top_p":       float(pick("top_p",       "OFA_TOP_P",       LLM_TOP_P)),
+    }
+    max_tok = pick("num_predict", "OFA_NUM_PREDICT", LLM_NUM_PREDICT)
+    if max_tok:
+        out["max_tokens"] = int(max_tok)
+    return out
+
+
+def _litellm_chat_stream(messages: list, **option_overrides):
+    """Stream a chat response from an OpenAI-compatible proxy (LiteLLM).
+
+    Yields content deltas. Best-effort error handling mirrors the Ollama
+    path: a transport/HTTP error prints to stderr and ends the stream.
+    """
+    if not OFA_LITELLM_BASE_URL:
+        print("Error: OFA_BACKEND=litellm but OFA_LITELLM_BASE_URL is unset.",
+              file=sys.stderr)
+        return
+    key = _litellm_api_key()
+    if not key:
+        print("Error: no LiteLLM API key (set OFA_LITELLM_API_KEY or write "
+              "$OFA_SCRATCH/.ofa_litellm_key, mode 0600).", file=sys.stderr)
+        return
+    payload = {
+        "model": MODEL,
+        "messages": _to_openai_messages(messages),
+        "stream": True,
+        **_litellm_options(option_overrides),
+    }
+    try:
+        with httpx.stream(
+            "POST",
+            f"{OFA_LITELLM_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json"},
+            json=payload,
+            timeout=300.0,
+        ) as resp:
+            if resp.status_code != 200:
+                body = resp.read().decode("utf-8", "replace")[:500]
+                print(f"LiteLLM error HTTP {resp.status_code}: {body}",
+                      file=sys.stderr)
+                return
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = obj.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield content
+    except KeyboardInterrupt:
+        return
+    except Exception as e:
+        print(f"LiteLLM request failed: {e}", file=sys.stderr)
+        return
+
+
 def chat_stream(messages: list, **option_overrides):
-    """Stream a chat response from Ollama using per-model sampling options."""
+    """Stream a chat response from the active backend (Ollama or LiteLLM)."""
+    if OFA_BACKEND == "litellm":
+        yield from _litellm_chat_stream(messages, **option_overrides)
+        return
     opts = get_model_options()
     opts.update(option_overrides)
     payload = {
@@ -4355,7 +4526,11 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="🌵 OnField Assistant (ofa) — locally hosted, RAG-augmented LLM for HPC and scientific-computing workflows on NLR Kestrel.",
-        epilog="Runs entirely on your allocated Kestrel node. No data leaves NLR.",
+        epilog="By default runs entirely on your allocated Kestrel node (no data "
+               "leaves NLR). Optionally, --litellm (or OFA_BACKEND=litellm) "
+               "routes to an internal LiteLLM gateway for frontier models — "
+               "that mode sends prompts + retrieved context to the gateway; "
+               "run `ofa --litellm` for setup instructions.",
     )
     parser.add_argument(
         "query", nargs="*", help="Query to ask (omit for interactive mode)"
@@ -4429,6 +4604,14 @@ def main():
         "--list-models", action="store_true",
         help="Print the model registry and exit. Shows which models are pulled "
              "locally vs only known to the registry."
+    )
+    parser.add_argument(
+        "--litellm", action="store_true",
+        help="Route to an internal LiteLLM gateway (OpenAI-compatible) instead "
+             "of local Ollama — for frontier models on hard cases. Needs "
+             "OFA_LITELLM_BASE_URL + a per-user key; run this flag once for "
+             "setup instructions. Sends prompts + retrieved context off-node "
+             "(RAG still runs on your allocated node)."
     )
     parser.add_argument(
         "--add-private", metavar="DIR",
@@ -4531,6 +4714,12 @@ def main():
     if not any(_mode_flags):
         args.code = True
 
+    # --litellm is a convenience for OFA_BACKEND=litellm; the missing-config
+    # path in the interactive/query startup prints setup guidance and exits.
+    global OFA_BACKEND
+    if args.litellm:
+        OFA_BACKEND = "litellm"
+
     # --model wins over the env var (which was already baked into the
     # module-level MODEL global by the time argparse runs).
     if args.model:
@@ -4572,6 +4761,79 @@ def main():
             quiet=args.serve_quiet,
         )
         return
+
+    if OFA_BACKEND == "litellm":
+        # Onboarding: guide the user through litellm setup if it's incomplete,
+        # then exit cleanly rather than failing mid-stream.
+        _key_path = os.path.join(OFA_SCRATCH, ".ofa_litellm_key")
+        _missing = []
+        if not OFA_LITELLM_BASE_URL:
+            _missing.append("OFA_LITELLM_BASE_URL")
+        if not _litellm_api_key():
+            _missing.append("API key")
+        if _missing:
+            print(_c("LiteLLM backend selected (OFA_BACKEND=litellm) but "
+                     f"{' and '.join(_missing)} not set.", "yellow"),
+                  file=sys.stderr)
+            print(_c("To finish setup:", "bold"), file=sys.stderr)
+            print("  1. Base URL (include /v1):", file=sys.stderr)
+            print(_c("       export OFA_LITELLM_BASE_URL=https://litellm.nlr.gov/v1",
+                     "bold"), file=sys.stderr)
+            print("  2. Your per-user API key — write it to a private file:",
+                  file=sys.stderr)
+            print(_c(f"       umask 077; printf %s 'YOUR_KEY' > {_key_path}",
+                     "bold"), file=sys.stderr)
+            print(_c(f"       chmod 600 {_key_path}", "bold"), file=sys.stderr)
+            print("     (or: export OFA_LITELLM_API_KEY=YOUR_KEY)",
+                  file=sys.stderr)
+            print("  3. Pick a model (see the LiteLLM web UI for the list):",
+                  file=sys.stderr)
+            print(_c("       export OFA_MODEL=gemini-3.7-flash", "bold"),
+                  file=sys.stderr)
+            print("  4. Launch in LiteLLM mode — add --litellm to any mode:",
+                  file=sys.stderr)
+            print(_c("       ofa --litellm                 # coding (default)",
+                     "bold"), file=sys.stderr)
+            print(_c("       ofa --litellm --amrex \"...\"    # any mode works",
+                     "bold"), file=sys.stderr)
+            print("     (or make it the default for this shell so plain `ofa` "
+                  "uses it:", file=sys.stderr)
+            print(_c("       export OFA_BACKEND=litellm", "bold"),
+                  file=sys.stderr)
+            print("      — then `ofa`, `ofa --amrex`, etc. all route to "
+                  "LiteLLM.)", file=sys.stderr)
+            print(_c("Note: LiteLLM mode sends your prompt + retrieved context "
+                     "to that endpoint (not local-only). RAG still runs on your "
+                     "allocated node, so a node is allocated as usual.",
+                     "dim"), file=sys.stderr)
+            sys.exit(1)
+        # Fully configured. When the user invoked --litellm explicitly (the
+        # discovery/config entry point), show the current settings AND how to
+        # change each, so they never have to remember the env-var names. For a
+        # plain OFA_BACKEND=litellm launch, keep it to the one-line notice.
+        _key_src = ("OFA_LITELLM_API_KEY (env)"
+                    if os.environ.get("OFA_LITELLM_API_KEY", "").strip()
+                    else f"{os.path.join(OFA_SCRATCH, '.ofa_litellm_key')} (file)")
+        if getattr(args, "litellm", False):
+            print(_c("LiteLLM backend — current settings:", "bold", "cyan"),
+                  file=sys.stderr)
+            print(f"  base URL : {OFA_LITELLM_BASE_URL}", file=sys.stderr)
+            print(f"  model    : {MODEL}", file=sys.stderr)
+            print(f"  key from : {_key_src}", file=sys.stderr)
+            print(_c("  to change:", "bold"), file=sys.stderr)
+            print("    base URL   export OFA_LITELLM_BASE_URL=<url>/v1",
+                  file=sys.stderr)
+            print("    model      export OFA_MODEL=<id>   (or --model <id>)",
+                  file=sys.stderr)
+            print(f"    key        rewrite {os.path.join(OFA_SCRATCH, '.ofa_litellm_key')} "
+                  f"(or export OFA_LITELLM_API_KEY=<key>)", file=sys.stderr)
+        # Explicit data-flow notice: unlike ofa's local default, litellm mode
+        # sends prompts + retrieved context off-node.
+        print(_c(
+            f"LLM backend = LiteLLM ({OFA_LITELLM_BASE_URL}), model '{MODEL}'. "
+            f"Prompts and retrieved context are sent to that endpoint "
+            f"(not local-only).", "yellow"),
+            file=sys.stderr)
 
     ensure_ollama_running()
 

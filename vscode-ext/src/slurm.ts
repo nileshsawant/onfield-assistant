@@ -61,6 +61,17 @@ export interface SlurmOptions {
      *  bin/ofa itself so this stays forward-compatible with entries
      *  added via $OFA_ROOT/models.json / $OFA_MODELS_JSON. */
     model: string;
+    /** LLM backend: "ollama" (local, default) or "litellm" (route to an
+     *  OpenAI-compatible gateway for proprietary/frontier models while
+     *  still using ofa's local RAG). Empty = leave OFA_BACKEND unset
+     *  (bin/ofa defaults to ollama). */
+    backend: string;
+    /** LiteLLM gateway base URL (must include /v1), used only when
+     *  backend === "litellm". The API KEY is intentionally NOT handled
+     *  here — ofa reads it server-side from OFA_LITELLM_API_KEY or the
+     *  0600 file $OFA_SCRATCH/.ofa_litellm_key, so it never passes
+     *  through the extension or VS Code settings. */
+    litellmBaseUrl: string;
     /** Absolute path to bin/ofa. Resolved by resolveOfaBin() before
      *  connect() is called. Passing this explicitly (rather than
      *  relying on $PATH inside the extension host) is required
@@ -126,9 +137,11 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         if (opts.walltime) env.OFA_WALLTIME = opts.walltime;
         if (opts.gres) env.OFA_GRES = opts.gres;
         if (opts.model) env.OFA_MODEL = opts.model;
+        if (opts.backend) env.OFA_BACKEND = opts.backend;
+        if (opts.litellmBaseUrl) env.OFA_LITELLM_BASE_URL = opts.litellmBaseUrl;
 
         logger.info(`spawn (via bash -lc): ${inner}`);
-        logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'} OFA_MODEL=${env.OFA_MODEL ?? '<bin/ofa default>'}`);
+        logger.info(`env: OFA_JOB_NAME=${env.OFA_JOB_NAME} OFA_ACCOUNT=${env.OFA_ACCOUNT ?? '<auto>'} OFA_PARTITION=${env.OFA_PARTITION ?? '<site.toml>'} OFA_WALLTIME=${env.OFA_WALLTIME ?? '<site.toml>'} OFA_GRES=${env.OFA_GRES ?? '<site.toml>'} OFA_MODEL=${env.OFA_MODEL ?? '<bin/ofa default>'} OFA_BACKEND=${env.OFA_BACKEND ?? '<ollama>'}`);
 
         const child = cp.spawn('bash', ['-l', '-c', inner], {
             stdio: ['ignore', 'pipe', 'pipe'],

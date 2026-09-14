@@ -74,3 +74,9 @@ Thumbs.db
 # apiKey banner or other per-run secrets — never commit these).
 /*.out
 ofa-rag-update-*.out
+
+# Secrets — API keys must never be committed. The canonical location is
+# $OFA_SCRATCH (outside the repo); these patterns are defensive in case a
+# key file is ever dropped into the tree.
+.ofa_litellm_key
+*.ofa_litellm_key

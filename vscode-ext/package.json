@@ -136,6 +136,24 @@
           ],
           "markdownDescription": "LLM backing `ofa --serve`. Passed to bin/ofa as `OFA_MODEL` at spawn. Default here (`gemma4:31b-it-q8_0`) matches bin/ofa's own CLI default; pick the empty option to explicitly inherit whatever bin/ofa's default is rather than pinning it. **Server-wide, not per-model-picker-entry**: all eight `OFA \u00b7 *` entries in the Copilot Chat picker route to the SAME LLM selected here \u2014 they differ only in prompt + RAG. To change the LLM you must run **OFA: Disconnect** then **OFA: Connect** so a new `ofa --serve` process picks up the new value."
         },
+        "ofa.backend": {
+          "type": "string",
+          "default": "ollama",
+          "enum": [
+            "ollama",
+            "litellm"
+          ],
+          "enumDescriptions": [
+            "(default) Local inference on your allocated Kestrel GPU node via Ollama. Nothing leaves NLR.",
+            "Route model calls to an OpenAI-compatible LiteLLM gateway (set ofa.litellm.baseUrl) for proprietary/frontier models, while still using ofa's LOCAL RAG. Set ofa.model to a gateway model id (e.g. gemini-3.7-flash). NOTE: your prompt + retrieved context are sent to the gateway (not local-only). The API KEY is NOT set here \u2014 ofa reads it on the node from $OFA_LITELLM_API_KEY or the 0600 file $OFA_SCRATCH/.ofa_litellm_key."
+          ],
+          "markdownDescription": "LLM backend for `ofa --serve`. `ollama` = local (default, nothing leaves NLR). `litellm` = route to an internal OpenAI-compatible gateway for proprietary models while keeping ofa's local RAG. Passed as `OFA_BACKEND`. When `litellm`, also set **`ofa.litellm.baseUrl`** and **`ofa.model`** (to a gateway model id). The API key is read on the compute node (never through VS Code): write it to `$OFA_SCRATCH/.ofa_litellm_key` (chmod 600) or export `OFA_LITELLM_API_KEY`. Run **OFA: Disconnect** then **OFA: Connect** after changing."
+        },
+        "ofa.litellm.baseUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "LiteLLM gateway base URL, including `/v1` (e.g. `https://litellm.nlr.gov/v1`). Used only when `ofa.backend` is `litellm`. Passed as `OFA_LITELLM_BASE_URL`. The API key is intentionally NOT a setting \u2014 it is read on the node from `$OFA_LITELLM_API_KEY` or the 0600 file `$OFA_SCRATCH/.ofa_litellm_key`, so it never passes through VS Code."
+        },
         "ofa.enableTools": {
           "type": "boolean",
           "default": true,

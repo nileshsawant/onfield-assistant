@@ -2438,26 +2438,67 @@ def retrieve_context(query: str, top_k: int = 12) -> str:
 def _to_openai_messages(messages: list) -> list:
     """Convert ofa's internal Ollama-style messages to OpenAI chat format.
 
-    ofa attaches images to a message under an ``images`` key (list of raw
-    base64 strings, Ollama's convention). OpenAI expects a content array
-    with ``{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}``
-    entries. Messages without images pass through with their string content.
+    Preserves the tool-call plumbing, which OpenAI-compatible gateways
+    (e.g. Gemini via LiteLLM) validate strictly: every ``role:"tool"``
+    result message must be preceded by the ``assistant`` message whose
+    ``tool_calls`` produced it, or the gateway rejects the request with
+    "Missing corresponding tool call". Ollama carries tool_call arguments
+    as a dict and omits per-call ids; OpenAI wants ``arguments`` as a
+    JSON string and an ``id`` on both the call and the matching result.
+
+    Images: ofa attaches them under an ``images`` key (raw base64,
+    Ollama's convention); OpenAI wants a content array with
+    ``{"type":"image_url","image_url":{"url":"data:...;base64,..."}}``.
     """
     out = []
-    for m in messages:
+    for idx, m in enumerate(messages):
+        role = m.get("role", "user")
+        omsg: dict = {"role": role}
+
+        # Content: array form only if images are present, else the string.
         imgs = m.get("images")
-        if not imgs:
-            out.append({"role": m["role"], "content": m.get("content", "")})
-            continue
-        parts = []
         text = m.get("content", "")
-        if text:
-            parts.append({"type": "text", "text": text})
-        for b64 in imgs:
-            # ofa stores bare base64; wrap as a data URL if not already one.
-            url = b64 if b64.startswith("data:") else f"data:image/png;base64,{b64}"
-            parts.append({"type": "image_url", "image_url": {"url": url}})
-        out.append({"role": m["role"], "content": parts})
+        if imgs:
+            parts = []
+            if text:
+                parts.append({"type": "text", "text": text})
+            for b64 in imgs:
+                url = b64 if b64.startswith("data:") else f"data:image/png;base64,{b64}"
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            omsg["content"] = parts
+        else:
+            omsg["content"] = text
+
+        # Assistant tool_calls -> OpenAI shape (arguments as JSON string,
+        # each call given a stable id so the matching tool result can
+        # reference it).
+        if role == "assistant" and m.get("tool_calls"):
+            oai_tcs = []
+            for j, tc in enumerate(m["tool_calls"]):
+                fn = tc.get("function") or {}
+                args = fn.get("arguments", {})
+                if not isinstance(args, str):
+                    args = json.dumps(args)
+                tcid = tc.get("id") or f"call_{idx}_{j}"
+                oai_tcs.append({
+                    "id": tcid,
+                    "type": "function",
+                    "function": {"name": fn.get("name", ""), "arguments": args},
+                })
+            omsg["tool_calls"] = oai_tcs
+            # OpenAI allows assistant content to be null when only tool_calls.
+            if not text:
+                omsg["content"] = None
+
+        # Tool result must carry the tool_call_id it answers.
+        if role == "tool":
+            tcid = m.get("tool_call_id")
+            if tcid:
+                omsg["tool_call_id"] = tcid
+            if m.get("name"):
+                omsg["name"] = m["name"]
+
+        out.append(omsg)
     return out
 
 

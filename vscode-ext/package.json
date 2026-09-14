@@ -70,6 +70,11 @@
         "command": "ofa.listModels",
         "title": "List Registered Models (diagnostic)",
         "category": "OFA"
+      },
+      {
+        "command": "ofa.setLitellmKey",
+        "title": "Set LiteLLM API Key",
+        "category": "OFA"
       }
     ],
     "configuration": {
@@ -153,6 +158,11 @@
           "type": "string",
           "default": "",
           "markdownDescription": "LiteLLM gateway base URL, including `/v1` (e.g. `https://litellm.nlr.gov/v1`). Used only when `ofa.backend` is `litellm`. Passed as `OFA_LITELLM_BASE_URL`. The API key is intentionally NOT a setting \u2014 it is read on the node from `$OFA_LITELLM_API_KEY` or the 0600 file `$OFA_SCRATCH/.ofa_litellm_key`, so it never passes through VS Code."
+        },
+        "ofa.litellmModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Gateway model id to use when `ofa.backend` is `litellm` (e.g. `gemini-3.7-flash`). Free-text because the available models are gateway-specific \u2014 see the LiteLLM web UI for the list. Passed as `OFA_MODEL`. Ignored in `ollama` mode (which uses the `ofa.model` dropdown instead). Run **OFA: Disconnect** then **OFA: Connect** after changing."
         },
         "ofa.enableTools": {
           "type": "boolean",

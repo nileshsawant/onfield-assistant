@@ -14,6 +14,9 @@
  * log-channel polish.
  */
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ChannelLogger, Logger } from './logger';
 import { detectKestrel } from './kestrelDetector';
 import { connect as slurmConnect, disconnect as slurmDisconnect, resolveOfaBin, OfaEndpoint, SlurmError, SlurmOptions } from './slurm';
@@ -27,7 +30,8 @@ const COMMAND_IDS = {
     disconnect: 'ofa.disconnect',
     reallocate: 'ofa.reallocate',
     showLogs: 'ofa.showLogs',
-    listModels: 'ofa.listModels'
+    listModels: 'ofa.listModels',
+    setLitellmKey: 'ofa.setLitellmKey'
 } as const;
 
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -78,7 +82,8 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand(COMMAND_IDS.disconnect, disconnectCommand),
         vscode.commands.registerCommand(COMMAND_IDS.reallocate, reallocateCommand),
         vscode.commands.registerCommand(COMMAND_IDS.showLogs, () => logChannel?.show(true)),
-        vscode.commands.registerCommand(COMMAND_IDS.listModels, listModelsCommand)
+        vscode.commands.registerCommand(COMMAND_IDS.listModels, listModelsCommand),
+        vscode.commands.registerCommand(COMMAND_IDS.setLitellmKey, setLitellmKeyCommand)
     );
 
     // Post-activation, opportunistically adopt an existing allocation
@@ -245,14 +250,22 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         return;
     }
 
+    const backend = cfg.get<string>('backend', 'ollama');
+    // In litellm mode the model id is gateway-specific and can't be a fixed
+    // enum, so it comes from the free-text ofa.litellmModel setting; local
+    // (ollama) mode uses the ofa.model enum.
+    const effectiveModel = backend === 'litellm'
+        ? cfg.get<string>('litellmModel', '')
+        : cfg.get<string>('model', '');
+
     const opts: SlurmOptions = {
         account: cfg.get<string>('slurm.account', ''),
         partition: cfg.get<string>('slurm.partition', 'debug'),
         walltime: cfg.get<string>('slurm.walltime', '00:30:00'),
         gres: cfg.get<string>('slurm.gres', 'gpu:1'),
         enableTools: cfg.get<boolean>('enableTools', true),
-        model: cfg.get<string>('model', ''),
-        backend: cfg.get<string>('backend', 'ollama'),
+        model: effectiveModel,
+        backend,
         litellmBaseUrl: cfg.get<string>('litellm.baseUrl', ''),
         ofaBinPath
     };
@@ -482,6 +495,45 @@ async function listModelsCommand(): Promise<void> {
         const msg = err instanceof Error ? err.message : String(err);
         logger.error(`listModelsCommand failed: ${msg}`);
         void vscode.window.showErrorMessage(`OFA: List Models failed — ${msg}`);
+    }
+}
+
+/**
+ * Prompt for the LiteLLM API key and write it to the 0600 file that
+ * ofa reads on the node ($OFA_SCRATCH/.ofa_litellm_key). The extension
+ * host runs on the Kestrel login node (Remote-SSH), so this writes the
+ * key directly to that node's filesystem — the key is never stored in
+ * VS Code settings (plaintext, syncable) nor kept on the client. The
+ * input box uses password mode so the key isn't shown or logged.
+ */
+async function setLitellmKeyCommand(): Promise<void> {
+    const key = await vscode.window.showInputBox({
+        prompt: 'LiteLLM API key (written to $OFA_SCRATCH/.ofa_litellm_key on this node, chmod 600; never stored in VS Code settings)',
+        password: true,
+        ignoreFocusOut: true,
+        placeHolder: 'paste key — it will not be displayed',
+    });
+    if (!key) {
+        void vscode.window.showInformationMessage('OFA: LiteLLM key unchanged (no input).');
+        return;
+    }
+    const scratch = process.env.OFA_SCRATCH
+        ?? path.join('/scratch', process.env.USER ?? os.userInfo().username);
+    const keyPath = path.join(scratch, '.ofa_litellm_key');
+    try {
+        // Write with 0600 from the start (mode on open), then chmod to be
+        // certain even if a prior file existed with looser perms.
+        fs.writeFileSync(keyPath, key, { mode: 0o600 });
+        fs.chmodSync(keyPath, 0o600);
+        logger?.info(`wrote LiteLLM key to ${keyPath} (mode 600)`);
+        void vscode.window.showInformationMessage(
+            `OFA: LiteLLM key saved to ${keyPath} (chmod 600). ` +
+            `Run "OFA: Disconnect" then "OFA: Connect" to use it.`);
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger?.error(`setLitellmKeyCommand failed: ${msg}`);
+        void vscode.window.showErrorMessage(
+            `OFA: could not write ${keyPath} — ${msg}`);
     }
 }
 

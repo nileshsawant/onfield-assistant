@@ -12,6 +12,7 @@ An AI-powered reasoning and autonomous execution agent tailored for the NLR Kest
   * `search` and `fetch`: For searching the internet or reading external web documentation when unsure.
 * **Domain-Specific Modes:** By passing command-line arguments, the overarching python execution loop swaps the injected system prompts and RAG databases to act as specialized domain experts (e.g., general codebase engineering, specific AMReX compilation, or ReFrame module migrations).
 * **Private data indexing:** Each user can index their own data (`ofa --add-private <dir>`) into a per-user store that is retrieved automatically alongside the shared corpora — no write access to the shared install required. See [Index your own private data](#index-your-own-private-data).
+* **Optional proprietary/frontier models (LiteLLM backend):** By default ofa runs fully locally (nothing leaves the node). Optionally, `ofa --litellm` (or `OFA_BACKEND=litellm`) routes model calls to an internal OpenAI-compatible LiteLLM gateway for a frontier model on hard cases, while still using ofa's **local** RAG + prompts. Opt-in and announced; the API key stays server-side. See [Use a proprietary/frontier model (LiteLLM backend)](#use-a-proprietaryfrontier-model-litellm-backend).
 * **Intelligent Context Management:** To survive long debugging or compilation sessions, the agent intelligently handles Context Window Collapse. Massive compiler toolchains are dynamically truncated. In deeply extended sessions (over 20 turns), older terminal stdout logs are systematically compressed while preserving the agent's fundamental reasoning and the user's initial instructions to avoid amnesia.
 * **Robust Fault Tolerance & Safeguards:** The Python orchestrator natively intercepts hanging shell commands with `/dev/null` stdin piping. It tracks consecutive execution errors, pausing the autonomous loop if the agent hallucinates a failing command 3 times in a row, dropping control back to the human user. The daemon catches `SIGTERM` signals for 30-minute allocation timeouts, shutting down gracefully.
 
@@ -56,6 +57,8 @@ $ ofa --resume          # Resume the previous interactive session (uses ~/.ofa_s
 $ ofa --save <dir>      # (with --openfoam) save generated template cases to a directory
 $ ofa --no-rag          # Disable ChromaDB context retrieval; relies solely on standard LLM weights
 $ ofa --fast            # (with --openfoam) single-shot file generation (skip plan stage)
+$ ofa --litellm         # Use an internal LiteLLM gateway (frontier model) with ofa's local RAG;
+                        # run once for setup steps. Composes with any mode: ofa --litellm --amrex
 
 # BYOK / programmatic server (OpenAI-compatible HTTP endpoint on this node)
 $ ofa --serve                    # Start the local HTTP server; see docs/byok-vscode.md
@@ -185,17 +188,17 @@ For AMReX, reframe, MARBLES: substitute `--collection amrex_src`,
 
 #### 2. Import a new document drop from a shared path
 
-Example: the VASP team hands you a batch of `.md`, `.txt`, or `.html`
-files under a shared directory like `/projects/hpcapps/rag-data-for-nilesh/vasp/`.
+Example: a colleague hands you a batch of `.md`, `.txt`, or `.html`
+files (say the VASP notes) under a shared directory.
 
 Copy into `repos/vasp/`, then rebuild:
 
 ```bash
 # Copy verbatim if the source is already Markdown/text
-rsync -av --delete /projects/hpcapps/rag-data-for-nilesh/vasp/*.{md,txt} \
+rsync -av --delete /path/to/shared/drop/*.{md,txt} \
     $OFA_ROOT/repos/vasp/
 
-# HTML files (VASP wiki dumps, etc.) need conversion first — the
+# HTML files (wiki dumps, etc.) need conversion first — the
 # indexer only reads .md/.rst/.txt/.py/.cpp/.h/.f90/.ipynb. Use pandoc
 # if available, else a stdlib html.parser one-liner, else drop them
 # somewhere non-indexed.
@@ -209,11 +212,10 @@ mtime cache doesn't detect renames as such, so it can leave stale
 chunks with old paths). For an in-place edit of existing files, drop
 `--clear`.
 
-`repos/vasp/` is **not** git-tracked (VASP wiki content redistribution
-rights aren't clear), so unlike a git-cloned source it lives only on
-disk — nothing to commit here. Every fresh clone or new install needs
-this rsync step run once against the shared drop path before
-`vasp_src` has anything to embed.
+`repos/vasp/` is **not** git-tracked, so (unlike a git-cloned source)
+it lives only on disk — nothing to commit here. Every fresh clone or
+new install needs this rsync step run once against the shared drop
+path before `vasp_src` has anything to embed.
 
 #### 3. Update a collection where some source files were deliberately emptied
 
@@ -356,6 +358,74 @@ The assistant maintains its transient session state natively in your scratch dir
 
 If your SLURM allocation expires, the custom signal handlers will safely write the final context to disk. You can then request a new allocation and simply run `ofa --resume` (with any of your targeted flags) to perfectly reconstruct the context window. 
 Any permanent global preferences (e.g., "always use 4 spaces for indentation") mentioned to the assistant are extracted into an isolated `~/.ofa_prefs.txt` file and automatically sourced into all future context windows.
+
+## Use a proprietary/frontier model (LiteLLM backend)
+
+By default `ofa` is **fully local**: model inference runs on the node via
+Ollama and nothing leaves the machine. For hard problems where you'd
+rather lean on a frontier model, `ofa` can optionally route its LLM
+calls to an internal **LiteLLM** gateway (an OpenAI-compatible endpoint)
+while **still using ofa's local RAG corpora, prompts, and agent loop**.
+Only the chat completion is delegated; retrieval and orchestration stay
+on the node.
+
+This is strictly **opt-in** and clearly announced at startup. The default
+backend remains `ollama`.
+
+### One-time setup
+
+1. Get your personal API key from the LiteLLM web UI (that page also lists
+   the model names available to you).
+2. Store the key so `ofa` can read it. Either option works:
+
+   ```bash
+   # Option A: a 0600 file in your scratch (recommended — persists)
+   umask 077
+   printf '%s\n' 'sk-your-key-here' > "$OFA_SCRATCH/.ofa_litellm_key"
+
+   # Option B: an environment variable (per-shell)
+   export OFA_LITELLM_API_KEY='sk-your-key-here'
+   ```
+
+   `ofa` warns if the key file is group/world-readable, so keep it `0600`.
+3. (Optional) Pick a model. Set it once via env, otherwise `ofa` uses its
+   built-in default gateway model:
+
+   ```bash
+   export OFA_LITELLM_MODEL='<model-name-from-the-web-ui>'
+   ```
+
+Running `ofa --litellm` before the key is configured prints these exact
+setup steps and exits, so you can always just run it to see what's left.
+
+### Usage
+
+```bash
+# Route through the gateway; composes with any mode or flag
+$ ofa --litellm
+$ ofa --litellm --amrex
+$ ofa --litellm "explain this SLURM error"
+
+# Equivalent to the flag, e.g. for scripts / the BYOK server
+$ OFA_BACKEND=litellm ofa
+$ OFA_BACKEND=litellm ofa --serve
+```
+
+Run `ofa --litellm` when a backend is already configured to see the
+current base URL, model, and key source, plus how to change each.
+
+### Environment variables
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OFA_BACKEND` | `ollama` (local, default) or `litellm` (gateway) | `ollama` |
+| `OFA_LITELLM_API_KEY` | API key (overrides the key file) | *(unset)* |
+| `OFA_LITELLM_BASE_URL` | Gateway base URL (must include `/v1`) | internal gateway |
+| `OFA_LITELLM_MODEL` | Model name from the web UI | built-in default |
+| `OFA_LITELLM_VISION` | Send images to the gateway model (`1`/`0`) | `1` |
+
+The key file lives at `$OFA_SCRATCH/.ofa_litellm_key`. Compute nodes can
+reach the gateway, so `--litellm` works inside a normal SLURM allocation.
 
 ## Use `ofa` from VS Code Chat (the OnField Assistant extension)
 

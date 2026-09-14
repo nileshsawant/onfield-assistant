@@ -81,7 +81,7 @@ and this document.
 - **Interactive CLI** (`ofa`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --quantum-computing`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
 - **OpenAI-compatible HTTP server** (`ofa --serve`) — a Bring-Your-Own-Key (BYOK) endpoint so VS Code Chat, `opencode`, or any OpenAI-compatible client can route requests through the same domain layer.
 
-The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). All inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NLR's network. 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
+The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). By default all inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NLR's network. (An opt-in `OFA_BACKEND=litellm` mode can instead delegate the chat completion to an internal OpenAI-compatible LiteLLM gateway; RAG and orchestration still run locally.) 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
 
 The remainder of this document covers what's in the repo, how the pieces fit together, and the operational/safety properties anyone evaluating `ofa` for wider use will want to know.
 
@@ -139,7 +139,7 @@ Three layers, in order of how a request flows through them:
 
 1. **Surface** — either the interactive CLI (terminal stdin/stdout, agent loop) or the BYOK HTTP server (`POST /v1/chat/completions`).
 2. **Domain layer** — the same in both surfaces: system-prompt selection, long-term memory injection, RAG retrieval, optional skill content.
-3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`.
+3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally.
 
 ---
 
@@ -640,6 +640,11 @@ check — `npm run typecheck` — which is wired into CI via
 | `OFA_GRES` | `gpu:1` | salloc GRES. |
 | `OFA_JOB_NAME` | `ofa` | salloc job name (the VS Code extension sets `ofa-vscode`). |
 | `OFA_OLLAMA_PORT` | UID-derived | Pin the per-user `ollama serve` port. (`OFA_PORT` is an internal module global, not an env var.) |
+| `OFA_BACKEND` | `ollama` | Inference backend: `ollama` (local, default) or `litellm` (internal OpenAI-compatible gateway). |
+| `OFA_LITELLM_API_KEY` | (unset) | LiteLLM API key (overrides the key file `$OFA_SCRATCH/.ofa_litellm_key`, which must be `0600`). |
+| `OFA_LITELLM_BASE_URL` | internal gateway | LiteLLM base URL (must include `/v1`). |
+| `OFA_LITELLM_MODEL` | built-in default | Gateway model name (from the LiteLLM web UI). |
+| `OFA_LITELLM_VISION` | `1` | Whether to send images to the gateway model (`1`/`0`). |
 | `OFA_MODELS_JSON` | (unset) | Path to an external model registry merged over `MODEL_REGISTRY`. |
 | `OFA_SITE_TOML` | `$OFA_ROOT/site.toml` | Site config file (see `src/ofa_site.py`). |
 | `OFA_PROTECTED_PREFIXES` | deploy roots | Extra path prefixes the agent refuses to write to. |
@@ -661,6 +666,7 @@ check — `npm run typecheck` — which is wired into CI via
 | `--resume` | Reload `.ofa_session.json`. |
 | `--save DIR` | Write the assistant's `=== FILE ===` blocks into `DIR`. |
 | `--no-rag` | Skip RAG retrieval. |
+| `--litellm` | Route inference to the internal LiteLLM gateway (frontier model) while keeping ofa's local RAG. Equivalent to `OFA_BACKEND=litellm`. Run once for setup steps. |
 | `--fast` | OpenFOAM single-shot (skip plan stage). |
 | `--model ID` | Override `gemma4:31b-it-q8_0`. |
 | `--list-models` | Print model registry and exit. |

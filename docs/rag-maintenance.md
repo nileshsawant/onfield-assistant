@@ -90,7 +90,7 @@ rebuild becomes an mtime-cache hit; total time drops to seconds.
 Applies today to: `hpc_docs`, `amrex_src`, `reframe_src`,
 `marbles_src` (code side), `quantum_computing` (code side).
 
-### 2. Vendored / curated corpus (VASP wiki drops)
+### 2. Vendored / curated corpus (e.g. VASP doc drops)
 
 Some collections aren't tracked upstream — the material is a curated
 mix of documents that people drop into a shared spot (e.g. an
@@ -98,7 +98,7 @@ application team gives you HTML wiki exports, PDF chapters, notes in
 Markdown). The pattern:
 
 ```bash
-SRC=/projects/hpcapps/rag-data-for-nilesh/vasp     # example
+SRC=/path/to/shared/drop                # example
 DST=$OFA_ROOT/repos/vasp
 
 # 1. Wipe & repopulate the target dir. Handle format conversion here
@@ -117,11 +117,10 @@ cd $OFA_ROOT
 ./env/bin/python src/rebuild_indices.py --clear --collection vasp_src
 ```
 
-`repos/vasp/` is **not** git-tracked — it's vendored VASP wiki content
-whose redistribution rights aren't clear, so (unlike a `git pull`
-source) it lives only on disk and is never committed. Every fresh
-clone or new site install needs to repopulate it from the shared drop
-path before `--collection vasp_src` has anything to embed.
+`repos/vasp/` is **not** git-tracked, so (unlike a `git pull` source)
+it lives only on disk and is never committed. Every fresh clone or new
+site install needs to repopulate it from the shared drop path before
+`--collection vasp_src` has anything to embed.
 
 Applies today to: `vasp_src`, `marbles_src` (papers side),
 `quantum_computing` (papers side).

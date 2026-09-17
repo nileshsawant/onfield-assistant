@@ -1223,6 +1223,16 @@ def _fence_rag(context: str, label: str = "RETRIEVED REFERENCE") -> str:
     )
 
 
+def _resolve_cwd_path(filepath: str) -> str:
+    """Resolve a (possibly relative) file path against the logical current
+    working directory `_current_cwd` that `cd` in bash blocks updates, rather
+    than the fixed Python-process CWD. Absolute paths pass through unchanged.
+    Callers should already have run os.path.expanduser()."""
+    if os.path.isabs(filepath):
+        return filepath
+    return os.path.join(_current_cwd, filepath)
+
+
 def _warn_if_outside_cwd(filepath: str) -> str:
     """Return a one-line warning string if `filepath` escapes the current
     working directory tree, otherwise empty string. Soft warning only — we
@@ -3847,7 +3857,7 @@ def _handle_fetch_blocks(fetch_blocks, all_outputs):
 
 def _handle_read_blocks(read_blocks, all_outputs):
     for file_to_read in read_blocks:
-        file_to_read = os.path.expanduser(file_to_read.strip())
+        file_to_read = _resolve_cwd_path(os.path.expanduser(file_to_read.strip()))
         if not file_to_read:
             continue
         print(_banner("\n[File Read Suggested]", "green"))
@@ -3878,7 +3888,7 @@ def _handle_read_blocks(read_blocks, all_outputs):
 
 def _handle_write_blocks(write_blocks, all_outputs):
     for filepath, content in write_blocks:
-        filepath = os.path.expanduser(filepath.strip())
+        filepath = _resolve_cwd_path(os.path.expanduser(filepath.strip()))
         if not filepath:
             continue
         print(_banner("\n[File Write Suggested]", "yellow"))
@@ -3916,7 +3926,7 @@ def _handle_write_blocks(write_blocks, all_outputs):
 
 def _handle_edit_blocks(edit_blocks, all_outputs):
     for filepath, content in edit_blocks:
-        filepath = os.path.expanduser(filepath.strip())
+        filepath = _resolve_cwd_path(os.path.expanduser(filepath.strip()))
         if not filepath:
             continue
         print(_banner("\n[File Edit Suggested]", "yellow"))

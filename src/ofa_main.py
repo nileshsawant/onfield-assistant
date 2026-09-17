@@ -2795,7 +2795,7 @@ def generate_file(
 
 def save_case(response_text: str, output_dir: str):
     """Parse response and save files to a case directory."""
-    output_path = Path(output_dir)
+    output_path = Path(_resolve_cwd_path(os.path.expanduser(output_dir)))
     output_path.mkdir(parents=True, exist_ok=True)
 
     current_file = None

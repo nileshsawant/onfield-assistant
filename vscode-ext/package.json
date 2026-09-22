@@ -92,18 +92,18 @@
         },
         "ofa.slurm.partition": {
           "type": "string",
-          "default": "debug",
-          "markdownDescription": "Slurm partition for the `salloc` request."
+          "default": "",
+          "markdownDescription": "Slurm partition for the `salloc` request. Empty = inherit from `bin/ofa` (site.toml `[scheduler].partition`, else the Kestrel default `debug`). Set to override per-user."
         },
         "ofa.slurm.walltime": {
           "type": "string",
-          "default": "00:30:00",
-          "markdownDescription": "Wall time for the `salloc` request. Format: `HH:MM:SS`."
+          "default": "",
+          "markdownDescription": "Wall time for the `salloc` request (`HH:MM:SS`). Empty = inherit from `bin/ofa` (site.toml `[scheduler].walltime`, else `00:30:00`)."
         },
         "ofa.slurm.gres": {
           "type": "string",
-          "default": "gpu:1",
-          "markdownDescription": "Slurm GRES for the `salloc` request. Set to `gpu:h100:1` or similar on sites with typed GPU GRES."
+          "default": "",
+          "markdownDescription": "Slurm GRES for the `salloc` request. Empty = inherit from `bin/ofa` (site.toml `[scheduler].gres`, else `gpu:1`). Set to `gpu:h100:1` or similar on sites with typed GPU GRES."
         },
         "ofa.ofaBinPath": {
           "type": "string",

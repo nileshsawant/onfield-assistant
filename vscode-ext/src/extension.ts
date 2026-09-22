@@ -258,11 +258,16 @@ async function bringUp(flow: FlowOptions): Promise<void> {
         ? cfg.get<string>('litellmModel', '')
         : cfg.get<string>('model', '');
 
+    // Scheduler defaults are intentionally empty here: an unset value means
+    // "don't pass OFA_PARTITION/etc.", so bin/ofa resolves it from site.toml
+    // ([scheduler].*) or its built-in Kestrel fallback. This keeps site.toml
+    // the single source of truth on ported installs while leaving Kestrel
+    // (no site.toml -> bin/ofa's debug/00:30:00/gpu:1 fallback) unchanged.
     const opts: SlurmOptions = {
         account: cfg.get<string>('slurm.account', ''),
-        partition: cfg.get<string>('slurm.partition', 'debug'),
-        walltime: cfg.get<string>('slurm.walltime', '00:30:00'),
-        gres: cfg.get<string>('slurm.gres', 'gpu:1'),
+        partition: cfg.get<string>('slurm.partition', ''),
+        walltime: cfg.get<string>('slurm.walltime', ''),
+        gres: cfg.get<string>('slurm.gres', ''),
         enableTools: cfg.get<boolean>('enableTools', true),
         model: effectiveModel,
         backend,

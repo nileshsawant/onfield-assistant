@@ -17,16 +17,38 @@
 #     to fix that.
 #
 # ALSO REVIEW when porting to a new HPC (site.toml is NOT enough on its own):
-#   * prompts/*.txt — the identity strings ("running natively on the
-#     <site>") are templated via {SITE_NAME} / {SITE_LONG_NAME} /
-#     {SITE_ORG} / {SITE_DESCRIPTION} placeholders and picked up from
-#     this file automatically. But Kestrel-specific TECHNICAL content
-#     (CUDA module versions like "cuda/12.4", partition names like
-#     "standard / hbw / debug", core counts, /nopt/nrel vs /nopt/nlr
-#     path notes, and any Gila-cluster cross-references in openfoam.txt)
-#     is left literal on purpose — templating it would produce prompts
-#     that lie confidently about your cluster. Audit the mode prompts
-#     you plan to use and rewrite the technical bits by hand.
+#   * prompts/*.txt — identity strings ("running natively on the <site>")
+#     are templated via {SITE_NAME} / {SITE_LONG_NAME} / {SITE_ORG} /
+#     {SITE_DESCRIPTION} placeholders and filled from this file
+#     automatically. But each prompt also contains LITERAL Kestrel
+#     TECHNICAL content that is deliberately NOT templated — templating it
+#     would make the model lie confidently about your cluster. Only the
+#     prompts for the MODES YOU ENABLE need fixing. Per-file checklist
+#     (rewrite for your site, or delete the offending lines):
+#       - openfoam.txt: rule 14 (nProcs "36/72/144" core counts) and the
+#         whole "KESTREL HPC SPECIFICS" block at the end — module names,
+#         `standard (104 cores)/hbw/debug` partitions, srun launcher, the
+#         GILA-cluster mpirun-not-srun rule, and the /nopt/nrel OpenFOAM
+#         bashrc path. Replace with your modules/partitions/launcher.
+#       - reframe.txt: ENTIRE body is a Kestrel RHEL8->RHEL9 migration
+#         narrative (kl3/kl5, gpu-h100 + --reservation=rh9, PrgEnv-cray,
+#         settings-kestrel-rh9.py, clean-slate, /nopt/nrel -> /nopt/nlr).
+#         Only meaningful if you run a ReFrame RHEL-migration; otherwise
+#         disable the mode. Rewrite wholesale if you keep it.
+#       - amrex.txt / marbles.txt / quantum-computing.txt: the
+#         `module load cray-mpich cuda/12.4 cmake` example on line 4.
+#         Swap for your GPU/MPI/toolchain module names.
+#       - cpp.txt / common.txt: `srun --overlap` guidance (Cray/Slurm
+#         step-deadlock workaround). Harmless on plain Slurm; remove if
+#         your scheduler isn't Slurm.
+#       - common.txt: the cd-guard path list includes /nopt/nrel,
+#         /nopt/nlr, /nopt/slurm — these are ALSO covered by
+#         [site].protected_roots below; keep them consistent.
+#       - prompts/skills/kestrel-debug-jobs.md: entirely Kestrel (debug
+#         partition 1-hr cap, --gres=gpu:h100:1, shared nodes). Rewrite
+#         or delete for your site's debug-queue rules.
+#     NOTE: the `srun --overlap` auto-injection also exists in code
+#     (src/ofa_main.py) and applies on Slurm generally — harmless off-Cray.
 #   * collections.toml — declares the RAG source dirs. Replace the
 #     Kestrel-specific corpora (HPC docs, amrex/marbles/etc. clones)
 #     with sources that make sense for your users.

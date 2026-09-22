@@ -86,6 +86,14 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         # whose /etc/redhat-release contains "release 9".
         "cuda_rhel8": "cuda/12.4",
         "cuda_rhel9": "cuda",
+        # Extra modules to load unconditionally on EVERY host, regardless
+        # of OS / RHEL major, after the cuda_rhel* selection above. Space-
+        # separated string (or TOML list). Empty by default so Kestrel is
+        # unchanged. This is the portability escape hatch for non-RHEL /
+        # non-CUDA / ROCm sites: e.g. modules.extra = "rocm/6.0" or a full
+        # GPU-stack list. Loaded with `module load <each>`; failures are
+        # ignored (same as the cuda load).
+        "extra": "",
     },
 }
 
@@ -164,6 +172,11 @@ def _shell_export(cfg: dict[str, Any]) -> str:
     site = cfg.get("site", {}) or {}
     sch = cfg.get("scheduler", {}) or {}
     mods = cfg.get("modules", {}) or {}
+    # modules.extra may be a TOML list or a space-separated string; normalize
+    # to a single space-separated string for the bash launcher.
+    _extra = mods.get("extra", "")
+    if isinstance(_extra, (list, tuple)):
+        _extra = " ".join(str(x) for x in _extra)
     lines = [
         f"export OFA_SITE_NAME={_sq(site.get('name', ''))}",
         f"export OFA_SITE_LOGIN_HOST={_sq(site.get('login_host', ''))}",
@@ -176,6 +189,7 @@ def _shell_export(cfg: dict[str, Any]) -> str:
         f"export OFA_SCHEDULER_ACCOUNT_DISCOVERY={_sq(sch.get('account_discovery', ''))}",
         f"export OFA_MODULE_CUDA_RHEL8={_sq(mods.get('cuda_rhel8', ''))}",
         f"export OFA_MODULE_CUDA_RHEL9={_sq(mods.get('cuda_rhel9', ''))}",
+        f"export OFA_MODULE_EXTRA={_sq(_extra)}",
     ]
     return "\n".join(lines) + "\n"
 

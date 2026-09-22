@@ -3471,6 +3471,14 @@ def retrieve_amrex_context(query: str, top_k: int = 6) -> str:
 # devour the context budget. The two current pins are well under this.
 _PINNED_KESTREL_DOC_MAX_BYTES = 50_000
 
+# Base directory the pinned mode docs are read from. Kestrel default is the
+# HPC docs tree cloned under repos/. A ported site with a different docs
+# layout can point this elsewhere (or at an empty dir) via OFA_PINNED_DOCS_ROOT
+# without code changes; missing files degrade silently to no pin.
+_PINNED_DOCS_ROOT = os.environ.get(
+    "OFA_PINNED_DOCS_ROOT", os.path.join(OFA_ROOT, "repos/HPC/docs/Documentation")
+)
+
 
 def _read_pinned_kestrel_doc(relpath: str, label: str) -> str:
     """Return a fenced context slice for a Kestrel HPC docs page pinned
@@ -3489,7 +3497,7 @@ def _read_pinned_kestrel_doc(relpath: str, label: str) -> str:
     a fresh `git pull` under repos/HPC is picked up on the next call
     without waiting for rebuild_indices.py to re-embed.
     """
-    path = os.path.join(OFA_ROOT, "repos/HPC/docs/Documentation", relpath)
+    path = os.path.join(_PINNED_DOCS_ROOT, relpath)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             text = f.read(_PINNED_KESTREL_DOC_MAX_BYTES + 1)

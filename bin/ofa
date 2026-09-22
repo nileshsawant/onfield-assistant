@@ -109,6 +109,18 @@ if [ -n "$_ofa_cuda_mod" ]; then
 fi
 unset _ofa_cuda_mod
 
+# Portability escape hatch: any site-defined extra modules
+# (site.toml [modules].extra) are loaded here on EVERY host, after the
+# RHEL8/RHEL9 CUDA selection above. Empty by default, so Kestrel — where
+# the kl3/kl5 -> RHEL9 CUDA path above is what matters — is unaffected.
+# Non-RHEL / ROCm / non-CUDA sites use this to load their GPU stack.
+if [ -n "${OFA_MODULE_EXTRA:-}" ]; then
+    for _ofa_mod in $OFA_MODULE_EXTRA; do
+        module load "$_ofa_mod" 2>/dev/null || true
+    done
+    unset _ofa_mod
+fi
+
 export LD_LIBRARY_PATH="${OFA_ROOT}/lib:${LD_LIBRARY_PATH}"
 
 exec "${OFA_ROOT}/env/bin/python3" "${OFA_ROOT}/src/ofa_main.py" "$@"

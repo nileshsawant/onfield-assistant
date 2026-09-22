@@ -115,3 +115,31 @@ account_discovery = 'sacctmgr show user "$USER" format=defaultaccount -nP 2>/dev
 # CUDA is already on PATH via /etc/profile.d).
 cuda_rhel8 = "cuda/12.4"
 cuda_rhel9 = "cuda"
+
+# Extra modules loaded on EVERY compute node regardless of OS, after the
+# cuda_rhel* selection above. This is the portability escape hatch for
+# sites that are NOT RHEL, or use ROCm / a different CUDA layout, or need
+# a whole GPU-stack module list. Accepts a space-separated string or a
+# TOML list; each entry is `module load`-ed (failures ignored). Empty by
+# default so Kestrel is unaffected.
+#   extra = "rocm/6.0"
+#   extra = ["gcc/12", "openmpi/5", "cuda/12.6"]
+extra = ""
+
+# ---------------------------------------------------------------------------
+# Environment-variable-only overrides (NOT in site.toml)
+# ---------------------------------------------------------------------------
+# A few paths are configured via environment variables rather than this
+# file (set them in your Lmod modulefile or env.sh). They only matter if
+# you use the affected feature:
+#
+#   OFA_PINNED_DOCS_ROOT   Base dir for the per-mode "pinned" docs read
+#                          straight from disk (marbles/quantum/vasp modes).
+#                          Default: $OFA_ROOT/repos/HPC/docs/Documentation
+#                          Missing files degrade silently to no pin.
+#   OFA_OPENFOAM13_ROOT    OpenFOAM-13 tree for the OpenFOAM RAG indexers.
+#   OFA_OPENFOAM_V2512_ROOT  OpenFOAM v2512 tree (legacy build_index.py).
+#   OFA_KESTREL_DOCS_ROOT  HPC docs tree for build_index_v2.py.
+#   OFA_LITELLM_BASE_URL   Frontier-model gateway (see docs); e.g.
+#                          https://your-litellm-host/v1
+#   OFA_MODEL / OFA_MODELS_JSON  Override the default LLM / model registry.

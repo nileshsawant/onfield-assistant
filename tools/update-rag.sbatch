@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=ofa-rag-update
-#SBATCH --account=hpcapps
 ##SBATCH --partition=debug
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=32
@@ -8,6 +7,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=00:30:00
 #SBATCH --output=%x-%j.out
+#
+# NOTE: no #SBATCH --account here so this stays portable across sites.
+# Supply the account at submit time (it propagates to the resubmit chain
+# via SLURM_JOB_ACCOUNT below):
+#   sbatch -A <account> tools/update-rag.sbatch [collections...]
+# If your site sets a default account, plain `sbatch` works too.
 #
 # Self-resubmitting recurring RAG updater.
 #
@@ -17,9 +22,9 @@
 # nodes.
 #
 # Allocation mirrors what `ofa` itself requests (debug partition, 32
-# cores, 80G RAM, 1 GPU, 30 min, account hpcapps) so the embedding step
-# runs on the GPU. Only changed files are re-embedded (mtime cache), so a
-# routine run is quick.
+# cores, 80G RAM, 1 GPU, 30 min; account from the submit-time -A) so the
+# embedding step runs on the GPU. Only changed files are re-embedded
+# (mtime cache), so a routine run is quick.
 #
 # Start the chain once with:
 #   sbatch tools/update-rag.sbatch [collections...]

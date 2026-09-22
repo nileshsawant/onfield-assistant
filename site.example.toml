@@ -72,10 +72,14 @@ protected_roots = [
 ]
 
 [scheduler]
-# One of: "slurm" | "pbs" | "lsf" | "none"
-# Only "slurm" is fully wired in `bin/ofa` today. "pbs" / "lsf" are
-# placeholders for future adapter work; "none" skips allocation and
-# expects the user to already be sitting on a GPU-equipped node.
+# One of: "slurm" | "none"  (default when unset: "slurm").
+#   slurm -> ofa auto-allocates a GPU node via salloc/srun.
+#   none  -> no batch scheduler; ofa runs in place on the current host
+#            (single-GPU box, or you already `salloc`ed yourself). It still
+#            loads the [modules] below and starts Ollama locally.
+# "pbs" / "lsf" are NOT implemented — bin/ofa will refuse to start with a
+# clear error rather than emit an incorrect salloc. Use "none" and wrap
+# ofa in your own scheduler submission if you're on PBS/LSF.
 kind = "slurm"
 
 # Default partition / queue name used when the user does not set

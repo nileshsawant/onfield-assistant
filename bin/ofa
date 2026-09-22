@@ -46,6 +46,29 @@ done
 
 # If not inside a SLURM allocation, request a GPU node automatically —
 # unless this is a GPU-free subcommand.
+#
+# Scheduler dispatch. site.toml [scheduler].kind (exported as
+# OFA_SCHEDULER_KIND) selects behavior; default/unset = "slurm" so a stock
+# Kestrel checkout is unchanged:
+#   slurm  -> auto-allocate via salloc/srun (the block below)
+#   none   -> no scheduler; run directly on this host (single-GPU box /
+#             already-inside-an-allocation launcher). Skip allocation.
+#   pbs|lsf-> not implemented; fail loudly rather than emit a wrong salloc.
+_ofa_sched="${OFA_SCHEDULER_KIND:-slurm}"
+case "$_ofa_sched" in
+    slurm|"") : ;;  # fall through to the SLURM allocation logic below
+    none)
+        # No batch scheduler: skip allocation, run in place.
+        _ofa_no_gpu="1"
+        ;;
+    *)
+        echo "ERROR: OFA scheduler kind '$_ofa_sched' is not supported by this launcher." >&2
+        echo "       Supported: 'slurm' (auto-allocate) or 'none' (run in place)." >&2
+        echo "       Set [scheduler].kind in site.toml accordingly." >&2
+        exit 1
+        ;;
+esac
+
 if [ -z "$SLURM_JOB_ID" ] && [ -z "$_ofa_no_gpu" ]; then
     if [ -z "${OFA_ACCOUNT:-}" ] && [ -n "${OFA_SCHEDULER_ACCOUNT_DISCOVERY:-}" ]; then
         ACCOUNT="$(bash -c "$OFA_SCHEDULER_ACCOUNT_DISCOVERY")"

@@ -1,26 +1,35 @@
 # ofa Python dependencies.
 #
-# Consumed by install.sh in a fresh Miniforge env. Kept intentionally
-# unpinned so pip resolves a coherent transitive tree against whatever
-# Python (>= 3.11 for tomllib) the miniforge base env supplies. If you
-# hit a specific incompatibility on a new HPC, pin here — but the
-# expected steady state is a shrink-wrap-free requirements file.
+# Consumed by install.sh in a fresh Miniforge env. Requires Python >= 3.11
+# (tomllib).
+#
+# Top-level packages are PINNED to the versions verified working on the
+# Kestrel deploy (snapshot 2026-09-29, Python 3.13). Unpinned resolution
+# previously produced a moving-target install: e.g. huggingface_hub >= 1.0
+# replaced the `huggingface-cli` binary with a refusing stub and broke the
+# embedding-model download on every fresh install. Pinning turns a new-site
+# install into a reproducible known-good set.
+#
+# To upgrade deliberately: bump a pin, reinstall, re-run the smoke checks,
+# and re-snapshot. Heavy transitive deps (torch, transformers, pypdfium2,
+# pydantic, ...) are intentionally NOT pinned so pip can pick the right
+# platform/CUDA wheel for the target site.
 #
 # Top-level imports observed across src/:
 #   chromadb, ddgs, httpx, lxml, numpy, pdfplumber, pypdf, rank_bm25,
 #   sentence_transformers, docx (python-docx), openpyxl
-# Everything else (transformers, torch, huggingface_hub, pypdfium2,
-# jinja2, pydantic, requests, …) is a transitive dep of the above and
-# does not need to be listed here.
 
-chromadb
-ddgs
-httpx
-lxml
-numpy
-openpyxl
-pdfplumber
-pypdf
-python-docx
-rank-bm25
-sentence-transformers
+chromadb==1.5.9
+ddgs==9.14.4
+httpx==0.28.1
+lxml==6.1.1
+numpy==2.4.6
+openpyxl==3.1.5
+pdfplumber==0.11.10
+pypdf==6.12.2
+python-docx==1.2.0
+rank-bm25==0.2.2
+sentence-transformers==5.5.1
+# Pinned explicitly (normally transitive via sentence-transformers) because
+# install.sh relies on its `hf` CLI to fetch the embedding/reranker models.
+huggingface_hub[cli]==1.17.0

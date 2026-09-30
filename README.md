@@ -94,13 +94,15 @@ cd onfield-assistant
 What it does, in order (each step is opt-out via a flag):
 
 1. **Miniforge** — downloads and installs into `env/`, giving you a self-contained Python 3.11+ without touching the host's system Python.
-2. **Python deps** — `pip install -r requirements.txt` inside that env (chromadb, sentence-transformers, httpx, and friends).
-3. **Ollama binary** — pulls the latest static release from github.com/ollama/ollama into `bin/ollama`. Arch-aware (x86_64 / aarch64).
-4. **Embedding model** — snapshots `BAAI/bge-small-en-v1.5` from HuggingFace into `embedding_model/` (~120 MB).
+2. **Python deps** — `pip install -r requirements.txt` inside that env. Top-level packages are pinned to a known-good set snapshotted from the Kestrel deploy, so a fresh install is reproducible rather than a moving target.
+3. **Ollama binary** — pulls the latest static release from github.com/ollama/ollama into `bin/ollama`. Arch-aware (x86_64 / aarch64). **The Linux release bundles CUDA (+Vulkan) backends only** — on AMD/ROCm or GPU-less clusters Ollama falls back to CPU inference; the installer detects this and warns.
+4. **Embedding model** — snapshots `BAAI/bge-small-en-v1.5` from HuggingFace into `embedding_model/` (~120 MB) via the `hf` CLI.
 5. **LLM** — prompts to pull `gemma4:31b-it-q8_0` (~34 GB) into `models/`. Skip with `--skip-model-pull` if you want to pull a different model, or curate a smaller one via `OFA_INSTALL_MODEL_ID`.
-6. **`site.toml` wizard** — interactive prompts for site name, Slurm partition, GRES, protected paths, etc. Writes `site.toml` at the repo root. Falls back to the annotated `site.example.toml` in `--non-interactive` mode.
-7. **RAG indices** — if `repos/` is populated (per `collections.toml`), rebuilds the ChromaDB collections. Skipped otherwise with instructions to run `src/rebuild_indices.py` manually once you've added your source dirs.
+6. **`site.toml` wizard** — interactive prompts for site name, scheduler (`slurm` or `none`), partition/GRES/ntasks, GPU-stack module, protected paths, etc. Writes `site.toml` at the repo root. Falls back to the annotated `site.example.toml` in `--non-interactive` mode.
+7. **RAG indices** — if `repos/` is populated (per `collections.toml`), rebuilds the ChromaDB collections. **A fresh clone ships no corpora** (`repos/*` is gitignored) — the installer lists the source dirs `collections.toml` expects so you can populate the ones you want, then run `src/rebuild_indices.py`.
 8. **`env.sh` + Lmod template** — writes a sourceable activation script and an Lmod modulefile template under `tools/`.
+
+Sites behind a proxy or internal mirror: `curl`, `pip`, and `hf` honor the standard `HTTPS_PROXY`, `PIP_INDEX_URL`, and `HF_ENDPOINT` environment variables, so set those before running the installer.
 
 Useful flags:
 

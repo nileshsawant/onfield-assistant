@@ -10,7 +10,7 @@
 #   3. pip installs requirements.txt into that env.
 #   4. Downloads the Ollama static binary into $OFA_ROOT/bin/ollama.
 #   5. Downloads the BAAI/bge-small-en-v1.5 embedding model into
-#      $OFA_ROOT/embedding_model via huggingface-cli.
+#      $OFA_ROOT/embedding_model via the huggingface `hf` CLI.
 #   6. Optionally pulls the default LLM (gemma4:31b-it-q8_0, ~34 GB).
 #   7. Optionally runs the interactive site.toml wizard.
 #   8. Optionally rebuilds the RAG indices from collections.toml.
@@ -20,10 +20,14 @@
 # Prereqs:
 #   * bash 4+, curl, tar, coreutils (readlink -f), find, unzstd (zstd
 #     package). Standard on any modern HPC login node.
-#   * ~50 GB free disk if you pull the default LLM. ~500 MB for the
-#     Python env + Ollama binary + embedding model alone.
-#   * Outbound HTTPS to github.com / huggingface.co / ollama.com from
-#     the login node.
+#   * ~40 GB free disk if you pull the default LLM (~34 GB). ~3 GB for
+#     the Python env (torch) + Ollama binary + embedding model alone.
+#   * Outbound HTTPS to github.com / pypi.org / huggingface.co /
+#     ollama.com from the login node. Sites behind a proxy or mirror:
+#     curl/pip/hf honor HTTPS_PROXY, PIP_INDEX_URL and HF_ENDPOINT.
+#   * The bundled Linux Ollama release ships CUDA (+Vulkan) backends
+#     only. AMD/ROCm and GPU-less clusters get CPU-only inference; the
+#     installer warns about this (see check_gpu_backend).
 #
 # See ./README.md 'Install on a new HPC' and site.example.toml for the
 # porting checklist before running this.
@@ -156,7 +160,10 @@ install_miniforge() {
 
     if [[ -n "${OFA_INSTALL_PYTHON_VERSION:-}" ]]; then
         log "pinning python=${OFA_INSTALL_PYTHON_VERSION}"
-        "$OFA_ROOT/env/bin/mamba" install -y "python=${OFA_INSTALL_PYTHON_VERSION}"
+        # Miniforge ships mamba today, but don't hard-depend on it.
+        local pkgmgr="$OFA_ROOT/env/bin/mamba"
+        [[ -x "$pkgmgr" ]] || pkgmgr="$OFA_ROOT/env/bin/conda"
+        "$pkgmgr" install -y "python=${OFA_INSTALL_PYTHON_VERSION}"
     fi
 
     if [[ "${OFA_INSTALL_KEEP_INSTALLER:-0}" != "1" ]]; then
@@ -218,12 +225,62 @@ install_ollama() {
         rm -f "$archive"
     fi
     log "ollama installed at $ollama_bin"
+    check_gpu_backend
+}
+
+# The upstream Linux Ollama release only bundles CUDA (+ Vulkan) backends.
+# On an AMD/ROCm or GPU-less cluster it installs cleanly and then silently
+# falls back to CPU inference at first run (a 31B model at ~1 tok/s), with
+# no error anywhere. Detect the mismatch here and warn loudly. Warn only —
+# the login node may legitimately lack the GPUs the compute nodes have.
+check_gpu_backend() {
+    local backends
+    backends="$(ls "$OFA_ROOT/lib/ollama" 2>/dev/null | grep -iE '^(cuda|rocm|hip|vulkan)' | tr '\n' ' ')"
+    log "ollama GPU backends bundled: ${backends:-<none>}"
+    if command -v rocm-smi >/dev/null 2>&1 || [[ -d /opt/rocm ]]; then
+        if ! grep -qiE 'rocm|hip' <<<"$backends"; then
+            cat >&2 <<EOF
+[ofa-install] WARNING: this host looks like AMD/ROCm, but the bundled Ollama
+              release has NO ROCm backend (only: ${backends:-none}). ofa will
+              fall back to CPU-only inference, which is unusably slow for the
+              default 31B model. Install Ollama's ROCm build into bin/ollama +
+              lib/ollama manually, or point OFA_INSTALL_OLLAMA_VERSION at a
+              release that ships rocm libs, then re-run with --force.
+EOF
+        fi
+    elif ! command -v nvidia-smi >/dev/null 2>&1; then
+        cat >&2 <<EOF
+[ofa-install] NOTE: no nvidia-smi on this host. That's normal on a login node
+              whose GPUs live on compute nodes. If your COMPUTE nodes are also
+              non-NVIDIA (or have no GPU), Ollama will run CPU-only — verify
+              on a GPU node with: ofa --list-models && nvidia-smi
+EOF
+    fi
 }
 
 # ---------------------------------------------------------------------------
 # 4. Embedding model — pinned to BAAI/bge-small-en-v1.5, matching what
 #    the current Kestrel install uses. Small (~120 MB) and CPU-friendly.
 # ---------------------------------------------------------------------------
+
+# Download a HuggingFace repo into a local dir. huggingface_hub >= 1.0
+# renamed the CLI to `hf` and turned `huggingface-cli` into a stub that
+# refuses to run, so prefer `hf` and fall back to the legacy name only for
+# older hub versions. Both live in env/bin as transitive deps of
+# sentence-transformers; install the hub CLI extra if neither is present.
+hf_download() {
+    local model_id="$1" dest="$2"
+    mkdir -p "$dest"
+    if [[ ! -x "$OFA_ROOT/env/bin/hf" && ! -x "$OFA_ROOT/env/bin/huggingface-cli" ]]; then
+        "$OFA_ROOT/env/bin/pip" install --quiet 'huggingface-hub[cli]'
+    fi
+    if [[ -x "$OFA_ROOT/env/bin/hf" ]]; then
+        "$OFA_ROOT/env/bin/hf" download "$model_id" --local-dir "$dest"
+    else
+        "$OFA_ROOT/env/bin/huggingface-cli" download "$model_id" --local-dir "$dest"
+    fi
+}
+
 install_embedding_model() {
     if [[ -f "$OFA_ROOT/embedding_model/config.json" && $FORCE -eq 0 ]]; then
         log "embedding_model/ already populated; skipping (--force to redo)"
@@ -231,15 +288,7 @@ install_embedding_model() {
     fi
     local model_id="${OFA_INSTALL_EMBEDDING_MODEL:-BAAI/bge-small-en-v1.5}"
     log "downloading embedding model $model_id"
-    # huggingface-cli is a transitive dep of sentence-transformers, so it
-    # should already be on PATH via env/bin/. Explicit fallback install
-    # just in case a stripped-down requirements.txt drops it.
-    if ! "$OFA_ROOT/env/bin/huggingface-cli" --help >/dev/null 2>&1; then
-        "$OFA_ROOT/env/bin/pip" install --quiet 'huggingface-hub[cli]'
-    fi
-    mkdir -p "$OFA_ROOT/embedding_model"
-    "$OFA_ROOT/env/bin/huggingface-cli" download "$model_id" \
-        --local-dir "$OFA_ROOT/embedding_model"
+    hf_download "$model_id" "$OFA_ROOT/embedding_model"
     log "embedding model at $OFA_ROOT/embedding_model"
 }
 
@@ -256,12 +305,7 @@ install_reranker_model() {
     fi
     local model_id="${OFA_INSTALL_RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-12-v2}"
     log "downloading reranker model $model_id"
-    if ! "$OFA_ROOT/env/bin/huggingface-cli" --help >/dev/null 2>&1; then
-        "$OFA_ROOT/env/bin/pip" install --quiet 'huggingface-hub[cli]'
-    fi
-    mkdir -p "$OFA_ROOT/reranker_model"
-    "$OFA_ROOT/env/bin/huggingface-cli" download "$model_id" \
-        --local-dir "$OFA_ROOT/reranker_model"
+    hf_download "$model_id" "$OFA_ROOT/reranker_model"
     log "reranker model at $OFA_ROOT/reranker_model"
 }
 
@@ -277,7 +321,8 @@ pull_default_model() {
     local model_id="${OFA_INSTALL_MODEL_ID:-gemma4:31b-it-q8_0}"
 
     cat <<EOF
-[ofa-install] Next step: pull LLM '$model_id' (~50-150 GB on disk).
+[ofa-install] Next step: pull LLM '$model_id' (~34 GB on disk for the default;
+              other registry models range ~19-65 GB).
               Storage location: $OFA_ROOT/models
               To skip and configure the model yourself, re-run install.sh
               with --skip-model-pull, or Ctrl+C now and pull later:
@@ -360,7 +405,7 @@ site_wizard() {
     echo
 
     local site_name site_org site_long site_desc login_host
-    local partition gres mem walltime protected
+    local sched_kind partition gres mem ntasks walltime protected gpu_mod
     read -r -p "Site name (short)          [MySiteHPC]: " site_name; site_name="${site_name:-MySiteHPC}"
     read -r -p "Sponsoring org / lab       [MyLab]: "     site_org;  site_org="${site_org:-MyLab}"
     local long_default="the ${site_name} supercomputer"
@@ -368,12 +413,38 @@ site_wizard() {
     read -r -p "GPU descriptor for banner  [single A100]: " site_desc; site_desc="${site_desc:-single A100}"
     local host_default; host_default="$(echo "${site_name}" | tr '[:upper:]' '[:lower:]').example.edu"
     read -r -p "SSH login host             [${host_default}]: " login_host; login_host="${login_host:-$host_default}"
-    read -r -p "Slurm partition            [gpu]: "     partition; partition="${partition:-gpu}"
-    read -r -p "Slurm GRES                 [gpu:1]: "   gres;      gres="${gres:-gpu:1}"
-    read -r -p "Slurm --mem                [80G]: "     mem;       mem="${mem:-80G}"
-    read -r -p "Slurm --time default       [00:30:00]: " walltime; walltime="${walltime:-00:30:00}"
+
+    # Scheduler. Only slurm and none are wired into bin/ofa; anything else
+    # is refused at launch, so don't offer it here.
+    while :; do
+        read -r -p "Scheduler (slurm|none)     [slurm]: " sched_kind; sched_kind="${sched_kind:-slurm}"
+        case "$sched_kind" in slurm|none) break ;; *) echo "  please enter 'slurm' or 'none'" ;; esac
+    done
+    partition="gpu"; gres="gpu:1"; mem="80G"; ntasks="32"; walltime="00:30:00"
+    if [[ "$sched_kind" == "slurm" ]]; then
+        read -r -p "Slurm partition            [gpu]: "     partition; partition="${partition:-gpu}"
+        read -r -p "Slurm GRES                 [gpu:1]: "   gres;      gres="${gres:-gpu:1}"
+        read -r -p "Slurm --mem                [80G]: "     mem;       mem="${mem:-80G}"
+        read -r -p "Slurm --ntasks-per-node    [32]: "      ntasks;    ntasks="${ntasks:-32}"
+        read -r -p "Slurm --time default       [00:30:00]: " walltime; walltime="${walltime:-00:30:00}"
+    else
+        echo "  (no scheduler: ofa runs in place on the current host; resource fields skipped)"
+    fi
+
+    # GPU stack module. Written to modules.extra so it loads on every host
+    # regardless of OS; cuda_rhel8/9 stay empty so the RHEL-detection path
+    # is a no-op on a new site. Empty = no module load (CUDA/ROCm already
+    # on PATH, or no Lmod).
+    read -r -p "GPU stack module to load   [cuda] (empty=none): " gpu_mod; gpu_mod="${gpu_mod-cuda}"
+
     local prot_default; prot_default="/opt/$(echo "${site_name}" | tr '[:upper:]' '[:lower:]')"
     read -r -p "Protected root path        [${prot_default}]: " protected; protected="${protected:-$prot_default}"
+
+    # account_discovery is SLURM-specific (sacctmgr); emit it only for slurm.
+    local acct_line=""
+    if [[ "$sched_kind" == "slurm" ]]; then
+        acct_line="account_discovery = 'sacctmgr show user \"\$USER\" format=defaultaccount -nP 2>/dev/null | head -1'"
+    fi
 
     cat > "$OFA_ROOT/site.toml" <<TOML
 # ofa site.toml — generated by install.sh $(date -u +%Y-%m-%dT%H:%M:%SZ).
@@ -389,18 +460,21 @@ login_host = "${login_host}"
 protected_roots = ["${protected}"]
 
 [scheduler]
-kind = "slurm"
+kind = "${sched_kind}"
 partition = "${partition}"
 gres = "${gres}"
 mem = "${mem}"
-ntasks_per_node = 32
+ntasks_per_node = ${ntasks}
 walltime = "${walltime}"
-account_discovery = 'sacctmgr show user "\$USER" format=defaultaccount -nP 2>/dev/null | head -1'
+${acct_line}
 
 [modules]
-# Set to empty string to skip module load (sites without Lmod).
-cuda_rhel8 = "cuda"
-cuda_rhel9 = "cuda"
+# cuda_rhel8/9 are Kestrel's RHEL-major-keyed CUDA selection; left empty
+# here so they're a no-op. Put your GPU stack in 'extra' (loaded on every
+# host). Empty string = skip module load.
+cuda_rhel8 = ""
+cuda_rhel9 = ""
+extra = "${gpu_mod}"
 TOML
     log "wrote $OFA_ROOT/site.toml"
     echo
@@ -419,9 +493,19 @@ rebuild_indices() {
         return 0
     fi
     if [[ ! -d "$OFA_ROOT/repos" ]] || [[ -z "$(ls -A "$OFA_ROOT/repos" 2>/dev/null)" ]]; then
+        # repos/* is gitignored (no submodules), so a fresh clone has NO RAG
+        # corpora. Without them ofa still runs but every mode answers from
+        # model weights alone. Spell out exactly what collections.toml
+        # expects so the porter isn't left guessing.
         log "repos/ is empty; skipping RAG index rebuild"
-        log "  populate repos/ with your source dirs (see collections.toml), then run:"
-        log "  $OFA_ROOT/env/bin/python3 $OFA_ROOT/src/rebuild_indices.py"
+        log "  NOTE: a fresh clone ships NO RAG corpora (repos/* is gitignored)."
+        log "  collections.toml expects these source dirs under $OFA_ROOT/repos/:"
+        grep -E '^\s*path\s*=' "$OFA_ROOT/collections.toml" 2>/dev/null \
+            | sed -E 's/^\s*path\s*=\s*"([^"]+)".*/      \1/' | sort -u >&2 || true
+        log "  Populate the ones you want (git clone / rsync), edit collections.toml"
+        log "  to drop the rest, then run:"
+        log "      $OFA_ROOT/env/bin/python3 $OFA_ROOT/src/rebuild_indices.py"
+        log "  See docs/rag-maintenance.md."
         return 0
     fi
     log "rebuilding RAG indices from collections.toml"

@@ -355,9 +355,13 @@ def _is_model_pulled(model_id: str) -> bool:
     for root in candidates:
         if not root:
             continue
-        manifest = os.path.join(root, "manifests", "registry.ollama.ai", "library", family, tag)
-        if os.path.isfile(manifest):
-            return True
+        # Ollama < 0.40 layout, then the >= 0.40 manifests-v2 layout.
+        for manifest in (
+            os.path.join(root, "manifests", "registry.ollama.ai", "library", family, tag),
+            os.path.join(root, "manifests-v2", "ollama.com", "library", family, tag),
+        ):
+            if os.path.isfile(manifest):
+                return True
     return False
 
 def _print_model_registry():
@@ -1716,6 +1720,74 @@ def _run_with_cwd_tracking(cmd: str, *, stream: bool = True):
             pass
 
 
+def _user_models_dir() -> str:
+    """Return a per-user writable Ollama models dir mirroring the shared store.
+
+    Ollama >= 0.40 writes to OLLAMA_MODELS on every start (metadata/ cache,
+    manifests-v2/ housekeeping) and exits if it can't — and most users only
+    have read access to $OFA_ROOT/models. So each user gets
+    $OFA_SCRATCH/.ofa_ollama_models: tiny manifests copied, multi-GB blobs
+    symlinked to the shared store. Falls back to the shared dir on any error.
+    """
+    import fcntl
+    import shutil
+    shared = os.path.join(OFA_ROOT, "models")
+    user = os.path.join(OFA_SCRATCH, ".ofa_ollama_models")
+    state_path = os.path.join(user, ".ofa_mirror_state.json")
+    try:
+        os.makedirs(os.path.join(user, "blobs"), exist_ok=True)
+        with open(user + ".lock", "w") as lock_fp:
+            fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX)
+            for name in os.listdir(os.path.join(shared, "blobs")):
+                dst = os.path.join(user, "blobs", name)
+                if not os.path.lexists(dst):
+                    os.symlink(os.path.join(shared, "blobs", name), dst)
+            for name in os.listdir(os.path.join(user, "blobs")):
+                p = os.path.join(user, "blobs", name)
+                if os.path.islink(p) and not os.path.exists(p):
+                    os.unlink(p)  # shared blob was removed
+            mirrored = set()
+            for tree in ("manifests", "manifests-v2"):
+                base = os.path.join(shared, tree)
+                for root, _dirs, files in os.walk(base):
+                    for fn in files:
+                        src = os.path.join(root, fn)
+                        rel = os.path.relpath(src, shared)
+                        dst = os.path.join(user, rel)
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        if os.path.islink(src):
+                            # v2 manifests are relative links into blobs/, which resolve in the mirror too.
+                            target = os.readlink(src)
+                            if not (os.path.islink(dst) and os.readlink(dst) == target):
+                                if os.path.lexists(dst):
+                                    os.unlink(dst)
+                                os.symlink(target, dst)
+                        else:
+                            with open(src, "rb") as f:
+                                data = f.read()
+                            if not os.path.isfile(dst) or open(dst, "rb").read() != data:
+                                with open(dst, "wb") as f:
+                                    f.write(data)
+                        mirrored.add(rel)
+            try:
+                with open(state_path) as f:
+                    previous = set(json.load(f))
+            except (OSError, ValueError):
+                previous = set()
+            # Drop manifests of models removed from the shared store; never
+            # touch anything the user pulled into their own mirror.
+            for rel in previous - mirrored:
+                p = os.path.join(user, rel)
+                if os.path.lexists(p):
+                    os.unlink(p)
+            with open(state_path, "w") as f:
+                json.dump(sorted(mirrored), f)
+        return user
+    except OSError as e:
+        print(f"Warning: could not prepare per-user models dir {user} ({e}); using shared {shared}", file=sys.stderr)
+        return shared
+
+
 def ensure_ollama_running():
     """Start Ollama server if not already running.
 
@@ -1755,7 +1827,7 @@ def ensure_ollama_running():
 
     # Start Ollama in background
     env = os.environ.copy()
-    env["OLLAMA_MODELS"] = os.path.join(OFA_ROOT, "models")
+    env["OLLAMA_MODELS"] = _user_models_dir()
     env["OLLAMA_HOST"] = f"127.0.0.1:{OFA_PORT}"
     env["OLLAMA_FLASH_ATTENTION"] = "1"
     env["OLLAMA_KV_CACHE_TYPE"] = "q8_0"

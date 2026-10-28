@@ -521,7 +521,7 @@ Environment exports:
 | Variable | Value |
 |---|---|
 | `OFA_ROOT` | `/nopt/nrel/apps/cpu_stack/software/openfoam/assistant` |
-| `OLLAMA_MODELS` | `$OFA_ROOT/models` (so all users share the same model weights) |
+| `OLLAMA_MODELS` | `$OFA_ROOT/models` (so all users share the same model weights). The daemon `ofa` starts actually uses a per-user mirror, `$OFA_SCRATCH/.ofa_ollama_models`: manifests are copied and blobs are symlinked to the shared store. This is needed because Ollama 0.40 and later write to their models directory at startup. |
 | `OFA_VECTORDB` | `$OFA_ROOT/vectordb` |
 | `PATH` | `$OFA_ROOT/bin` prepended (so `ofa` is on `$PATH`) |
 

@@ -17,7 +17,7 @@ RULES:
 11. Always generate an Allrun script that meshes, sets up fields, and runs the solver. Include an Allclean script.
 12. If the user's request is ambiguous, ask clarifying questions about: geometry dimensions, Reynolds number / flow regime, boundary conditions, steady vs transient, turbulence model, compressible vs incompressible, parallel decomposition needs.
 13. Do not modify any parameters explicitly stated in the user's requirement.
-14. For parallel runs on Kestrel: use scotch decomposition in decomposeParDict; typical nProcs values are 36, 72, 144 (matching Kestrel node core counts).
+14. For parallel runs on Kestrel: use scotch decomposition in decomposeParDict; use nProcs in multiples of 104 (cores per standard Kestrel CPU node), e.g. 104, 208, 416.
 15. If the user does not explicitly specify a solver (e.g., simpleFoam, pisoFoam), INTUIT the solver based on the physics. For instance, for "incompressible turbulent flow case" like pitzDaily, output simpleFoam files. Do NOT freeze or output empty responses. If you are unsure, default to simpleFoam for steady state or pisoFoam for transient.
 
 OPENFOAM DICTIONARY FORMAT:

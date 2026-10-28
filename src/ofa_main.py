@@ -255,13 +255,15 @@ MODEL_REGISTRY = {
     },
     # NVIDIA Nemotron 3.5 Bolt — 74B hybrid Mamba-MoE (9B active), IQ2_XXS
     # (~24 GB), vision + tools + thinking. Non-Chinese. Requires Ollama
-    # >= 0.40.5. Measured on H100 at 256K: 29 GB, 100% GPU, ~47 tok/s. Its
-    # bundled DFlash draft gives speculative decoding automatically (the
-    # "dflash requires ctx_other" log line during memory fitting is benign).
+    # >= 0.40.5. 29 GB at 256K on an H100. Its bundled DFlash draft does
+    # speculative decoding (the "dflash requires ctx_other" log line during
+    # memory fitting is benign). draft_num_predict 4 beat Ollama's default 7
+    # on 512-token coding answers: 136 vs 111 tok/s (no draft: 79).
     # T/top_p from Ollama's params; rest follows Lightning.
     "nemotron-3.5-bolt:74b-a9b": {
         "temperature": 1.0, "top_p": 0.95, "top_k": 40,
         "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,
+        "draft_num_predict": 4,
         "thought_tags": [("<think>", "</think>")],
     },
     # Microsoft phi-4 — small, strong reasoning.
@@ -334,7 +336,7 @@ def get_model_options():
     Per-env-var overrides ($OFA_TEMPERATURE etc.) always win over the
     registry, so a one-off tweak doesn't require editing the registry."""
     reg = MODEL_REGISTRY.get(MODEL, {})
-    return {
+    opts = {
         "temperature":    float(os.environ["OFA_TEMPERATURE"])    if os.environ.get("OFA_TEMPERATURE")    else reg.get("temperature",    LLM_TEMPERATURE),
         "top_p":          float(os.environ["OFA_TOP_P"])          if os.environ.get("OFA_TOP_P")          else reg.get("top_p",          LLM_TOP_P),
         "top_k":          int(os.environ["OFA_TOP_K"])            if os.environ.get("OFA_TOP_K")          else reg.get("top_k",          LLM_TOP_K),
@@ -344,6 +346,10 @@ def get_model_options():
         "num_gpu":        int(os.environ["OFA_NUM_GPU"])          if os.environ.get("OFA_NUM_GPU")        else LLM_NUM_GPU,
         "num_batch":      int(os.environ["OFA_NUM_BATCH"])        if os.environ.get("OFA_NUM_BATCH")      else reg.get("num_batch",      LLM_NUM_BATCH),
     }
+    # Speculative-decoding draft length; only meaningful for models that ship a draft.
+    if "draft_num_predict" in reg:
+        opts["draft_num_predict"] = reg["draft_num_predict"]
+    return opts
 
 def get_model_thought_tags():
     """Native chat-template thinking tags for the currently-selected MODEL,

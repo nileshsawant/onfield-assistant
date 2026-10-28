@@ -2455,6 +2455,33 @@ def _expand_query(query: str) -> str:
     return f"{query} {extra}"
 
 
+# VS Code Copilot Chat puts the typed request in <userRequest> after large
+# context blocks; the embedder only reads the first ~512 tokens of a query.
+_USER_REQUEST_RE = re.compile(r"<userRequest>\s*(.*?)\s*</userRequest>", re.S)
+_ENVELOPE_BLOCK_RE = re.compile(
+    r"<(attachments|context|editorContext|environment_info|workspace_info|reminderInstructions)\b[^>]*>.*?</\1>",
+    re.S,
+)
+RAG_QUERY_PRIOR_TURNS = 2
+RAG_QUERY_MAX_CHARS = 1500
+
+
+def request_text(text: str) -> str:
+    """The user's own words from a chat turn, without client-added context blocks."""
+    found = _USER_REQUEST_RE.findall(text)
+    return found[-1].strip() if found else _ENVELOPE_BLOCK_RE.sub("", text).strip()
+
+
+def build_rag_query(requests: list[str]) -> str:
+    """Retrieval query: the latest request first, then its recent predecessors,
+    so follow-ups like "now run it on a GPU" keep the earlier turns' topic."""
+    requests = [r for r in requests if r]
+    if not requests:
+        return ""
+    recent = [requests[-1], *reversed(requests[-1 - RAG_QUERY_PRIOR_TURNS:-1])]
+    return "\n".join(recent)[:RAG_QUERY_MAX_CHARS]
+
+
 def retrieve_context(query: str, top_k: int = 12) -> str:
     """Retrieve relevant OpenFOAM file chunks from the vector database using Hybrid Search.
 
@@ -3018,6 +3045,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
     print("-" * 60)
 
     last_response = ""
+    rag_requests: list[str] = []
 
     while True:
         try:
@@ -3313,6 +3341,7 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             # forward it to RAG retrieval and the LLM. Unresolvable @tokens
             # are left untouched so the user can still talk *about* names
             # like @cleanup without triggering an attach.
+            rag_requests.append(user_input)
             user_input = _expand_at_file_refs(user_input)
 
             # Retrieve RAG context
@@ -3321,15 +3350,16 @@ def interactive_mode(save_dir: str = None, resume: bool = False, hpc_mode: bool 
             if is_greeting:
                 context = ""
             else:
+                rag_query = build_rag_query(rag_requests)
                 if reframe_mode:
-                    rhel9_context = _get_reframe_rag(user_input)
-                    base_context = retrieve_hpc_context(user_input)
+                    rhel9_context = _get_reframe_rag(rag_query)
+                    base_context = retrieve_hpc_context(rag_query)
                     context = f"=== RHEL9 SPECIFIC CONTEXT (TAKES PRECEDENCE) ===\n{rhel9_context}\n\n=== GENERAL HPC CONTEXT (RHEL8/Legacy) ===\n{base_context}"
                 else:
-                    context = retrieve_vasp_context(user_input) if vasp_mode else (retrieve_quantum_computing_context(user_input) if quantum_computing_mode else (retrieve_marbles_context(user_input) if marbles_mode else (retrieve_amrex_context(user_input) if amrex_mode else (retrieve_hpc_context(user_input) if (hpc_mode or code_mode) else retrieve_context(user_input)))))
+                    context = retrieve_vasp_context(rag_query) if vasp_mode else (retrieve_quantum_computing_context(rag_query) if quantum_computing_mode else (retrieve_marbles_context(rag_query) if marbles_mode else (retrieve_amrex_context(rag_query) if amrex_mode else (retrieve_hpc_context(rag_query) if (hpc_mode or code_mode) else retrieve_context(rag_query)))))
                 # Applies to every mode, so it lives here rather than in each
                 # retrieve_*_context().
-                context = _append_private_context(context, user_input)
+                context = _append_private_context(context, rag_query)
             if context:
                 fenced = _fence_rag(context, label="RHEL9_STACK+HPC" if reframe_mode else "QUANTUM" if quantum_computing_mode else "VASP" if vasp_mode else "HPC_DOCS" if (hpc_mode or code_mode or amrex_mode or marbles_mode) else "OPENFOAM")
                 if reframe_mode:
@@ -3839,6 +3869,12 @@ def retrieve_vasp_context(query: str, top_k: int = 6) -> str:
 
     return "\n\n---\n\n".join(context_parts)
 
+# Kestrel's current-environment (RHEL9) docs. Most other pages predate the RHEL9
+# module tree, so these are always retrieved first; no-op if absent.
+HPC_CURRENT_DOCS_PREFIX = "RHEL9_upgrade/"
+HPC_CURRENT_TOP_K = 3
+
+
 def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
     _init_rag()
     if _hpc_docs_collection is None:
@@ -3855,6 +3891,19 @@ def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
         vec_metas = res["metadatas"][0] if res["metadatas"] else []
         
         bm25, hw_docs = _get_hpc_bm25()
+        current_docs = []
+        current_paths = sorted({
+            m.get("filepath", "") for m in (hw_docs or {}).get("metadatas", [])
+            if m.get("filepath", "").startswith(HPC_CURRENT_DOCS_PREFIX)
+        })
+        if current_paths:
+            cur = _hpc_docs_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=HPC_CURRENT_TOP_K,
+                where={"filepath": {"$in": current_paths}},
+                include=["documents", "metadatas"],
+            )
+            current_docs = list(zip(cur["documents"][0], cur["metadatas"][0])) if cur["documents"] else []
         bm25_docs = []
         bm25_metas = []
         if bm25 and hw_docs:
@@ -3882,11 +3931,16 @@ def retrieve_hpc_context(query: str, top_k: int = 15) -> str:
             meta_map[doc] = meta
             
         sorted_docs = sorted(rrf_scores.keys(), key=lambda d: rrf_scores[d], reverse=True)
-        top_fused = sorted_docs[:top_k]
+        current_set = {d for d, _ in current_docs}
+        top_fused = [d for d in sorted_docs if d not in current_set][:top_k]
         
-        parts = []
+        parts = [
+            f"[HPC DOCS / {m.get('filepath', '?')} — CURRENT {_load_site().get('site', {}).get('name') or 'Kestrel'} "
+            f"ENVIRONMENT, takes precedence over older pages]\n{d}"
+            for d, m in current_docs
+        ]
         for d in top_fused:
-            filename = meta_map[d].get('filename', '?')
+            filename = meta_map[d].get('filepath') or meta_map[d].get('filename', '?')
             parts.append(f"[HPC DOCS / {filename}]\n{d}")
             
         url_ctx = fetch_url_context(query)

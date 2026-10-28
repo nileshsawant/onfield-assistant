@@ -57,6 +57,94 @@ def load_questions(path: Path, ids=None, modes=None) -> list[dict]:
 
 # ------------------------------------------------------------------ generate
 
+# Shape of what VS Code Copilot Chat sends as a user turn: context blocks first,
+# the typed request last in <userRequest>.
+VSCODE_ENVELOPE = """{attachments}<environment_info>
+The user's current OS is: Linux
+</environment_info>
+<workspace_info>
+I am working in a workspace with the following folders:
+- /projects/myproj/solver
+I am working in a workspace that has the following structure:
+```
+CMakeLists.txt
+GNUmakefile
+README.md
+inputs
+run.sbatch
+build/
+	CMakeCache.txt
+	compile_commands.json
+docs/
+	design.md
+	performance.md
+scripts/
+	plot_residuals.py
+	postprocess.py
+	submit_sweep.sh
+src/
+	boundary.cpp
+	boundary.H
+	io.cpp
+	io.H
+	main.cpp
+	mesh.cpp
+	mesh.H
+	solver.cpp
+	solver.H
+	timers.H
+tests/
+	test_boundary.cpp
+	test_mesh.cpp
+	test_solver.cpp
+```
+This is the state of the context at this point in the conversation. The view of the workspace structure may be truncated.
+</workspace_info>
+<context>
+The current date is 2026-10-28.
+Terminals:
+Terminal: bash
+Last Command: make -j8 2>&1 | tail -20
+Cwd: /projects/myproj/solver
+Exit Code: 2
+</context>
+<editorContext>
+The user's current file is /projects/myproj/solver/src/main.cpp. The current selection is from line 40 to line 58.
+</editorContext>
+<reminderInstructions>
+When using the file editing tool, include 3-5 lines of unchanged context before and after the target text.
+For multiple independent edits, apply them together rather than one at a time.
+Do not create new markdown files to document changes unless requested.
+Prefer editing existing files over creating new ones.
+Read a file before modifying it, and keep changes minimal and focused on the request.
+When running terminal commands, explain what they do and their impact.
+Do not use emojis unless asked. Keep answers concise and avoid filler.
+Use absolute paths when a tool expects a file path.
+If a command fails, diagnose the cause rather than retrying the same command.
+Never print secrets, tokens, or credentials.
+Wrap file references as markdown links with workspace-relative paths.
+Follow the user's coding conventions as observed in the surrounding code.
+</reminderInstructions>
+<userRequest>
+{request}
+</userRequest>"""
+
+
+def vscode_wrap(request: str, attachment: str | None = None) -> str:
+    att = (f'<attachments>\n<attachment id="file">\n{attachment}\n</attachment>\n</attachments>\n'
+           if attachment else "")
+    return VSCODE_ENVELOPE.format(attachments=att, request=request)
+
+
+def build_messages(q: dict) -> list[dict]:
+    messages = [*q.get("history", []), {"role": "user", "content": q["prompt"]}]
+    if q.get("wrap") == "vscode":
+        last = len(messages) - 1
+        messages = [{**m, "content": vscode_wrap(m["content"], q.get("attachment") if i == last else None)}
+                    if m["role"] == "user" else m for i, m in enumerate(messages)]
+    return messages
+
+
 def cmd_generate(args) -> None:
     out_dir = eval_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +175,7 @@ def cmd_generate(args) -> None:
         for rep in range(args.repeats):
             for q in qs:
                 n += 1
-                messages = [*q.get("history", []), {"role": "user", "content": q["prompt"]}]
+                messages = build_messages(q)
                 built = ofa_server._augment_messages(messages, q["mode"])
                 t0 = time.time()
                 answer, retries = "", 0
@@ -208,6 +296,10 @@ def run_check(answer: str, c: dict) -> tuple[str, str]:
         flags = re.M if c.get("case") else re.M | re.I
         found = re.search(c["pattern"], answer, flags) is not None
         return ("pass" if found == (t == "regex") else "fail"), ""
+    if t == "implies":
+        if re.search(c["if"], answer, re.M | re.I) is None:
+            return "pass", ""
+        return ("pass" if re.search(c["then"], answer, re.M | re.I) else "fail"), ""
     if t == "files":
         missing = [p for p in c["required"] if p not in file_blocks(answer)]
         return ("fail", "missing " + ", ".join(missing)) if missing else ("pass", "")

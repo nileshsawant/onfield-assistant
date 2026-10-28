@@ -80,14 +80,16 @@ _MODEL_MODES = {
 }
 
 
+_GREETINGS = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
+
+
 def _retrieve_for_mode(query: str, mode: str) -> str:
     """Dispatch to the right RAG helper for ``mode``. Empty on greetings.
 
     Mirrors the dispatch in ``interactive_mode`` / ``single_query`` so
     BYOK clients get identical context to the CLI.
     """
-    greetings = {"hi", "hello", "hey", "howdy", "thanks", "thank you"}
-    if not query or query.strip().lower() in greetings:
+    if not query or query.strip().lower() in _GREETINGS:
         return ""
     if mode == "reframe":
         rhel9 = ofa_main._get_reframe_rag(query)
@@ -112,11 +114,11 @@ def _retrieve_for_mode(query: str, mode: str) -> str:
     return ofa_main._append_private_context(base_ctx, query)
 
 
-def _augment_user_message(content: str, mode: str) -> str:
+def _augment_user_message(content: str, mode: str, query: str | None = None) -> str:
     """Prefix RAG context to the *last* user message, just like the CLI."""
     rag = ""
     try:
-        rag = _retrieve_for_mode(content, mode)
+        rag = _retrieve_for_mode(content if query is None else query, mode)
     except Exception as e:
         # RAG failure must never break a chat — log and continue with no
         # context, matching the CLI's degrade-gracefully behaviour.
@@ -275,9 +277,13 @@ def _augment_messages(messages: list[dict], mode: str, has_tools: bool = False) 
         sys_prompt = _OPENAI_TOOL_MODE_DIRECTIVE + _strip_fence_tool_protocol(sys_prompt)
     out = [{"role": "system", "content": sys_prompt}]
     last_user_idx = None
+    requests = []
     for i, m in enumerate(messages):
         if m.get("role") == "user":
             last_user_idx = i
+            requests.append(ofa_main.request_text(_split_content(m.get("content", ""))[0]))
+    # A bare greeting stays a greeting (no RAG) even with history behind it.
+    query = requests[-1] if requests and requests[-1].lower() in _GREETINGS else ofa_main.build_rag_query(requests)
     for i, m in enumerate(messages):
         role = m.get("role")
         if role == "system":
@@ -285,7 +291,7 @@ def _augment_messages(messages: list[dict], mode: str, has_tools: bool = False) 
             continue
         content, images = _split_content(m.get("content", ""))
         if role == "user" and i == last_user_idx:
-            content = _augment_user_message(content, mode)
+            content = _augment_user_message(content, mode, query)
         omsg: dict = {"role": role, "content": content}
         if images:
             omsg["images"] = images

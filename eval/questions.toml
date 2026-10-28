@@ -13,6 +13,7 @@
 #   foam_parse          foamDictionary on every system/ constant/ 0/ file
 #                       (skipped unless an OpenFOAM module is loaded when scoring)
 #   max_chars           answer length limit
+#   implies             if `if` matches, `then` must match too
 #
 # Facts used as expected answers were verified against repos/HPC (Kestrel
 # docs), repos/OpenFOAM-dev and repos/amrex. Keep it that way when adding
@@ -329,6 +330,139 @@ checks = [
   { type = "regex", pattern = 'matplotlib' },
   { type = "regex", pattern = 'Initial residual' },
   { type = "regex", pattern = 'Solving for' },
+]
+
+# Code-mode questions that depend on retrieval across turns, and on requests
+# arriving inside VS Code's context envelope (wrap = "vscode"). Kestrel is
+# RHEL9-only; facts checked in login shells on kl3/kl5 (2026-10-28): two
+# workflows -- `module load gcc/14.2.0 openmpi` gives mpicxx/mpifort, or
+# `module load cpe-stack/25.03` + `PrgEnv-gnu` gives CC/cc/ftn + cray-mpich.
+# PrgEnv-* without cpe-stack is stale RHEL8 advice. Python envs via
+# anaconda3/conda/mamba/miniforge3; cuda -> 12.8.1; H100 = sm_90.
+
+[[question]]
+id = "code-fu-mpi-cxx"
+mode = "code"
+history = [
+  { role = "user", content = "I have an MPI C++ code that I build on my laptop with: mpicxx -O2 main.cpp -o solver" },
+  { role = "assistant", content = "That builds against your laptop's MPI installation. What would you like to do with it next?" },
+]
+prompt = "What should I use instead when I build it on Kestrel?"
+checks = [
+  { type = "regex", pattern = 'module load', desc = "loads modules" },
+  { type = "regex", pattern = 'cray-mpich|openmpi|\bmpich\b|intel-oneapi-mpi', desc = "names a Kestrel MPI module" },
+  { type = "implies", if = 'PrgEnv-', then = 'cpe-stack', desc = "PrgEnv only via cpe-stack (RHEL9)" },
+]
+
+[[question]]
+id = "code-fu-fortran"
+mode = "code"
+history = [
+  { role = "user", content = "My Fortran MPI code builds with: mpif90 -O3 *.f90 -o model" },
+  { role = "assistant", content = "Got it, a Fortran MPI build using the mpif90 wrapper. How can I help?" },
+]
+prompt = "How do I build it on Kestrel?"
+checks = [
+  { type = "regex", pattern = 'module load', desc = "loads modules" },
+  { type = "regex", pattern = 'cray-mpich|openmpi|\bmpich\b|intel-oneapi-mpi', desc = "names a Kestrel MPI module" },
+  { type = "implies", if = 'PrgEnv-', then = 'cpe-stack', desc = "PrgEnv only via cpe-stack (RHEL9)" },
+]
+
+[[question]]
+id = "code-fu-cuda-run"
+mode = "code"
+history = [
+  { role = "user", content = "Write a CUDA C++ program that adds two vectors of 1M floats." },
+  { role = "assistant", content = "Here is vecadd.cu: it allocates the arrays with cudaMalloc, launches an add kernel with 256 threads per block, copies the result back and checks it." },
+]
+prompt = "How do I compile and run it on a Kestrel GPU node?"
+checks = [
+  { type = "regex", pattern = 'module load cuda' },
+  { type = "regex", pattern = 'nvcc' },
+  { type = "regex", pattern = 'sm_90|compute_90|-arch=native' },
+  { type = "regex", pattern = '--gres=gpu|--gpus' },
+]
+
+[[question]]
+id = "code-fu-pytorch-env"
+mode = "code"
+history = [
+  { role = "user", content = "I have a PyTorch training script, train.py, that trains a CNN on CIFAR-10." },
+  { role = "assistant", content = "Understood. What do you need help with?" },
+]
+prompt = "Set up a Python environment for it on Kestrel and give me a job script that runs it on one GPU."
+checks = [
+  { type = "regex", pattern = 'module load (anaconda3|conda|mamba|miniforge3?|pytorch)' },
+  { type = "regex", pattern = '(conda|mamba) create|python3? -m venv' },
+  { type = "regex", pattern = '--gres=gpu|--gpus' },
+  { type = "regex", pattern = '--account|#SBATCH\s+-A\s' },
+  { type = "bash_syntax" },
+]
+
+[[question]]
+id = "code-vs-mpi-build"
+mode = "code"
+wrap = "vscode"
+attachment = '''#include <mpi.h>
+#include <cstdio>
+int main(int argc, char** argv) {
+  MPI_Init(&argc, &argv);
+  int rank, size;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  std::printf("rank %d of %d\n", rank, size);
+  MPI_Finalize();
+}'''
+prompt = "How do I compile this on Kestrel and run it on 2 full standard CPU nodes?"
+checks = [
+  { type = "regex", pattern = 'cray-mpich|openmpi|\bmpich\b|intel-oneapi-mpi', desc = "names a Kestrel MPI module" },
+  { type = "implies", if = 'PrgEnv-', then = 'cpe-stack', desc = "PrgEnv only via cpe-stack (RHEL9)" },
+  { type = "regex", pattern = 'srun' },
+  { type = "regex", pattern = '(--nodes[= ]2|-N\s*2)\b' },
+  { type = "regex", pattern = 'ntasks-per-node[= ]104|--ntasks[= ]208|-n\s*208', desc = "104 ranks per node" },
+]
+
+[[question]]
+id = "code-vs-fortran"
+mode = "code"
+wrap = "vscode"
+prompt = "How do I compile my Fortran MPI program on Kestrel?"
+checks = [
+  { type = "regex", pattern = 'module load', desc = "loads modules" },
+  { type = "regex", pattern = 'cray-mpich|openmpi|\bmpich\b|intel-oneapi-mpi', desc = "names a Kestrel MPI module" },
+  { type = "implies", if = 'PrgEnv-', then = 'cpe-stack', desc = "PrgEnv only via cpe-stack (RHEL9)" },
+]
+
+[[question]]
+id = "code-vs-gpu-job"
+mode = "code"
+wrap = "vscode"
+history = [
+  { role = "user", content = "Write a CUDA kernel that adds two vectors." },
+  { role = "assistant", content = "Here is vecadd.cu with an add kernel, cudaMalloc/cudaMemcpy, and a correctness check." },
+]
+prompt = "Now give me a Slurm script to build and run it on one H100 for 10 minutes."
+checks = [
+  { type = "bash_syntax" },
+  { type = "regex", pattern = 'module load cuda' },
+  { type = "regex", pattern = '--gres=gpu(:h100)?:1\b|--gpus(-per-node)?[= ]1\b' },
+  { type = "regex", pattern = '(--time[= ]|-t\s*)(00:)?10:00|-t\s*10\b' },
+  { type = "regex", pattern = '--account|#SBATCH\s+-A\s' },
+]
+
+[[question]]
+id = "code-vs-python-env"
+mode = "code"
+wrap = "vscode"
+attachment = '''numpy>=1.26
+pandas>=2.2
+matplotlib
+torch>=2.4'''
+prompt = "This is my requirements.txt. How should I install these packages on Kestrel?"
+checks = [
+  { type = "regex", pattern = 'module load (anaconda3|conda|mamba|miniforge3?|pytorch)' },
+  { type = "regex", pattern = '(conda|mamba) create|python3? -m venv' },
+  { type = "regex", pattern = 'pip install (-r requirements\.txt|[^\n]*numpy)', desc = "installs the requirements" },
 ]
 
 # -------------------------------------------------------------------- VASP

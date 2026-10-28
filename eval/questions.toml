@@ -1,0 +1,356 @@
+# ofa evaluation set. Each [[question]] is asked through the same path as
+# `ofa --serve` for its `mode` (system prompt + RAG), then scored by `checks`.
+#
+# Check types (see eval/run_eval.py):
+#   regex / not_regex   pattern searched in the answer (thoughts stripped),
+#                       case-insensitive and multiline unless case = true
+#   files               every path in `required` has a "=== FILE: <path> ===" or
+#                       ```write <path> block
+#   bash_syntax         bash -n on every bash/sh block and Allrun/*.sh/*.sbatch file
+#   python_syntax       ast.parse on every python block / *.py file
+#   cpp_syntax          <compiler> -fsyntax-only on every C/C++ block / source file
+#                       (mpicxx if it includes mpi.h)
+#   foam_parse          foamDictionary on every system/ constant/ 0/ file
+#                       (skipped unless an OpenFOAM module is loaded when scoring)
+#   max_chars           answer length limit
+#
+# Facts used as expected answers were verified against repos/HPC (Kestrel
+# docs), repos/OpenFOAM-dev and repos/amrex. Keep it that way when adding
+# questions: if the docs disagree with themselves, leave the fact out.
+
+# ---------------------------------------------------------------- OpenFOAM
+
+[[question]]
+id = "of-cavity-v13"
+mode = "openfoam"
+prompt = "Generate a complete lid-driven cavity case for OpenFOAM Foundation v13: 0.1 m square cavity, 20x20x1 mesh, lid velocity 1 m/s, kinematic viscosity 0.01 m^2/s (Re = 10), laminar."
+checks = [
+  { type = "files", required = ["system/controlDict", "system/blockMeshDict", "system/fvSchemes", "system/fvSolution", "0/U", "0/p", "constant/physicalProperties"] },
+  { type = "regex", pattern = 'solver\s+incompressibleFluid\s*;', desc = "v13 modular solver" },
+  { type = "regex", pattern = 'foamRun', desc = "v13 runs via foamRun" },
+  { type = "regex", pattern = 'simulationType\s+laminar\s*;', desc = "laminar momentumTransport" },
+  { type = "regex", pattern = 'movingWall' },
+  { type = "regex", pattern = 'uniform\s*\(\s*1\s+0\s+0\s*\)', desc = "lid velocity" },
+  { type = "regex", pattern = 'nu\s+(\[[^\]]*\]\s*)?0\.01\s*;', desc = "nu = 0.01" },
+  { type = "foam_parse" },
+  { type = "bash_syntax" },
+]
+
+[[question]]
+id = "of-pitzdaily-v2412"
+mode = "openfoam"
+prompt = "Generate a complete pitzDaily-style backward-facing step case for ESI OpenFOAM v2412 using simpleFoam with the k-omega SST model and a 10 m/s inlet velocity."
+checks = [
+  { type = "files", required = ["system/controlDict", "system/fvSchemes", "system/fvSolution", "0/U", "0/p", "0/k", "0/omega", "0/nut"] },
+  { type = "regex", pattern = 'application\s+simpleFoam\s*;' },
+  { type = "regex", pattern = 'kOmegaSST' },
+  { type = "regex", pattern = 'kqRWallFunction' },
+  { type = "regex", pattern = 'omegaWallFunction' },
+  { type = "regex", pattern = 'nut(k|USpalding|LowRe)WallFunction' },
+  { type = "regex", pattern = 'uniform\s*\(\s*10(\.0*)?\s+0\s+0\s*\)', desc = "10 m/s inlet" },
+  { type = "not_regex", pattern = 'foamRun', desc = "foamRun is Foundation-only" },
+  { type = "foam_parse" },
+  { type = "bash_syntax" },
+]
+
+[[question]]
+id = "of-fvsolution-simplec"
+mode = "openfoam"
+prompt = "Write only system/fvSolution for a steady incompressible simpleFoam case with fields p, U, k and omega, using SIMPLEC and residual control of 1e-4 on all fields."
+checks = [
+  { type = "regex", pattern = 'SIMPLE\s*\{' },
+  { type = "regex", pattern = 'consistent\s+(yes|true|on)\s*;', desc = "SIMPLEC" },
+  { type = "regex", pattern = 'residualControl' },
+  { type = "regex", pattern = '1e-0?4' },
+  { type = "regex", pattern = 'GAMG|PCG|PBiCGStab|smoothSolver' },
+  { type = "foam_parse" },
+]
+
+[[question]]
+id = "of-decompose-2nodes"
+mode = "openfoam"
+prompt = "Write system/decomposeParDict to run my case on exactly 2 full standard Kestrel CPU nodes with one MPI rank per core."
+checks = [
+  { type = "regex", pattern = 'numberOfSubdomains\s+208\s*;', desc = "2 x 104 cores" },
+  { type = "regex", pattern = '(method|decomposer)\s+scotch\s*;' },
+  { type = "foam_parse" },
+]
+
+[[question]]
+id = "of-slurm-2nodes"
+mode = "openfoam"
+prompt = "Write a Slurm batch script that runs simpleFoam in parallel on 2 full standard Kestrel CPU nodes for 4 hours, including decomposePar and reconstructPar."
+checks = [
+  { type = "bash_syntax" },
+  { type = "regex", pattern = '(--nodes[= ]2|-N\s*2)\b' },
+  { type = "regex", pattern = 'ntasks-per-node[= ]104|--ntasks[= ]208|-n\s*208', desc = "104 ranks per node" },
+  { type = "regex", pattern = 'srun[^\n]*-parallel' },
+  { type = "regex", pattern = 'decomposePar' },
+  { type = "regex", pattern = 'reconstructPar' },
+  { type = "regex", pattern = '(--time[= ]|-t\s*)0?4:00:00' },
+  { type = "regex", pattern = '--account|#SBATCH\s+-A\s' },
+  { type = "not_regex", pattern = '^\s*mpirun', desc = "Kestrel uses srun" },
+]
+
+[[question]]
+id = "of-v13-run-steady"
+mode = "openfoam"
+prompt = "In OpenFOAM Foundation v13 the simpleFoam executable is gone. How do I run a steady incompressible turbulent case now? Show the relevant controlDict and fvSchemes entries."
+checks = [
+  { type = "regex", pattern = 'foamRun' },
+  { type = "regex", pattern = 'incompressibleFluid' },
+  { type = "regex", pattern = 'steadyState' },
+]
+
+[[question]]
+id = "of-courant-crash"
+mode = "openfoam"
+prompt = "My pimpleFoam run blows up: the Courant number climbs past 50 and then the pressure solver hits the maximum number of iterations. What should I change in my case?"
+checks = [
+  { type = "regex", pattern = 'maxCo' },
+  { type = "regex", pattern = 'adjustTimeStep' },
+  { type = "regex", pattern = 'deltaT' },
+]
+
+[[question]]
+id = "of-wall-bcs"
+mode = "openfoam"
+prompt = "For a k-omega SST simulation using wall functions, what boundary condition types should I use for k, omega and nut on no-slip walls? Show the boundaryField entries."
+checks = [
+  { type = "regex", pattern = 'kqRWallFunction' },
+  { type = "regex", pattern = 'omegaWallFunction' },
+  { type = "regex", pattern = 'nut(k|USpalding|LowRe)WallFunction' },
+]
+
+[[question]]
+id = "of-followup-realizable"
+mode = "openfoam"
+history = [
+  { role = "user", content = "Generate a pitzDaily simpleFoam case for ESI OpenFOAM v2412 with k-omega SST." },
+  { role = "assistant", content = "Here is the pitzDaily case: system/controlDict (application simpleFoam), system/blockMeshDict, system/fvSchemes, system/fvSolution, constant/transportProperties, constant/turbulenceProperties (RAS model kOmegaSST), 0/U, 0/p, 0/k, 0/omega, 0/nut, and an Allrun script." },
+]
+prompt = "Now switch it to the realizable k-epsilon model. Show every file that changes."
+checks = [
+  { type = "regex", pattern = 'realizableKE' },
+  { type = "regex", pattern = '0/epsilon' },
+  { type = "regex", pattern = 'epsilonWallFunction' },
+  { type = "regex", pattern = 'div\(phi,\s*epsilon\)' },
+  { type = "regex", pattern = 'turbulenceProperties|momentumTransport' },
+]
+
+# --------------------------------------------------------------------- HPC
+
+[[question]]
+id = "hpc-greeting"
+mode = "hpc"
+prompt = "hello"
+checks = [
+  { type = "regex", pattern = 'How can I help you with Kestrel today' },
+  { type = "max_chars", limit = 200 },
+]
+
+[[question]]
+id = "hpc-gpu-interactive"
+mode = "hpc"
+prompt = "How do I get an interactive shell on a Kestrel GPU node with one H100 for 30 minutes?"
+checks = [
+  { type = "regex", pattern = 'salloc' },
+  { type = "regex", pattern = '--gres=gpu(:h100)?:1\b|--gpus(-per-node)?[= ]1\b' },
+  { type = "regex", pattern = '(--time[= ]|-t\s*)(00:)?30:00|-t\s*30\b' },
+  { type = "regex", pattern = '--account|\s-A\s' },
+]
+
+[[question]]
+id = "hpc-cpu-node"
+mode = "hpc"
+prompt = "How many CPU cores does a standard Kestrel CPU compute node have, and how much usable memory?"
+checks = [
+  { type = "regex", pattern = '\b104\b' },
+  { type = "regex", pattern = '240\s*G' },
+]
+
+[[question]]
+id = "hpc-gpu-node"
+mode = "hpc"
+prompt = "How many GPUs are in each Kestrel GPU node, what model are they, and how much memory does each GPU have?"
+checks = [
+  { type = "regex", pattern = '\b(4|four)\b' },
+  { type = "regex", pattern = 'H100' },
+  { type = "regex", pattern = '80\s*GB' },
+]
+
+[[question]]
+id = "hpc-shared-partition"
+mode = "hpc"
+prompt = "My job only needs 8 cores and 20 GB of memory. How should I request it on Kestrel so I am not charged for a whole node?"
+checks = [
+  { type = "regex", pattern = '(--partition[= ]|-p\s*)shared' },
+  { type = "regex", pattern = '--mem' },
+]
+
+[[question]]
+id = "hpc-scratch"
+mode = "hpc"
+prompt = "Where should I write large temporary output files during a Kestrel job, and how long are they kept?"
+checks = [
+  { type = "regex", pattern = '/scratch' },
+  { type = "regex", pattern = '28\s*days' },
+]
+
+[[question]]
+id = "hpc-job-array"
+mode = "hpc"
+prompt = "Write a Slurm job-array script for Kestrel that runs python process.py on input_0.txt through input_9.txt, one core and 1 hour per task."
+checks = [
+  { type = "bash_syntax" },
+  { type = "regex", pattern = '--array[= ]0-9\b' },
+  { type = "regex", pattern = 'input_\$\{?SLURM_ARRAY_TASK_ID' },
+  { type = "regex", pattern = '--account|#SBATCH\s+-A\s' },
+  { type = "regex", pattern = '(--time[= ]|-t\s*)(0?1:00:00|60\b)' },
+]
+
+[[question]]
+id = "hpc-module-find"
+mode = "hpc"
+prompt = "How do I find out which versions of GROMACS are installed on Kestrel, and load one?"
+checks = [
+  { type = "regex", pattern = 'module (avail|spider)' },
+  { type = "regex", pattern = 'module load' },
+]
+
+# ------------------------------------------------------------------- AMReX
+
+[[question]]
+id = "amrex-multifab-sum"
+mode = "amrex"
+prompt = "Write a minimal, complete AMReX C++ program that builds a 64^3 domain split into boxes of max size 32, creates a MultiFab with one component and no ghost cells, fills it with a Gaussian using ParallelFor, and prints the sum."
+checks = [
+  { type = "regex", pattern = '#include\s*<AMReX' },
+  { type = "regex", pattern = 'amrex::Initialize' },
+  { type = "regex", pattern = 'amrex::Finalize' },
+  { type = "regex", pattern = 'maxSize\s*\(' },
+  { type = "regex", pattern = 'DistributionMapping' },
+  { type = "regex", pattern = 'ParallelFor' },
+  { type = "regex", pattern = '\.sum\s*\(' },
+]
+
+[[question]]
+id = "amrex-gnumake"
+mode = "amrex"
+prompt = "What do I need in a GNUmakefile to build a 3D AMReX application with MPI and CUDA enabled?"
+checks = [
+  { type = "regex", pattern = 'AMREX_HOME' },
+  { type = "regex", pattern = '^\s*DIM\s*:?=\s*3', case = true },
+  { type = "regex", pattern = 'USE_MPI\s*:?=\s*TRUE', case = true },
+  { type = "regex", pattern = 'USE_CUDA\s*:?=\s*TRUE', case = true },
+  { type = "regex", pattern = 'Make\.defs' },
+  { type = "regex", pattern = 'Make\.rules' },
+]
+
+[[question]]
+id = "amrex-cmake"
+mode = "amrex"
+prompt = "Give me the CMake configure command to build the AMReX library itself for 3D with MPI and the CUDA GPU backend."
+checks = [
+  { type = "regex", pattern = 'AMReX_SPACEDIM=3', case = true },
+  { type = "regex", pattern = 'AMReX_MPI=(ON|YES|TRUE)', case = true },
+  { type = "regex", pattern = 'AMReX_GPU_BACKEND=CUDA', case = true },
+]
+
+[[question]]
+id = "amrex-ghost-cells"
+mode = "amrex"
+prompt = "How do I fill the ghost cells of a MultiFab, including across periodic boundaries?"
+checks = [
+  { type = "regex", pattern = 'FillBoundary' },
+  { type = "regex", pattern = 'periodicity\s*\(\s*\)|Periodicity' },
+]
+
+[[question]]
+id = "amrex-parmparse"
+mode = "amrex"
+prompt = "How do I read n_cell and max_grid_size from an inputs file in an AMReX application?"
+checks = [
+  { type = "regex", pattern = 'ParmParse', case = true },
+  { type = "regex", pattern = '\.(get|query)\w*\s*\(\s*"n_cell"' },
+  { type = "regex", pattern = '"max_grid_size"' },
+]
+
+[[question]]
+id = "amrex-plotfile"
+mode = "amrex"
+prompt = "How do I write a single-level MultiFab to a plotfile that I can open in ParaView or VisIt?"
+checks = [
+  { type = "regex", pattern = 'WriteSingleLevelPlotfile', case = true },
+]
+
+# -------------------------------------------------------------------- Code
+
+[[question]]
+id = "code-pandas-concat"
+mode = "code"
+prompt = "Write a Python script that reads every .csv file in a directory with pandas, concatenates them into one DataFrame with an extra column holding the source file name, and writes the result to combined.csv."
+checks = [
+  { type = "python_syntax" },
+  { type = "regex", pattern = 'concat' },
+  { type = "regex", pattern = 'glob|Path\(|listdir|iterdir' },
+  { type = "regex", pattern = 'combined\.csv' },
+]
+
+[[question]]
+id = "code-sbatch-loop"
+mode = "code"
+prompt = "Write a bash script that loops over directories named case_* and runs sbatch run.sh inside each one, skipping any directory that already contains a file named DONE."
+checks = [
+  { type = "bash_syntax" },
+  { type = "regex", pattern = 'case_\*' },
+  { type = "regex", pattern = 'sbatch' },
+  { type = "regex", pattern = '-[ef]\s+[^\n]*DONE' },
+]
+
+[[question]]
+id = "code-mpi-reduce"
+mode = "code"
+prompt = "Write a C++ MPI program in which each rank sums its share of the integers 1..N (N = 1000000) and rank 0 prints the total using MPI_Reduce."
+checks = [
+  { type = "cpp_syntax" },
+  { type = "regex", pattern = 'MPI_Init' },
+  { type = "regex", pattern = 'MPI_Reduce' },
+  { type = "regex", pattern = 'MPI_SUM' },
+  { type = "regex", pattern = 'MPI_Finalize' },
+]
+
+[[question]]
+id = "code-residual-plot"
+mode = "code"
+prompt = "Write a Python script that parses an OpenFOAM solver log file and plots the initial residuals of Ux, Uy and p against iteration number with matplotlib."
+checks = [
+  { type = "python_syntax" },
+  { type = "regex", pattern = 'matplotlib' },
+  { type = "regex", pattern = 'Initial residual' },
+  { type = "regex", pattern = 'Solving for' },
+]
+
+# -------------------------------------------------------------------- VASP
+
+[[question]]
+id = "vasp-relax-incar"
+mode = "vasp"
+prompt = "Write an INCAR for a full relaxation of bulk silicon (ions, cell shape and volume) with PBE and a 520 eV plane-wave cutoff."
+checks = [
+  { type = "regex", pattern = 'IBRION\s*=\s*[12]\b' },
+  { type = "regex", pattern = 'ISIF\s*=\s*3\b' },
+  { type = "regex", pattern = 'ENCUT\s*=\s*520' },
+  { type = "regex", pattern = 'NSW\s*=\s*[1-9]' },
+  { type = "regex", pattern = 'EDIFFG' },
+]
+
+[[question]]
+id = "vasp-kpoints-gamma"
+mode = "vasp"
+prompt = "Write a KPOINTS file for an automatically generated Gamma-centred 8x8x8 k-point mesh."
+checks = [
+  { type = "regex", pattern = '^\s*0\s*$', desc = "automatic generation" },
+  { type = "regex", pattern = '^\s*G(amma)?\b', case = true },
+  { type = "regex", pattern = '^\s*8\s+8\s+8\s*$' },
+]

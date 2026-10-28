@@ -255,9 +255,10 @@ MODEL_REGISTRY = {
     },
     # NVIDIA Nemotron 3.5 Bolt — 74B hybrid Mamba-MoE (9B active), IQ2_XXS
     # (~24 GB), vision + tools + thinking. Non-Chinese. Requires Ollama
-    # >= 0.40.5. Measured on H100 at 256K: 29 GB, 100% GPU, ~47 tok/s; its
-    # bundled DFlash speculative draft fails to init under Ollama 0.40.12 and
-    # is skipped. T/top_p from Ollama's params; rest follows Lightning.
+    # >= 0.40.5. Measured on H100 at 256K: 29 GB, 100% GPU, ~47 tok/s. Its
+    # bundled DFlash draft gives speculative decoding automatically (the
+    # "dflash requires ctx_other" log line during memory fitting is benign).
+    # T/top_p from Ollama's params; rest follows Lightning.
     "nemotron-3.5-bolt:74b-a9b": {
         "temperature": 1.0, "top_p": 0.95, "top_k": 40,
         "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,

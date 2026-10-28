@@ -2689,19 +2689,19 @@ def chat_stream(messages: list, **option_overrides):
         return
     opts = get_model_options()
     opts.update(option_overrides)
+    # Experimental (OFA_NATIVE_THINK=1): use the model's trained reasoning
+    # channel and inline it as <thought>, so existing CLI/BYOK handling applies.
+    native_think = os.environ.get("OFA_NATIVE_THINK") == "1"
     payload = {
         "model": MODEL,
         "messages": messages,
         "stream": True,
-        # Disable Ollama's split-field 'thinking' mode. Recent Ollama
-        # versions (~0.3+) route reasoning-capable models like Gemma 4
-        # into a separate `thinking` field, leaving `content` empty. Ofa
-        # already has its own inline <thought>...</thought> convention
-        # taught by prompts/common.txt and consumed by
-        # make_thought_filter() on the CLI; forcing think=false keeps
-        # reasoning where our filter expects it and prevents the
-        # empty-content symptom for both CLI and BYOK clients.
-        "think": False,
+        # Off by default: Ollama's split-field 'thinking' mode routes
+        # reasoning-capable models like Gemma 4 into a separate `thinking`
+        # field, leaving `content` empty for clients that only read content.
+        # Ofa's inline <thought>...</thought> convention (prompts/common.txt,
+        # make_thought_filter()) is used instead unless OFA_NATIVE_THINK=1.
+        "think": native_think,
         "options": opts,
     }
     try:
@@ -2711,17 +2711,30 @@ def chat_stream(messages: list, **option_overrides):
             json=payload,
             timeout=300.0,
         ) as resp:
+            in_thought = False
             for line in resp.iter_lines():
                 if line:
                     data = json.loads(line)
                     if data.get("error"):
                         print(f"Ollama error: {data['error']}", file=sys.stderr)
                         break
-                    content = data.get("message", {}).get("content", "")
+                    msg = data.get("message", {})
+                    thinking = msg.get("thinking", "")
+                    if thinking:
+                        if not in_thought:
+                            in_thought = True
+                            yield "<thought>"
+                        yield thinking
+                    content = msg.get("content", "")
                     if content:
+                        if in_thought:
+                            in_thought = False
+                            yield "</thought>\n"
                         yield content
                     if data.get("done"):
                         break
+            if in_thought:
+                yield "</thought>\n"
     except KeyboardInterrupt:
         # Sub-catch inside the stream directly before it tears down httpx
         return

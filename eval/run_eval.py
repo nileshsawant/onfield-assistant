@@ -109,7 +109,8 @@ def cmd_generate(args) -> None:
 
 # --------------------------------------------------------------------- checks
 
-THOUGHT_RE = re.compile(r"<(thought|think)>.*?(</\1>|\Z)", re.S)
+# Models trained on <think> sometimes open ofa's <thought> and close with </think>.
+THOUGHT_RE = re.compile(r"<(?:thought|think)>.*?(?:</(?:thought|think)>|\Z)", re.S)
 FENCE_RE = re.compile(r"```([\w+#.-]*)[ \t]*([^\n]*)\n(.*?)```", re.S)
 FILE_RE = re.compile(r"^=== FILE: (\S+) ===[ \t]*\n(.*?)(?=^=== END ===|^=== FILE:|\Z)", re.S | re.M)
 

@@ -150,7 +150,8 @@ that, so a mismatch just means the model never emits tool calls.
 Copilot Chat) so you can attach screenshots, plots, or diagrams. Vision
 passthrough works when `OFA_MODEL` (or `ofa --model`) is set to a
 vision-capable model: `gemma4:31b-it-q8_0` (default), `gemma4:31b`,
-`gemma4:26b`, `llama4:scout`, or `muse-glimmer:30b`. If you switch to a
+`gemma4:26b`, `llama4:scout`, `muse-glimmer:30b`, or
+`nemotron-3.5-bolt:74b-a9b`. If you switch to a
 completion-only model (`llama3.3:70b`, `phi4:14b`,
 `granite4:32b-a9b-h`), the paperclip still shows but the ofa server will
 reject any request that contains images — the BYOK JSON is a static

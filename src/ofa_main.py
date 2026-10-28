@@ -129,7 +129,7 @@ def _litellm_api_key() -> str:
 # single source of truth; mirrored in vscode-ext modelProvider.ts.
 VISION_MODELS = frozenset({
     "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
-    "llama4:scout", "muse-glimmer:30b",
+    "llama4:scout", "muse-glimmer:30b", "nemotron-3.5-bolt:74b-a9b",
 })
 
 
@@ -251,6 +251,16 @@ MODEL_REGISTRY = {
     "nemotron-3.5-lightning:30b-a3b-q8_0": {
         "temperature": 0.6, "top_p": 0.95, "top_k": 40,
         "repeat_penalty": 1.05, "num_ctx": 1048576, "num_predict": 32768,
+        "thought_tags": [("<think>", "</think>")],
+    },
+    # NVIDIA Nemotron 3.5 Bolt — 74B hybrid Mamba-MoE (9B active), IQ2_XXS
+    # (~24 GB), vision + tools + thinking. Non-Chinese. Requires Ollama
+    # >= 0.40.5. Measured on H100 at 256K: 29 GB, 100% GPU, ~47 tok/s; its
+    # bundled DFlash speculative draft fails to init under Ollama 0.40.12 and
+    # is skipped. T/top_p from Ollama's params; rest follows Lightning.
+    "nemotron-3.5-bolt:74b-a9b": {
+        "temperature": 1.0, "top_p": 0.95, "top_k": 40,
+        "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,
         "thought_tags": [("<think>", "</think>")],
     },
     # Microsoft phi-4 — small, strong reasoning.

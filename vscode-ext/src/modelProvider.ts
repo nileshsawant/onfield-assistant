@@ -52,7 +52,8 @@ const MODEL_CONTEXT: Readonly<Record<string, { numCtx: number; numPredict: numbe
     'granite4:32b-a9b-h':      { numCtx: 131072, numPredict: 16384 },
     'gpt-oss:120b':            { numCtx: 65536,  numPredict: 32768 },
     'muse-glimmer:30b':        { numCtx: 131072, numPredict: 32768 },
-    'nemotron-3.5-lightning:30b-a3b-q8_0': { numCtx: 1048576, numPredict: 32768 }
+    'nemotron-3.5-lightning:30b-a3b-q8_0': { numCtx: 1048576, numPredict: 32768 },
+    'nemotron-3.5-bolt:74b-a9b': { numCtx: 262144, numPredict: 32768 }
 };
 /** Extra tokens to reserve on top of num_predict for the RAG-augmented
  *  prompt ofa server adds server-side (Copilot only sees the user's raw
@@ -150,7 +151,8 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
                 toolCalling,
                 // Vision works when OFA_MODEL is vision-capable
                 // (gemma4:31b, gemma4:31b-it-q8_0, gemma4:26b,
-                // llama4:scout, muse-glimmer:30b). If OFA_MODEL is set
+                // llama4:scout, muse-glimmer:30b,
+                // nemotron-3.5-bolt:74b-a9b). If OFA_MODEL is set
                 // to a completion-only model (llama3.3:70b, phi4:14b,
                 // granite4:32b-a9b-h) the ofa server will reject the
                 // images. We advertise imageInput=true because the

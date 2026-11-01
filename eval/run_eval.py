@@ -148,6 +148,10 @@ def build_messages(q: dict) -> list[dict]:
 def cmd_generate(args) -> None:
     out_dir = eval_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.vllm:
+        # The endpoint file lives in the user's real scratch, not the isolated one below.
+        real_scratch = os.environ.get("OFA_SCRATCH") or f"/scratch/{os.environ.get('USER', 'default')}"
+        os.environ.setdefault("OFA_VLLM_ENDPOINT", os.path.join(real_scratch, ".ofa_vllm_endpoint.json"))
     # ofa_main reads both at import time.
     os.environ["OFA_SCRATCH"] = str(out_dir / "scratch")
     if args.model:
@@ -156,6 +160,8 @@ def cmd_generate(args) -> None:
     import ofa_main
     import ofa_server
     ofa_server.ofa_main = ofa_main
+    if args.vllm:
+        ofa_main._use_vllm_endpoint()
 
     qs = load_questions(Path(args.questions), args.ids, args.modes)
     ofa_main.ensure_ollama_running()
@@ -405,6 +411,8 @@ def main() -> None:
     g = sub.add_parser("generate", help="ask the questions (needs the model; run on a GPU node)")
     g.add_argument("--label", required=True, help="name for this run's output files")
     g.add_argument("--model", help="OFA_MODEL to use (default: ofa's default)")
+    g.add_argument("--vllm", action="store_true",
+                   help="use the running tools/vllm-serve.sbatch endpoint (no GPU needed here)")
     g.add_argument("--repeats", type=int, default=1, help="ask each question N times (sampling varies)")
     g.add_argument("--modes", nargs="+", help="only these modes")
     g.add_argument("--ids", nargs="+", help="only these question ids")

@@ -129,8 +129,8 @@ def _use_vllm_endpoint() -> None:
     """Point the OpenAI-compatible backend at the user's vLLM server, as
     recorded by tools/vllm-serve.sbatch in $OFA_SCRATCH/.ofa_vllm_endpoint.json
     (0600: holds the per-job API key)."""
-    global OFA_BACKEND, OFA_LITELLM_BASE_URL, MODEL
-    path = os.path.join(OFA_SCRATCH, ".ofa_vllm_endpoint.json")
+    global OFA_BACKEND, OFA_LITELLM_BASE_URL, MODEL, LITELLM_VISION
+    path = os.environ.get("OFA_VLLM_ENDPOINT") or os.path.join(OFA_SCRATCH, ".ofa_vllm_endpoint.json")
     try:
         with open(path) as f:
             ep = json.load(f)
@@ -152,6 +152,8 @@ def _use_vllm_endpoint() -> None:
     OFA_BACKEND = "litellm"
     OFA_LITELLM_BASE_URL = base_url
     MODEL = served_model
+    # Unlike a remote gateway, we know what we're serving: text-only models reject images.
+    LITELLM_VISION = MODEL in VISION_MODELS
     os.environ["OFA_LITELLM_API_KEY"] = key
 
 
@@ -160,6 +162,7 @@ def _use_vllm_endpoint() -> None:
 VISION_MODELS = frozenset({
     "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
     "llama4:scout", "muse-glimmer:30b", "nemotron-3.5-bolt:74b-a9b",
+    "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
 })
 
 
@@ -303,6 +306,22 @@ MODEL_REGISTRY = {
     "Muse-Spark-Open-816B-A42B-NVFP4": {
         "temperature": 1.0, "top_p": 1.0, "num_predict": 32768,
         "reasoning_effort": "high", "thought_tags": [],
+    },
+    # Ungated, OpenMDW-1.1 (MIT-style) US open-weight models served by
+    # tools/vllm-serve.sbatch and used via --vllm; keys match the default
+    # --served-model-name. Sampling per each model card. Nemotron reasoning is
+    # set through chat_template_kwargs; "medium_effort" is NVIDIA's suggested
+    # starting point (fewer reasoning tokens).
+    "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
+        "temperature": 1.0, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
+        "chat_template_kwargs": {"enable_thinking": True, "medium_effort": True},
+    },
+    "NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4": {
+        "temperature": 1.0, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
+        "chat_template_kwargs": {"enable_thinking": True, "medium_effort": True},
+    },
+    "Trinity-Large-Thinking-FP8-Block": {
+        "temperature": 0.6, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
     },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
@@ -2688,6 +2707,8 @@ def _litellm_options(option_overrides: dict) -> dict:
     effort = os.environ.get("OFA_REASONING_EFFORT") or reg.get("reasoning_effort")
     if effort:
         out["reasoning_effort"] = effort
+    if reg.get("chat_template_kwargs"):
+        out["chat_template_kwargs"] = reg["chat_template_kwargs"]
     return out
 
 

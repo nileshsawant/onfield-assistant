@@ -125,6 +125,36 @@ def _litellm_api_key() -> str:
         return ""
 
 
+def _use_vllm_endpoint() -> None:
+    """Point the OpenAI-compatible backend at the user's vLLM server, as
+    recorded by tools/vllm-serve.sbatch in $OFA_SCRATCH/.ofa_vllm_endpoint.json
+    (0600: holds the per-job API key)."""
+    global OFA_BACKEND, OFA_LITELLM_BASE_URL, MODEL
+    path = os.path.join(OFA_SCRATCH, ".ofa_vllm_endpoint.json")
+    try:
+        with open(path) as f:
+            ep = json.load(f)
+        base_url, served_model, key = ep["base_url"].rstrip("/"), ep["model"], ep["api_key"]
+    except (OSError, ValueError, KeyError) as e:
+        print(f"Error: no usable vLLM endpoint at {path} ({e}).\n"
+              f"Start a server first:  sbatch {OFA_ROOT}/tools/vllm-serve.sbatch",
+              file=sys.stderr)
+        sys.exit(1)
+    try:
+        healthy = httpx.get(base_url[: -len("/v1")] + "/health", timeout=5.0).status_code == 200
+    except httpx.HTTPError:
+        healthy = False
+    if not healthy:
+        print(f"Error: vLLM server {base_url} (job {ep.get('job_id', '?')}) is not "
+              f"responding; it may still be loading or the job has ended "
+              f"(check: squeue -j {ep.get('job_id', '?')}).", file=sys.stderr)
+        sys.exit(1)
+    OFA_BACKEND = "litellm"
+    OFA_LITELLM_BASE_URL = base_url
+    MODEL = served_model
+    os.environ["OFA_LITELLM_API_KEY"] = key
+
+
 # Models with a vision head, for gating image input / OCR. Kept here as the
 # single source of truth; mirrored in vscode-ext modelProvider.ts.
 VISION_MODELS = frozenset({
@@ -265,6 +295,14 @@ MODEL_REGISTRY = {
         "repeat_penalty": 1.05, "num_ctx": 262144, "num_predict": 32768,
         "draft_num_predict": 4,
         "thought_tags": [("<think>", "</think>")],
+    },
+    # Meta Muse Spark Open — 816B MoE (42B active), vision; too large for
+    # Ollama/one node. Served by tools/vllm-serve.sbatch and used via --vllm
+    # (the key matches the default --served-model-name). Sampling and
+    # reasoning_effort per the model card ("high" for coding/agentic work).
+    "Muse-Spark-Open-816B-A42B-NVFP4": {
+        "temperature": 1.0, "top_p": 1.0, "num_predict": 32768,
+        "reasoning_effort": "high", "thought_tags": [],
     },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
@@ -2647,6 +2685,9 @@ def _litellm_options(option_overrides: dict) -> dict:
     max_tok = pick("num_predict", "OFA_NUM_PREDICT", LLM_NUM_PREDICT)
     if max_tok:
         out["max_tokens"] = int(max_tok)
+    effort = os.environ.get("OFA_REASONING_EFFORT") or reg.get("reasoning_effort")
+    if effort:
+        out["reasoning_effort"] = effort
     return out
 
 
@@ -4829,6 +4870,13 @@ def main():
              "(RAG still runs on your allocated node)."
     )
     parser.add_argument(
+        "--vllm", action="store_true",
+        help="Use your own multi-GPU/multi-node vLLM server started with "
+             "`sbatch $OFA_ROOT/tools/vllm-serve.sbatch` (reads its endpoint "
+             "from $OFA_SCRATCH/.ofa_vllm_endpoint.json). For models too large "
+             "for one GPU, e.g. Muse Spark Open."
+    )
+    parser.add_argument(
         "--add-private", metavar="DIR",
         help="Index your own data (a directory) into a per-user private RAG "
              "store, retrieved automatically alongside the built-in corpora. "
@@ -4940,6 +4988,9 @@ def main():
     if args.model:
         global MODEL
         MODEL = args.model
+
+    if args.vllm:
+        _use_vllm_endpoint()
 
     if args.list_models:
         _print_model_registry()

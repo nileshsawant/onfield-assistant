@@ -62,7 +62,20 @@ export FLASHINFER_WORKSPACE_BASE="$OFA_SCRATCH" VLLM_CACHE_ROOT="$XDG_CACHE_HOME
 export OFA_VLLM_ENV OFA_VLLM_MODEL NAME NNODES GPUS_PER_NODE HEAD API_PORT MASTER_PORT API_KEY
 export OFA_VLLM_MAX_LEN="${OFA_VLLM_MAX_LEN:-131072}" OFA_VLLM_ARGS="${OFA_VLLM_ARGS:-}"
 
-srun --nodes="$NNODES" --ntasks="$NNODES" --ntasks-per-node=1 --kill-on-bad-exit=1 bash -c '
+# Steps don't always inherit GRES (notably under --exclusive), so request GPUs per step and
+# fail fast if any node can't initialise CUDA rather than letting vLLM hang.
+STEP=(--nodes="$NNODES" --ntasks="$NNODES" --ntasks-per-node=1 --gres="gpu:$GPUS_PER_NODE")
+if ! srun "${STEP[@]}" "$OFA_VLLM_ENV/bin/python" -c '
+import os, socket, torch
+n = torch.cuda.device_count()
+assert n == int(os.environ["GPUS_PER_NODE"]), f"{socket.gethostname()}: {n} GPUs visible"
+for i in range(n):  # touch every device: a bad GPU can still be counted
+    torch.ones(1, device=f"cuda:{i}").sum().item()
+print(socket.gethostname(), "GPUs OK", n)'; then
+    echo "GPU preflight failed on at least one node; not starting vLLM"; exit 1
+fi
+
+srun "${STEP[@]}" --kill-on-bad-exit=1 bash -c '
     common=(--tensor-parallel-size "$GPUS_PER_NODE" --pipeline-parallel-size "$NNODES"
             --nnodes "$NNODES" --node-rank "$SLURM_NODEID"
             --master-addr "$HEAD" --master-port "$MASTER_PORT"

@@ -50,6 +50,8 @@ export HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1
 export CUDA_HOME="$("$OFA_VLLM_ENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')/nvidia/cu13"
 [[ -x "$CUDA_HOME/bin/nvcc" ]] || { echo "no nvcc at $CUDA_HOME/bin (rerun tools/vllm-env.sh)"; exit 1; }
 export PATH="$OFA_VLLM_ENV/bin:$CUDA_HOME/bin:$PATH"
+# NVRTC dlopen()s libnvrtc-builtins by soname, so the wheel's lib dir must be searchable.
+export LD_LIBRARY_PATH="$CUDA_HOME/lib:${LD_LIBRARY_PATH:-}"
 # NCCL OFI (Slingshot RDMA) net plugin; without it inter-node traffic falls back to
 # TCP sockets. Defaults to Kestrel's build if present; set OFA_VLLM_NCCL_PLUGIN= to disable.
 OFA_VLLM_NCCL_PLUGIN="${OFA_VLLM_NCCL_PLUGIN-/nopt/nlr/apps/kestrel-gpu/software/nccl/v2.27.7-1_cray_mpich/plugin}"

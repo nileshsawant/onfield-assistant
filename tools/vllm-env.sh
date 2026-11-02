@@ -31,10 +31,13 @@ export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/scratch/$USER/.cache/pip}"
 TORCH_CUDA="$("$OFA_VLLM_ENV/bin/python" -c 'import torch; print(torch.version.cuda)')"
 "$OFA_VLLM_ENV/bin/python" -m pip install "nvidia-cuda-nvcc==$TORCH_CUDA.*" \
     "nvidia-cuda-crt==$TORCH_CUDA.*" "nvidia-nvvm==$TORCH_CUDA.*" "nvidia-cuda-cccl==$TORCH_CUDA.*"
-# The runtime wheel ships only libcudart.so.<major> under lib/; the JIT links
-# with -L$CUDA_HOME/lib64 -lcudart.
+# The CUDA wheels ship only versioned libs (libX.so.<major>) under lib/; runtime JIT
+# kernels (FlashInfer, Humming) link with -L$CUDA_HOME/lib64 -lX.
 CUDA_LIB="$("$OFA_VLLM_ENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')/nvidia/cu${TORCH_CUDA%%.*}/lib"
-ln -sfn "libcudart.so.${TORCH_CUDA%%.*}" "$CUDA_LIB/libcudart.so"
+for lib in "$CUDA_LIB"/lib*.so.*; do
+    base="${lib%%.so.*}.so"
+    [[ -e "$base" ]] || ln -s "$(basename "$lib")" "$base"
+done
 [[ -e "$CUDA_LIB/../lib64" ]] || ln -s lib "$CUDA_LIB/../lib64"
 
 "$OFA_VLLM_ENV/bin/python" - <<'PY'

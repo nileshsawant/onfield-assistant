@@ -168,6 +168,7 @@ VISION_MODELS = frozenset({
     "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
     "llama4:scout", "muse-glimmer:30b", "nemotron-3.5-bolt:74b-a9b",
     "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", "nemotron-3.5-super-vl:120b-a12b",
+    "inkling-2-small:594b-a17b",
 })
 
 
@@ -323,6 +324,12 @@ MODEL_REGISTRY = {
     },
     "trinity-large-thinking:fp8": {
         "temperature": 0.6, "top_p": 0.95, "num_ctx": 131072, "num_predict": 32768, "thought_tags": [],
+    },
+    # Thinking Machines Inkling 2 Small (Apache 2.0): 594B MoE, 17B active, vision.
+    # Vendor evals use temperature 1.0; effort "high" is its chat template's default.
+    "inkling-2-small:594b-a17b": {
+        "temperature": 1.0, "top_p": 1.0, "num_ctx": 131072, "num_predict": 32768, "thought_tags": [],
+        "reasoning_effort": "high",
     },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation

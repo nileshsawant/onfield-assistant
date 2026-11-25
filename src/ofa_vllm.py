@@ -47,6 +47,15 @@ RECIPES: dict[str, dict] = {
         "nodes": 2,
         "args": _TOOLS + " --reasoning-parser think_tags",
     },
+    # NVFP4 weights (394 GB) need 2 nodes; the vLLM model asserts pipeline_parallel_size == 1, hence TP8.
+    "inkling-2-small:594b-a17b": {
+        "dir": "Inkling-2-Small",
+        "nodes": 2, "tp": 8, "pp": 1,
+        "env": "vllm-nightly",
+        "args": "--enable-auto-tool-choice --tool-call-parser inkling --reasoning-parser inkling --max-num-seqs 16"
+                " --speculative-config {\"method\":\"dspark\",\"num_speculative_tokens\":7,"
+                "\"draft_sample_method\":\"probabilistic\"}",
+    },
 }
 
 POLL_SECONDS = 15
@@ -177,7 +186,7 @@ def ensure_server(model: str) -> str | None:
         jid = _submit(model, exclude)
         idle = os.environ.get("OFA_VLLM_IDLE_MINUTES", "60")
         print(f"ofa: starting {model} on {RECIPES[model]['nodes']} GPU node(s), job {jid}. "
-              f"The first start takes 20-30 min; later sessions reuse it until it has been idle "
+              f"The first start takes 10-30 min once nodes are free; later sessions reuse it until it has been idle "
               f"for {idle} min.", file=sys.stderr)
     tty = sys.stderr.isatty()
     start, last_print, retried = time.time(), 0.0, False

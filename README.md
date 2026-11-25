@@ -445,6 +445,7 @@ vLLM nodes.
 ```bash
 ofa --model nemotron-3.5-super-vl:120b-a12b         # 1 GPU node, vision
 ofa --model trinity-large-thinking:fp8 --hpc        # 2 GPU nodes; any mode works
+ofa --model inkling-2-small:594b-a17b               # 2 GPU nodes, vision
 export OFA_MODEL=nemotron-3.5-super-vl:120b-a12b    # or make it your default
 ```
 
@@ -454,9 +455,11 @@ In VS Code, pick the model in the **OFA: Model** setting, then run
 What happens:
 
 - On the login node, `ofa` reuses your running server for that model, or
-  submits one and shows its progress. **The first start takes 20–30
-  minutes** while the weights load. Pressing Ctrl+C stops waiting but leaves
-  the server starting; run the same command again to connect.
+  submits one and shows its progress. **The first start takes 10–30
+  minutes** once nodes are free, while the weights load; for 2-node models,
+  waiting for two free nodes on a busy day can add as much again. Pressing
+  Ctrl+C stops waiting but leaves the server starting; run the same command
+  again to connect.
 - Later sessions reuse the server instantly. It stops by itself after
   **60 minutes without requests** (or at its 4-hour walltime), so it does not
   hold nodes while unused. If it has stopped, `ofa` says so; run `ofa` again
@@ -469,13 +472,16 @@ To stop a server early, find it with `squeue --me` (job name
 
 ### Available models
 
-Both are ungated US open-weight models under the OpenMDW-1.1 license.
-
 | `--model` | Hugging Face repo | Nodes | Notes | Eval score | Time per answer |
 | --- | --- | --- | --- | --- | --- |
 | `nemotron-3.5-super-vl:120b-a12b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | vision, tools, thinking | 0.86 | ~4 s |
 | `trinity-large-thinking:fp8` | `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | tools, thinking | 0.88 | ~37 s |
+| `inkling-2-small:594b-a17b` | `thinkingmachines/Inkling-2-Small` | 2 | vision, tools, thinking; Apache 2.0 | not yet evaluated | — |
 | *(default, for reference)* `gemma4:31b-it-q8_0` | via Ollama | ¼ | vision, tools, thinking | ~0.91 | ~14 s |
+
+Nemotron and Trinity are ungated US open-weight models under the OpenMDW-1.1
+license; Inkling 2 Small (Thinking Machines Lab, US) is Apache 2.0 and uses a
+newer vLLM build (`env/envs/vllm-nightly`).
 
 Scores come from `eval/run_eval.py` (37 questions across all modes). The
 default single-GPU model is still the best all-rounder, especially in code
@@ -493,10 +499,13 @@ dropped: its vLLM engine hung mid-run.
 | `OFA_VLLM_EXCLUDE` | Nodes to avoid, e.g. a GPU node that keeps failing | *(none)* |
 | `OFA_VLLM_MODELS_DIR` | Where the shared weights live | `$OFA_ROOT/vllm-models` |
 
-The server recipes (nodes and `vllm serve` arguments per model) are in
-`src/ofa_vllm.py`. To add a model, download its weights into
-`$OFA_ROOT/vllm-models`, add a recipe there, and add its sampling settings to
-`MODEL_REGISTRY` in `src/ofa_main.py`.
+The server recipes (nodes, GPU layout, vLLM environment and `vllm serve`
+arguments per model) are in `src/ofa_vllm.py`. To add a model, download its
+weights into `$OFA_ROOT/vllm-models`, add a recipe there, and add its sampling
+settings to `MODEL_REGISTRY` in `src/ofa_main.py`. Models that need a newer
+vLLM than the default environment can use a separate one, built with
+`OFA_VLLM_NIGHTLY=1 OFA_VLLM_ENV=$OFA_ROOT/env/envs/vllm-nightly tools/vllm-env.sh`
+and named in the recipe's `env`.
 
 ### Troubleshooting
 

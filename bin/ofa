@@ -86,6 +86,21 @@ if [ -z "$SLURM_JOB_ID" ] && [ -z "$_ofa_no_gpu" ]; then
     _OFA_MEM="${OFA_SCHEDULER_MEM:-80G}"
     _OFA_GRES="${OFA_GRES:-${OFA_SCHEDULER_GRES:-gpu:1}}"
     _OFA_JOB_NAME="${OFA_JOB_NAME:-ofa}"
+
+    # Large models run on their own multi-GPU vLLM server: start or reuse it
+    # here on the login node, so the wait doesn't eat ofa's own allocation.
+    _ofa_model="${OFA_MODEL:-}"
+    _ofa_prev=""
+    for _arg in "$@"; do
+        case "$_arg" in --model=*) _ofa_model="${_arg#--model=}" ;; esac
+        [ "$_ofa_prev" = "--model" ] && _ofa_model="$_arg"
+        _ofa_prev="$_arg"
+    done
+    if [ -n "$_ofa_model" ] && [ -x "$OFA_ROOT/env/bin/python3" ]; then
+        OFA_ACCOUNT="$ACCOUNT" "$OFA_ROOT/env/bin/python3" "$OFA_ROOT/src/ofa_vllm.py" ensure "$_ofa_model" || exit $?
+    fi
+    unset _ofa_model _ofa_prev
+
     echo "Allocating GPU node (${PARTITION}, ${WALLTIME}, account: ${ACCOUNT})..." >&2
     exec salloc --job-name="$_OFA_JOB_NAME" -A "$ACCOUNT" -t "$WALLTIME" --nodes=1 --ntasks-per-node="$_OFA_NTASKS" \
               --mem="$_OFA_MEM" --gres="$_OFA_GRES" -p "$PARTITION" \

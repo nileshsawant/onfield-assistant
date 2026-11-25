@@ -13,7 +13,7 @@ An AI-powered reasoning and autonomous execution agent tailored for the NLR Kest
 * **Domain-Specific Modes:** By passing command-line arguments, the overarching python execution loop swaps the injected system prompts and RAG databases to act as specialized domain experts (e.g., general codebase engineering, specific AMReX compilation, or ReFrame module migrations).
 * **Private data indexing:** Each user can index their own data (`ofa --add-private <dir>`) into a per-user store that is retrieved automatically alongside the shared corpora — no write access to the shared install required. See [Index your own private data](#index-your-own-private-data).
 * **Optional proprietary/frontier models (LiteLLM backend):** By default ofa runs fully locally (nothing leaves the node). Optionally, `ofa --litellm` (or `OFA_BACKEND=litellm`) routes model calls to an internal OpenAI-compatible LiteLLM gateway for a frontier model on hard cases, while still using ofa's **local** RAG + prompts. Opt-in and announced; the API key stays server-side. See [Use a proprietary/frontier model (LiteLLM backend)](#use-a-proprietaryfrontier-model-litellm-backend).
-* **Optional large open-weight models (vLLM backend):** For models too large for one GPU, start your own vLLM server across one or more whole GPU nodes with `tools/vllm-serve.sbatch`, then run `ofa --vllm`. Everything stays on Kestrel. See [Use a large multi-GPU / multi-node model (vLLM backend)](#use-a-large-multi-gpu--multi-node-model-vllm-backend).
+* **Optional large open-weight models (vLLM backend):** Models too large for one GPU are selected like any other (`ofa --model nemotron-3.5-super-vl:120b-a12b`); `ofa` starts or reuses a vLLM server for them on whole GPU nodes, and the server stops itself when idle. Everything stays on Kestrel. See [Use a large multi-GPU / multi-node model (vLLM backend)](#use-a-large-multi-gpu--multi-node-model-vllm-backend).
 * **Intelligent Context Management:** To survive long debugging or compilation sessions, the agent intelligently handles Context Window Collapse. Massive compiler toolchains are dynamically truncated. In deeply extended sessions (over 20 turns), older terminal stdout logs are systematically compressed while preserving the agent's fundamental reasoning and the user's initial instructions to avoid amnesia.
 * **Robust Fault Tolerance & Safeguards:** The Python orchestrator natively intercepts hanging shell commands with `/dev/null` stdin piping. It tracks consecutive execution errors, pausing the autonomous loop if the agent hallucinates a failing command 3 times in a row, dropping control back to the human user. The daemon catches `SIGTERM` signals for 30-minute allocation timeouts, shutting down gracefully.
 
@@ -60,8 +60,9 @@ $ ofa --no-rag          # Disable ChromaDB context retrieval; relies solely on s
 $ ofa --fast            # (with --openfoam) single-shot file generation (skip plan stage)
 $ ofa --litellm         # Use an internal LiteLLM gateway (frontier model) with ofa's local RAG;
                         # run once for setup steps. Composes with any mode: ofa --litellm --amrex
-$ ofa --vllm            # Use your own multi-GPU vLLM server (see the vLLM section below)
-$ ofa --model <id>      # Use another model from the registry (default gemma4:31b-it-q8_0)
+$ ofa --vllm            # Use a vLLM server you started by hand (see the vLLM section below)
+$ ofa --model <id>      # Use another model from the registry (default gemma4:31b-it-q8_0);
+                        # large models start their own multi-GPU server automatically
 $ ofa --list-models     # List the model registry and exit
 $ ofa --add-private <dir>  # Index your own files into a per-user private RAG store
 
@@ -435,24 +436,46 @@ reach the gateway, so `--litellm` works inside a normal SLURM allocation.
 ## Use a large multi-GPU / multi-node model (vLLM backend)
 
 Some open-weight models are too large for the single H100 that `ofa` gets
-by default. For those, you start your **own** [vLLM](https://docs.vllm.ai)
-server across one or more whole GPU nodes with a batch job, then point
-`ofa` at it with `--vllm`. Everything stays on Kestrel. RAG, prompts and the
-agent loop still run in `ofa`'s own allocation, and only the chat completion
-goes to your vLLM nodes.
+by default. You select them exactly like any other model, and `ofa` runs
+them on their own [vLLM](https://docs.vllm.ai) server across one or more
+whole GPU nodes. Everything stays on Kestrel. RAG, prompts and the agent loop
+still run in `ofa`'s own allocation, and only the chat completion goes to the
+vLLM nodes.
 
-Tensor parallelism is used across the 4 GPUs within a node and pipeline
-parallelism across nodes. Ray is not needed.
+```bash
+ofa --model nemotron-3.5-super-vl:120b-a12b         # 1 GPU node, vision
+ofa --model trinity-large-thinking:fp8 --hpc        # 2 GPU nodes; any mode works
+export OFA_MODEL=nemotron-3.5-super-vl:120b-a12b    # or make it your default
+```
 
-### Tested models
+In VS Code, pick the model in the **OFA: Model** setting, then run
+**OFA: Disconnect** → **OFA: Connect**.
 
-All three are ungated US open-weight models under the OpenMDW-1.1 license.
+What happens:
 
-| Model (Hugging Face repo) | Nodes | Size | Notes | Eval score | Time per answer |
+- On the login node, `ofa` reuses your running server for that model, or
+  submits one and shows its progress. **The first start takes 20–30
+  minutes** while the weights load. Pressing Ctrl+C stops waiting but leaves
+  the server starting; run the same command again to connect.
+- Later sessions reuse the server instantly. It stops by itself after
+  **60 minutes without requests** (or at its 4-hour walltime), so it does not
+  hold nodes while unused. If it has stopped, `ofa` says so; run `ofa` again
+  to start a fresh one.
+- The weights are shared in `$OFA_ROOT/vllm-models`; nothing is downloaded.
+
+To stop a server early, find it with `squeue --me` (job name
+`ofa-vllm-<model>`) and `scancel <jobid>`. Server logs are in
+`$OFA_SCRATCH/ofa-vllm-logs/`.
+
+### Available models
+
+Both are ungated US open-weight models under the OpenMDW-1.1 license.
+
+| `--model` | Hugging Face repo | Nodes | Notes | Eval score | Time per answer |
 | --- | --- | --- | --- | --- | --- |
-| `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | 232 GB | vision, tools, thinking | 0.86 | ~4 s |
-| `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | 377 GB | tools, thinking | 0.88 | ~37 s |
-| *(default, for reference)* `gemma4:31b-it-q8_0` via Ollama | ¼ | 34 GB | vision, tools, thinking | ~0.91 | ~14 s |
+| `nemotron-3.5-super-vl:120b-a12b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | vision, tools, thinking | 0.86 | ~4 s |
+| `trinity-large-thinking:fp8` | `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | tools, thinking | 0.88 | ~37 s |
+| *(default, for reference)* `gemma4:31b-it-q8_0` | via Ollama | ¼ | vision, tools, thinking | ~0.91 | ~14 s |
 
 Scores come from `eval/run_eval.py` (37 questions across all modes). The
 default single-GPU model is still the best all-rounder, especially in code
@@ -460,117 +483,58 @@ mode. The big models are for experimentation, or for tasks where you've seen
 the default struggle. `NVIDIA-Nemotron-3-Ultra-550B` (2 nodes) was tried and
 dropped: its vLLM engine hung mid-run.
 
-### 1. Download the weights (once)
-
-The vLLM environment is already part of the shared install
-(`$OFA_ROOT/env/envs/vllm`; on a new site, build it with
-`tools/vllm-env.sh` from a GPU-OS login node). Weights go in **your** space.
-`/scratch` is fast, but files untouched for 28 days are purged. Use
-`/projects/<allocation>` for anything you want to keep.
-
-The download is hundreds of GB, so run it as a batch job rather than on a
-login node:
-
-```bash
-module load assistant
-mkdir -p /scratch/$USER/ofa-vllm-models
-sbatch -A <account> -p shared -c 16 --mem=32G -t 12:00:00 --wrap '
-  export HF_HOME=/scratch/$USER/.cache/huggingface HF_HUB_DISABLE_TELEMETRY=1
-  '"$OFA_ROOT"'/env/envs/vllm/bin/hf download nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 \
-      --local-dir /scratch/$USER/ofa-vllm-models/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --max-workers 16'
-```
-
-Swap in `arcee-ai/Trinity-Large-Thinking-FP8-Block` (and the matching
-`--local-dir`) for Trinity.
-
-### 2. Start the server
-
-Submit `tools/vllm-serve.sbatch` from a RHEL9 login node (kl3/kl5). Use
-whole nodes, 4 GPUs each, with the per-model arguments below. These are the
-settings the eval scores above were measured with.
-
-```bash
-M=/scratch/$USER/ofa-vllm-models
-TOOLS='--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_tools --max-num-seqs 16'
-
-# Nemotron 3.5 Super VL: 1 node
-OFA_VLLM_MODEL=$M/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 \
-OFA_VLLM_ARGS="$TOOLS --reasoning-parser nemotron_v3 --gpu-memory-utilization 0.88 \
-  --limit-mm-per-prompt {\"image\":1,\"video\":0} \
-  --speculative_config.method mtp --speculative_config.num_speculative_tokens 3" \
-sbatch -A <account> -p gpu-h100s --nodes=1 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
-
-# Trinity Large Thinking: 2 nodes
-OFA_VLLM_MODEL=$M/Trinity-Large-Thinking-FP8-Block \
-OFA_VLLM_ARGS="$TOOLS --reasoning-parser think_tags" \
-sbatch -A <account> -p gpu-h100s --nodes=2 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
-```
-
-`xml_tools` and `think_tags` are parsers for the models' tool-call and
-`<think>` formats. They live in `tools/vllm_parsers.py`, which
-`vllm-serve.sbatch` loads automatically.
-
-`gpu-h100s` allows up to 4 h; use `gpu-h100` (2 days) for longer sessions.
-Loading the weights takes about **20–30 minutes**. Follow
-`ofa-vllm-<jobid>.log` until it prints:
-
-```
-vLLM ready: http://<node>:<port>/v1 (model '<name>'). Run: ofa --vllm
-```
-
-At that point the job has written the endpoint and a per-job API key to
-`$OFA_SCRATCH/.ofa_vllm_endpoint.json` (mode 0600, removed when the job
-ends). Only one vLLM server per user is tracked at a time.
-
-### 3. Use it
-
-```bash
-ofa --vllm                  # interactive, code mode
-ofa --vllm --hpc            # composes with any mode flag
-ofa --vllm "explain this SLURM error"
-ofa --vllm --serve          # OpenAI-compatible server for opencode / AMReX Agent / BYOK clients
-```
-
-`ofa` still gets its usual small allocation and talks to the vLLM nodes over
-the network. It checks the server's health first, so you'll get a clear
-message if the server is still loading or the job has ended.
-
-In VS Code, set **`ofa.backend`** to `vllm`, then run **OFA: Disconnect** →
-**OFA: Connect** once the vLLM job's log shows `vLLM ready`. All `ofa · *`
-entries in the Chat model picker then use your vLLM model.
-
-Stop the server with `scancel <jobid>` when you're done. It holds whole GPU
-nodes for as long as the job runs.
-
 ### Settings
-
-Set these in the environment when you submit `vllm-serve.sbatch`:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
-| `OFA_VLLM_MODEL` | Local model directory (required) | — |
-| `OFA_VLLM_NAME` | Served model name, which is what `ofa` reports | basename of `OFA_VLLM_MODEL` |
-| `OFA_VLLM_ARGS` | Extra `vllm serve` arguments | *(none)* |
-| `OFA_VLLM_MAX_LEN` | Max context length | `131072` |
-| `OFA_VLLM_STARTUP_TIMEOUT` | Seconds to wait for `/health` before releasing the nodes | `5400` |
-| `OFA_VLLM_ENV` | vLLM environment | `$OFA_ROOT/env/envs/vllm` |
-| `OFA_VLLM_NCCL_PLUGIN` | NCCL OFI (Slingshot) plugin dir; set empty to fall back to TCP | Kestrel's build |
+| `OFA_VLLM_PARTITION` | Partition for the server job | `gpu-h100s` |
+| `OFA_VLLM_WALLTIME` | Walltime for the server job | `04:00:00` |
+| `OFA_VLLM_IDLE_MINUTES` | Stop the server after this many minutes without requests (`0` = never) | `60` |
+| `OFA_VLLM_EXCLUDE` | Nodes to avoid, e.g. a GPU node that keeps failing | *(none)* |
+| `OFA_VLLM_MODELS_DIR` | Where the shared weights live | `$OFA_ROOT/vllm-models` |
 
-`ofa` reads `OFA_VLLM_ENDPOINT` to use an endpoint file other than
-`$OFA_SCRATCH/.ofa_vllm_endpoint.json`.
+The server recipes (nodes and `vllm serve` arguments per model) are in
+`src/ofa_vllm.py`. To add a model, download its weights into
+`$OFA_ROOT/vllm-models`, add a recipe there, and add its sampling settings to
+`MODEL_REGISTRY` in `src/ofa_main.py`.
 
 ### Troubleshooting
 
-- **`GPU preflight failed on at least one node`**: the job checks every GPU
-  on every node before loading the weights. The log names the bad node.
-  Resubmit with `--exclude=<node>` and report the node to HPC operations.
-- **`vLLM not healthy after …s`**: loading weights from a busy filesystem
-  can be slow. Raise `OFA_VLLM_STARTUP_TIMEOUT`, or check the log for the
-  first `ERROR` line.
-- **`ofa --vllm` says the server is not responding**: run `squeue -j <jobid>`.
-  The server is either still loading or the job has ended.
-- **Weights directory missing**: `/scratch` purged it. Download again, or
-  keep weights under `/projects`.
+- **`GPU check failed on <node>; retrying without it`**: the server job
+  checks every GPU before loading. `ofa` retries once without the bad node;
+  please report the node to HPC operations.
+- **`the … server job … ended before it was ready`**: open the log it names
+  and look for the first `ERROR` line.
+- **`The … server may have stopped after being idle`**: exit and run `ofa`
+  again to start a new one.
+
+### Advanced: run the server by hand
+
+`tools/vllm-serve.sbatch` can serve any local model directory, and
+`ofa --vllm` connects to it. Use this for models without a recipe.
+
+```bash
+OFA_VLLM_MODEL=/path/to/model \
+OFA_VLLM_ARGS="--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_tools --reasoning-parser think_tags" \
+sbatch -A <account> -p gpu-h100s --nodes=1 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
+# when its log says "vLLM ready":
+ofa --vllm                  # composes with any mode flag and with --serve
+```
+
+`xml_tools` and `think_tags` are parsers for the `<tool_call>` and `<think>`
+formats these models use; `vllm-serve.sbatch` loads them from
+`tools/vllm_parsers.py`. The job writes its address and a per-job API key to
+`$OFA_SCRATCH/.ofa_vllm_endpoint.json` (mode 0600, removed when it ends). In
+VS Code, set **`ofa.backend`** to `vllm` to use a hand-started server.
+
+Other `vllm-serve.sbatch` settings: `OFA_VLLM_NAME` (served model name;
+default the directory name), `OFA_VLLM_MAX_LEN` (default `131072`),
+`OFA_VLLM_STARTUP_TIMEOUT` (default `5400` s), `OFA_VLLM_IDLE_MINUTES`,
+`OFA_VLLM_ENDPOINT`, `OFA_VLLM_ENV` (default `$OFA_ROOT/env/envs/vllm`; build
+it on a new site with `tools/vllm-env.sh`), and `OFA_VLLM_NCCL_PLUGIN`
+(Slingshot NCCL plugin; empty falls back to TCP). Weights can be fetched with
+`$OFA_ROOT/env/envs/vllm/bin/hf download <repo> --local-dir <dir>` in a batch
+job.
 
 ## Use `ofa` from VS Code Chat (the OnField Assistant extension)
 

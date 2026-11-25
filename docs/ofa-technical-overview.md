@@ -140,7 +140,7 @@ Three layers, in order of how a request flows through them:
 
 1. **Surface** — either the interactive CLI (terminal stdin/stdout, agent loop) or the BYOK HTTP server (`POST /v1/chat/completions`).
 2. **Domain layer** — the same in both surfaces: system-prompt selection, long-term memory injection, RAG retrieval, optional skill content.
-3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally. `ofa --vllm` does the same against the user's own vLLM server (started with `tools/vllm-serve.sbatch` across one or more whole GPU nodes), reading its address and per-job key from `$OFA_SCRATCH/.ofa_vllm_endpoint.json`.
+3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally. `ofa --vllm` does the same against the user's own vLLM server (started with `tools/vllm-serve.sbatch` across one or more whole GPU nodes), reading its address and per-job key from `$OFA_SCRATCH/.ofa_vllm_endpoint.json`. For the models with a recipe in `src/ofa_vllm.py`, `ofa --model <name>` does this automatically: on the login node it reuses the user's running server for that model or submits one and waits for it, and the server stops itself after `OFA_VLLM_IDLE_MINUTES` (default 60) without requests.
 
 ---
 
@@ -434,6 +434,7 @@ $OFA_ROOT/
 │   ├── ofa_server.py           # ~1,200 LOC: BYOK HTTP shim
 │   ├── ofa_client.py           # ~  390 LOC: stdlib-only Python client
 │   ├── ofa_private_rag.py      # per-user private RAG store (--add-private)
+│   ├── ofa_vllm.py             # auto-started vLLM servers for large models (recipes)
 │   ├── ofa_site.py             # site.toml loader (portability layer)
 │   ├── build_index.py          # legacy index builder
 │   ├── build_index_v2.py       # current index builder
@@ -469,7 +470,7 @@ $OFA_ROOT/
 └── README.md
 ```
 
-Total Python under `src/`: **~9,600 LOC** across 13 files, plus the
+Total Python under `src/`: **~9,800 LOC** across 14 files, plus the
 TypeScript extension in `vscode-ext/src/`.
 
 ### 7.2 `src/ofa_main.py` walkthrough (~5,200 LOC)

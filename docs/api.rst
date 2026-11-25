@@ -14,7 +14,7 @@ site.
 Modules
 -------
 
-The six ofa modules a downstream integrator is most likely to reach for
+The seven ofa modules a downstream integrator is most likely to reach for
 first:
 
 .. autosummary::
@@ -26,6 +26,7 @@ first:
    ofa_private_rag
    ofa_server
    ofa_site
+   ofa_vllm
    rebuild_indices
 
 Supporting modules

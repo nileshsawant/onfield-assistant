@@ -21,9 +21,12 @@
 #   OFA_VLLM_ARGS        extra `vllm serve` arguments
 #   OFA_VLLM_ENV         vLLM environment (default $OFA_ROOT/env/envs/vllm; see tools/vllm-env.sh)
 #   OFA_VLLM_STARTUP_TIMEOUT  seconds to wait for /health before giving up (default 5400)
+#   OFA_VLLM_IDLE_MINUTES     stop after this many minutes without requests (default 60; 0 = never)
+#   OFA_VLLM_ENDPOINT    endpoint file to write (default $OFA_SCRATCH/.ofa_vllm_endpoint.json)
 #
 # When /health is up, the endpoint and a per-job API key are written (mode
-# 0600) to $OFA_SCRATCH/.ofa_vllm_endpoint.json; `ofa --vllm` reads it.
+# 0600) to the endpoint file; `ofa --vllm` reads it. `ofa --model <name>`
+# submits this script itself for the models in src/ofa_vllm.py.
 set -euo pipefail
 
 OFA_ROOT="${OFA_ROOT:-/nopt/nrel/apps/cpu_stack/software/openfoam/assistant}"
@@ -38,7 +41,7 @@ HEAD="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"
 API_PORT=$((40000 + RANDOM % 10000))
 MASTER_PORT=$((30000 + RANDOM % 10000))
 API_KEY="$("$OFA_VLLM_ENV/bin/python" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-ENDPOINT="$OFA_SCRATCH/.ofa_vllm_endpoint.json"
+ENDPOINT="${OFA_VLLM_ENDPOINT:-$OFA_SCRATCH/.ofa_vllm_endpoint.json}"
 trap 'rm -f "$ENDPOINT"' EXIT
 
 echo "vLLM: $NAME on $NNODES node(s) x $GPUS_PER_NODE GPUs (tp=$GPUS_PER_NODE pp=$NNODES), head $HEAD:$API_PORT"
@@ -106,4 +109,24 @@ done
   printf '{"base_url": "http://%s:%s/v1", "model": "%s", "api_key": "%s", "job_id": "%s"}\n' \
       "$HEAD" "$API_PORT" "$NAME" "$API_KEY" "$SLURM_JOB_ID" > "$ENDPOINT" )
 echo "vLLM ready: http://$HEAD:$API_PORT/v1 (model '$NAME'). Run: ofa --vllm"
+
+IDLE_MIN="${OFA_VLLM_IDLE_MINUTES:-60}"
+if (( IDLE_MIN > 0 )); then
+    # Token and queue counters on the unauthenticated /metrics change whenever a request is served.
+    activity() {
+        curl -sf "http://$HEAD:$API_PORT/metrics" | awk '/^vllm:(prompt_tokens_total|generation_tokens_total|num_requests_running|num_requests_waiting)[{ ]/ {s += $NF} END {print s}'
+    }
+    last="$(activity || true)"; idle_since=$SECONDS
+    while kill -0 "$SRUN_PID" 2>/dev/null; do
+        sleep 60
+        now="$(activity || true)"
+        if [[ "$now" != "$last" ]]; then last="$now"; idle_since=$SECONDS; fi
+        if (( SECONDS - idle_since >= IDLE_MIN * 60 )); then
+            echo "No requests for $IDLE_MIN min; stopping vLLM at $(date +%T)"
+            rm -f "$ENDPOINT"
+            kill "$SRUN_PID"; wait "$SRUN_PID" || true
+            exit 0
+        fi
+    done
+fi
 wait "$SRUN_PID"

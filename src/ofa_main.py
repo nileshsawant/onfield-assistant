@@ -18,6 +18,7 @@ import httpx
 # $OFA_ROOT/site.toml is present, so this import is a no-op change for the
 # existing single-site install. See src/ofa_site.py for the schema.
 from ofa_site import load_site as _load_site
+import ofa_vllm
 
 OFA_ROOT = os.environ.get("OFA_ROOT", str(Path(__file__).resolve().parent.parent))
 OLLAMA_BIN = os.path.join(OFA_ROOT, "bin", "ollama")
@@ -162,7 +163,7 @@ def _use_vllm_endpoint() -> None:
 VISION_MODELS = frozenset({
     "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
     "llama4:scout", "muse-glimmer:30b", "nemotron-3.5-bolt:74b-a9b",
-    "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
+    "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", "nemotron-3.5-super-vl:120b-a12b",
 })
 
 
@@ -307,17 +308,17 @@ MODEL_REGISTRY = {
         "temperature": 1.0, "top_p": 1.0, "num_predict": 32768,
         "reasoning_effort": "high", "thought_tags": [],
     },
-    # Ungated, OpenMDW-1.1 (MIT-style) US open-weight models served by
-    # tools/vllm-serve.sbatch and used via --vllm; keys match the default
-    # --served-model-name. Sampling per each model card. Nemotron reasoning is
-    # set through chat_template_kwargs; "medium_effort" is NVIDIA's suggested
-    # starting point (fewer reasoning tokens).
-    "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16": {
-        "temperature": 1.0, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
+    # Ungated, OpenMDW-1.1 (MIT-style) US open-weight models too large for one
+    # GPU. `ofa --model <name>` starts (or reuses) a vLLM server for them via
+    # src/ofa_vllm.py, which holds the per-model server recipe. Sampling per
+    # each model card. Nemotron reasoning is set through chat_template_kwargs;
+    # "medium_effort" is NVIDIA's suggested starting point.
+    "nemotron-3.5-super-vl:120b-a12b": {
+        "temperature": 1.0, "top_p": 0.95, "num_ctx": 131072, "num_predict": 32768, "thought_tags": [],
         "chat_template_kwargs": {"enable_thinking": True, "medium_effort": True},
     },
-    "Trinity-Large-Thinking-FP8-Block": {
-        "temperature": 0.6, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
+    "trinity-large-thinking:fp8": {
+        "temperature": 0.6, "top_p": 0.95, "num_ctx": 131072, "num_predict": 32768, "thought_tags": [],
     },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
@@ -438,13 +439,20 @@ def _print_model_registry():
     """Pretty-print MODEL_REGISTRY annotated with which models are actually
     pulled locally. Used by --list-models."""
     print("🌵 ofa model registry\n")
-    print(f"Active model: {MODEL}{' (pulled)' if _is_model_pulled(MODEL) else ' (NOT pulled — run: ollama pull ' + MODEL + ')'}\n")
+    def _status(name):
+        if ofa_vllm.is_vllm_model(name):
+            n = ofa_vllm.RECIPES[name]["nodes"]
+            return f"vLLM, {n} GPU node{'s' if n > 1 else ''}, starts automatically"
+        return "pulled" if _is_model_pulled(name) else "not pulled"
+    if ofa_vllm.is_vllm_model(MODEL):
+        print(f"Active model: {MODEL} ({_status(MODEL)})\n")
+    else:
+        print(f"Active model: {MODEL}{' (pulled)' if _is_model_pulled(MODEL) else ' (NOT pulled — run: ollama pull ' + MODEL + ')'}\n")
     print("Registered models:")
     name_w = max(len(n) for n in MODEL_REGISTRY) + 2
     for name in sorted(MODEL_REGISTRY):
         opts = MODEL_REGISTRY[name]
-        pulled = "pulled" if _is_model_pulled(name) else "not pulled"
-        print(f"  {name:<{name_w}} ctx={opts.get('num_ctx', '?'):>7}  T={opts.get('temperature', '?')}  top_p={opts.get('top_p', '?')}  top_k={opts.get('top_k', '?')}  [{pulled}]")
+        print(f"  {name:<{name_w}} ctx={opts.get('num_ctx', '?'):>7}  T={opts.get('temperature', '?')}  top_p={opts.get('top_p', '?')}  top_k={opts.get('top_k', '?')}  [{_status(name)}]")
     print("\nSelect a model for the next run with:")
     print("  ofa --model <id>            (one-off)")
     print("  export OFA_MODEL=<id>       (persistent for the shell)")
@@ -2764,6 +2772,9 @@ def _litellm_chat_stream(messages: list, **option_overrides):
         return
     except Exception as e:
         print(f"LiteLLM request failed: {e}", file=sys.stderr)
+        if ofa_vllm.is_vllm_model(MODEL):
+            print(f"The {MODEL} server may have stopped after being idle. Exit and run "
+                  f"ofa again to restart it.", file=sys.stderr)
         return
 
 
@@ -5007,6 +5018,10 @@ def main():
         MODEL = args.model
 
     if args.vllm:
+        _use_vllm_endpoint()
+    elif ofa_vllm.is_vllm_model(MODEL) and not (args.list_models or args.list_private
+                                                or args.forget_private or args.add_private):
+        os.environ["OFA_VLLM_ENDPOINT"] = ofa_vllm.ensure_server(MODEL)
         _use_vllm_endpoint()
 
     if args.list_models:

@@ -503,6 +503,10 @@ OFA_VLLM_ARGS="$TOOLS --reasoning-parser think_tags" \
 sbatch -A <account> -p gpu-h100s --nodes=2 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
 ```
 
+`xml_tools` and `think_tags` are parsers for the models' tool-call and
+`<think>` formats. They live in `tools/vllm_parsers.py`, which
+`vllm-serve.sbatch` loads automatically.
+
 `gpu-h100s` allows up to 4 h; use `gpu-h100` (2 days) for longer sessions.
 Loading the weights takes about **20–30 minutes**. Follow
 `ofa-vllm-<jobid>.log` until it prints:

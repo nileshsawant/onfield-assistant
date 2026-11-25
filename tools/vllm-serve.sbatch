@@ -62,7 +62,10 @@ fi
 export XDG_CACHE_HOME="$OFA_SCRATCH/.cache"
 export FLASHINFER_WORKSPACE_BASE="$OFA_SCRATCH" VLLM_CACHE_ROOT="$XDG_CACHE_HOME/vllm"
 export OFA_VLLM_ENV OFA_VLLM_MODEL NAME NNODES GPUS_PER_NODE HEAD API_PORT MASTER_PORT API_KEY
-export OFA_VLLM_MAX_LEN="${OFA_VLLM_MAX_LEN:-131072}" OFA_VLLM_ARGS="${OFA_VLLM_ARGS:-}"
+# Registers the xml_tools / think_tags parsers (see tools/vllm_parsers.py).
+PARSERS="$OFA_ROOT/tools/vllm_parsers.py"
+export OFA_VLLM_MAX_LEN="${OFA_VLLM_MAX_LEN:-131072}"
+export OFA_VLLM_ARGS="--tool-parser-plugin $PARSERS --reasoning-parser-plugin $PARSERS ${OFA_VLLM_ARGS:-}"
 
 # Steps don't always inherit GRES (notably under --exclusive), so request GPUs per step and
 # fail fast if any node can't initialise CUDA rather than letting vLLM hang.

@@ -316,10 +316,6 @@ MODEL_REGISTRY = {
         "temperature": 1.0, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
         "chat_template_kwargs": {"enable_thinking": True, "medium_effort": True},
     },
-    "NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4": {
-        "temperature": 1.0, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
-        "chat_template_kwargs": {"enable_thinking": True, "medium_effort": True},
-    },
     "Trinity-Large-Thinking-FP8-Block": {
         "temperature": 0.6, "top_p": 0.95, "num_predict": 32768, "thought_tags": [],
     },

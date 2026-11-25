@@ -33,8 +33,9 @@ export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/scratch/$USER/.cache/pip}"
 "$OFA_VLLM_ENV/bin/python" -m pip install --upgrade pip
 if [[ "$OFA_VLLM_NIGHTLY" == 1 ]]; then
     spec=vllm; [[ "$OFA_VLLM_VERSION" == nightly ]] || spec="vllm==$OFA_VLLM_VERSION"
-    "$OFA_VLLM_ENV/bin/python" -m pip install --pre "$spec" "huggingface_hub[cli]" \
-        --extra-index-url https://wheels.vllm.ai/nightly/cu130 \
+    # The top-level nightly index tracks main; the per-CUDA ones (nightly/cu130) can lag by weeks.
+    "$OFA_VLLM_ENV/bin/python" -m pip install --upgrade --pre "$spec" "huggingface_hub[cli]" \
+        --extra-index-url https://wheels.vllm.ai/nightly \
         --extra-index-url https://download.pytorch.org/whl/cu130
 else
     "$OFA_VLLM_ENV/bin/python" -m pip install "vllm==$OFA_VLLM_VERSION" "huggingface_hub[cli]"

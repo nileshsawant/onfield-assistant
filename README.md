@@ -4,7 +4,7 @@ An AI-powered reasoning and autonomous execution agent tailored for the NLR Kest
 
 ## Features
 
-* **Automated Hardware Allocation:** When invoked from a Kestrel login node, the `ofa` wrapper seamlessly detects the environment and spins up an interactive GPU node allocation (targeting H100 partitions). It automatically sets up the appropriate CUDA modules for either RHEL 8 or RHEL 9 environments before launching the LLM.
+* **Automated Hardware Allocation:** When invoked from a Kestrel login node, the `ofa` wrapper seamlessly detects the environment and spins up an interactive GPU node allocation (targeting H100 partitions). It loads the CUDA module that matches the node's OS (set per site in `site.toml`) before launching the LLM.
 * **Autonomous ReAct Framework (Plan & Execute):** The assistant is instructed to follow a strict planning phase before acting. It creates persistent `plan` blocks and iterates autonomously using a variety of parsed markdown blocks:
   * `write` and `edit`: For creating and modifying files in the current workspace.
   * `bash`: For interactive terminal commands with real-time `subprocess.Popen` streaming back to the user.
@@ -13,6 +13,7 @@ An AI-powered reasoning and autonomous execution agent tailored for the NLR Kest
 * **Domain-Specific Modes:** By passing command-line arguments, the overarching python execution loop swaps the injected system prompts and RAG databases to act as specialized domain experts (e.g., general codebase engineering, specific AMReX compilation, or ReFrame module migrations).
 * **Private data indexing:** Each user can index their own data (`ofa --add-private <dir>`) into a per-user store that is retrieved automatically alongside the shared corpora — no write access to the shared install required. See [Index your own private data](#index-your-own-private-data).
 * **Optional proprietary/frontier models (LiteLLM backend):** By default ofa runs fully locally (nothing leaves the node). Optionally, `ofa --litellm` (or `OFA_BACKEND=litellm`) routes model calls to an internal OpenAI-compatible LiteLLM gateway for a frontier model on hard cases, while still using ofa's **local** RAG + prompts. Opt-in and announced; the API key stays server-side. See [Use a proprietary/frontier model (LiteLLM backend)](#use-a-proprietaryfrontier-model-litellm-backend).
+* **Optional large open-weight models (vLLM backend):** For models too large for one GPU, start your own vLLM server across one or more whole GPU nodes with `tools/vllm-serve.sbatch`, then run `ofa --vllm`. Everything stays on Kestrel. See [Use a large multi-GPU / multi-node model (vLLM backend)](#use-a-large-multi-gpu--multi-node-model-vllm-backend).
 * **Intelligent Context Management:** To survive long debugging or compilation sessions, the agent intelligently handles Context Window Collapse. Massive compiler toolchains are dynamically truncated. In deeply extended sessions (over 20 turns), older terminal stdout logs are systematically compressed while preserving the agent's fundamental reasoning and the user's initial instructions to avoid amnesia.
 * **Robust Fault Tolerance & Safeguards:** The Python orchestrator natively intercepts hanging shell commands with `/dev/null` stdin piping. It tracks consecutive execution errors, pausing the autonomous loop if the agent hallucinates a failing command 3 times in a row, dropping control back to the human user. The daemon catches `SIGTERM` signals for 30-minute allocation timeouts, shutting down gracefully.
 
@@ -53,12 +54,16 @@ $ ofa --vasp            # VASP (Vienna Ab initio Simulation Package) — tutoria
 $ ofa --rhel9_reframe   # ReFrame integration expert strictly adhering to the Kestrel RHEL9 software stack
 
 # Additional Flags
-$ ofa --resume          # Resume the previous interactive session (uses ~/.ofa_session.json)
+$ ofa --resume          # Resume the previous interactive session (uses $OFA_SCRATCH/.ofa_session.json)
 $ ofa --save <dir>      # (with --openfoam) save generated template cases to a directory
 $ ofa --no-rag          # Disable ChromaDB context retrieval; relies solely on standard LLM weights
 $ ofa --fast            # (with --openfoam) single-shot file generation (skip plan stage)
 $ ofa --litellm         # Use an internal LiteLLM gateway (frontier model) with ofa's local RAG;
                         # run once for setup steps. Composes with any mode: ofa --litellm --amrex
+$ ofa --vllm            # Use your own multi-GPU vLLM server (see the vLLM section below)
+$ ofa --model <id>      # Use another model from the registry (default gemma4:31b-it-q8_0)
+$ ofa --list-models     # List the model registry and exit
+$ ofa --add-private <dir>  # Index your own files into a per-user private RAG store
 
 # BYOK / programmatic server (OpenAI-compatible HTTP endpoint on this node)
 $ ofa --serve                    # Start the local HTTP server; see docs/byok-vscode.md
@@ -118,9 +123,9 @@ Useful flags:
 
 **Before you run `ofa` for real on a new site**, audit these files — they're the pieces the installer can't infer:
 
-* [`site.toml`](site.example.toml) — verify partition names, GRES, walltime, account-discovery command.
-* [`collections.toml`](collections.toml) — replace the Kestrel-specific RAG corpora (`amrex`, `marbles-papers`, `HPC`, …) with sources that make sense for your users.
-* [`prompts/`](prompts/) — the mode prompts template the site *identity* (name, org, long name) automatically via `site.toml`, but leave Kestrel-specific *technical* content (CUDA module versions, partition names like `standard/hbw`, `/nopt/nrel` protected paths, Gila cross-references in `openfoam.txt`, the RHEL8→RHEL9 body in `reframe.txt`) as literal text. Rewrite those bits for your cluster; templating them would produce prompts that lie confidently about your setup.
+* [`site.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/site.example.toml) — verify partition names, GRES, walltime, account-discovery command.
+* [`collections.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/collections.toml) — replace the Kestrel-specific RAG corpora (`amrex`, `marbles-papers`, `HPC`, …) with sources that make sense for your users.
+* [`prompts/`](https://github.com/nileshsawant/onfield-assistant/tree/main/prompts) — the mode prompts template the site *identity* (name, org, long name) automatically via `site.toml`, but leave Kestrel-specific *technical* content (CUDA module versions, partition names like `standard/hbw`, `/nopt/nrel` protected paths, Gila cross-references in `openfoam.txt`, the RHEL8→RHEL9 body in `reframe.txt`) as literal text. Rewrite those bits for your cluster; templating them would produce prompts that lie confidently about your setup.
 
 Once you're satisfied, source the env and go:
 
@@ -275,13 +280,11 @@ Without that wiring, the collection is queryable via
 
 ### Where to run
 
-Both login nodes (`kl6`, `kl7`) and any compute-node GPU allocation
-work. On the login node the embedder falls back to CPU because the
-GPU driver on `kl6`/`kl7` is older than what the bundled PyTorch
-expects — throughput is ~30 chunks/second on CPU, adequate for
-routine updates (a full HPC-docs rebuild of ~730 chunks completes in
-about 4 minutes). If you already have a compute-node allocation open,
-run there for GPU-speed embedding (~5×).
+The RHEL9 login nodes (`kl3`, `kl5`) and any compute-node GPU allocation
+work. Without a usable GPU the embedder falls back to CPU at ~30
+chunks/second, which is adequate for routine updates (a full HPC-docs
+rebuild of ~730 chunks takes about 4 minutes). If you already have a
+compute-node allocation open, run there for GPU-speed embedding (~5×).
 
 ## Index your own private data
 
@@ -646,7 +649,7 @@ extension — pointing at the same server. If you see both, delete the
 removing that object from `chatLanguageModels.json`) and reload.
 
 The BYOK path is still documented for non-VS-Code clients and manual
-setups: [`docs/byok-vscode.md`](docs/byok-vscode.md).
+setups: [`docs/byok-vscode.md`](https://github.com/nileshsawant/onfield-assistant/blob/main/docs/byok-vscode.md).
 
 ## Bring your own agent
 
@@ -665,7 +668,7 @@ alongside the built-in `serveai` and `local-ollama` providers.
 
 **One-time setup.** Create `~/.config/opencode/opencode.json` with an `ofa`
 provider block whose `baseURL` / `apiKey` reference `{env:OFA_BYOK_URL}` and
-`{env:OFA_BYOK_TOKEN}`, listing the seven ofa modes as separate models. The
+`{env:OFA_BYOK_TOKEN}`, listing the eight ofa modes as separate models. The
 `{env:…}` substitution happens at opencode startup, so the file never has to
 be re-edited when the allocation, port, or token changes. The opencode
 maintainers can share a template.
@@ -696,7 +699,7 @@ export OFA_BYOK_TOKEN=$(cat $OFA_SCRATCH/.ofa_api_key)
 #    model picker for this workdir. Skip this if you only want ofa.
 _write_opencode_json
 
-# 5) Launch. The model picker lists "OnField Assistant 🌵" with 7 modes.
+# 5) Launch. The model picker lists "OnField Assistant 🌵" with 8 modes.
 opencode
 ```
 
@@ -803,7 +806,7 @@ ask(
     context:   str        = None,        # inline text prepended verbatim
     file:      str | Path = None,        # read one file, fence with its name
     files:     list       = None,        # read several
-    model:     str        = "ofa-code",  # any of the five ofa-* modes
+    model:     str        = "ofa-code",  # any of the eight ofa-* modes
     url:       str        = None,        # override auto-detection
     token:     str        = None,        # override auto-detection
     timeout:   float      = 120.0,
@@ -867,7 +870,7 @@ def extract_json(text):
     return None
 ```
 
-See [`examples/fit_and_ask.py`](examples/fit_and_ask.py) for a worked
+See [`examples/fit_and_ask.py`](https://github.com/nileshsawant/onfield-assistant/blob/main/examples/fit_and_ask.py) for a worked
 end-to-end example: fits a noisy damped sinusoid + harmonic (a function
 where `scipy.optimize.curve_fit` genuinely gets trapped in a local
 minimum from a bad initial guess), sends the plot + fit summary to
@@ -919,9 +922,9 @@ except Exception as e:
 
 ### Where to go next
 
-* Full BYOK + VS Code walkthrough: [`docs/byok-vscode.md`](docs/byok-vscode.md).
+* Full BYOK + VS Code walkthrough: [`docs/byok-vscode.md`](https://github.com/nileshsawant/onfield-assistant/blob/main/docs/byok-vscode.md).
 * Deeper explanation of how `ofa --serve` layers RAG, memory, and system
   prompts on top of Ollama: `docs/ofa-technical-overview.md` §5.3.
-* Reference implementation: [`src/ofa_client.py`](src/ofa_client.py) is
-  ~360 LOC, stdlib only, and the entire public surface is documented
+* Reference implementation: [`src/ofa_client.py`](https://github.com/nileshsawant/onfield-assistant/blob/main/src/ofa_client.py) is
+  ~390 LOC, stdlib only, and the entire public surface is documented
   inline.

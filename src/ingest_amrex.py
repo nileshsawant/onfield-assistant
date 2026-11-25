@@ -21,24 +21,32 @@ TMP_CLONE_DIR = os.environ.get(
     os.path.join(tempfile.gettempdir(), f"amrex_ingest_{os.environ.get('USER', 'default')}"),
 )
 
-# Ensure user directory setup
-os.makedirs(TMP_CLONE_DIR, exist_ok=True)
-os.chdir(TMP_CLONE_DIR)
+embed_model = None
+client = None
 
-print("Cloning repositories...")
-if not os.path.exists("amrex"):
-    subprocess.run(["git", "clone", "https://github.com/amrex-codes/amrex.git"])
-if not os.path.exists("marblesThermal"):
-    subprocess.run(["git", "clone", "https://github.com/nileshsawant/marblesThermal.git"])
 
-# Load model
-print("Loading embedding model...")
-model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
-embed_model = SentenceTransformer(model_path, device="cpu")
+def main():
+    global embed_model, client
+    os.makedirs(TMP_CLONE_DIR, exist_ok=True)
+    os.chdir(TMP_CLONE_DIR)
 
-# Initialize Master ChromaDB
-print(f"Connecting to ChromaDB at {VECTORDB_PATH}...")
-client = chromadb.PersistentClient(path=VECTORDB_PATH)
+    print("Cloning repositories...")
+    if not os.path.exists("amrex"):
+        subprocess.run(["git", "clone", "https://github.com/amrex-codes/amrex.git"])
+    if not os.path.exists("marblesThermal"):
+        subprocess.run(["git", "clone", "https://github.com/nileshsawant/marblesThermal.git"])
+
+    print("Loading embedding model...")
+    model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
+    embed_model = SentenceTransformer(model_path, device="cpu")
+
+    print(f"Connecting to ChromaDB at {VECTORDB_PATH}...")
+    client = chromadb.PersistentClient(path=VECTORDB_PATH)
+
+    process_repo("amrex", "amrex_src", [".cpp", ".H", ".h", ".f90"])
+    process_repo("marblesThermal", "marbles_src", [".cpp", ".H", ".h"])
+    print("\nIngestion complete. You can now use `ofa --amrex` safely!")
+
 
 def process_repo(repo_name, coll_name, extensions):
     print(f"\nProcessing {repo_name} -> Collection: {coll_name}")
@@ -94,7 +102,6 @@ def process_repo(repo_name, coll_name, extensions):
     else:
         print(f"No documents found for {repo_name}.")
 
-process_repo("amrex", "amrex_src", [".cpp", ".H", ".h", ".f90"])
-process_repo("marblesThermal", "marbles_src", [".cpp", ".H", ".h"])
 
-print("\nIngestion complete. You can now use `ofa --amrex` safely!")
+if __name__ == "__main__":
+    main()

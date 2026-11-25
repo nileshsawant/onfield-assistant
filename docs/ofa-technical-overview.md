@@ -4,7 +4,7 @@
 **Deployment**: NLR Kestrel HPC
 **Module**: `assistant` (Lmod)
 **Repo**: https://github.com/nileshsawant/onfield-assistant
-**Document date**: June 2026
+**Document date**: November 2026
 
 ---
 
@@ -24,6 +24,7 @@ ofa --quantum-computing              # Quantum computing (rigorous gate / matrix
 ofa --vasp                           # VASP (Vienna Ab initio Simulation Package)
 ofa --rhel9_reframe                  # ReFrame for RHEL9 migration
 ofa --resume                         # Resume your last session
+ofa --vllm                           # Use your own multi-GPU vLLM server (see README)
 ofa --openfoam "set up a cavity case" --save ./case   # Single OpenFOAM query + save case files
 ```
 
@@ -76,12 +77,12 @@ and this document.
 
 ## 2. Executive summary
 
-`ofa` is a domain-specialised AI assistant that pairs a local 31-billion-parameter language model (Gemma 4) on Kestrel H100 GPUs with retrieval-augmented generation over indexed Kestrel/OpenFOAM/AMReX/MARBLES/ReFrame/quantum-computing corpora. It exposes two surfaces:
+`ofa` is a domain-specialised AI assistant that pairs a local 31-billion-parameter language model (Gemma 4) on Kestrel H100 GPUs with retrieval-augmented generation over indexed Kestrel/OpenFOAM/AMReX/MARBLES/ReFrame/VASP/quantum-computing corpora. It exposes two surfaces:
 
-- **Interactive CLI** (`ofa`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --quantum-computing`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
+- **Interactive CLI** (`ofa`, `ofa --openfoam`, `ofa --hpc`, `ofa --code`, `ofa --amrex`, `ofa --marbles`, `ofa --quantum-computing`, `ofa --vasp`, `ofa --rhel9_reframe`) — a full agent loop that reads files, executes bash, edits code, and persists session state on Kestrel.
 - **OpenAI-compatible HTTP server** (`ofa --serve`) — a Bring-Your-Own-Key (BYOK) endpoint so VS Code Chat, `opencode`, or any OpenAI-compatible client can route requests through the same domain layer.
 
-The codebase is ~6,000 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). By default all inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NLR's network. (An opt-in `OFA_BACKEND=litellm` mode can instead delegate the chat completion to an internal OpenAI-compatible LiteLLM gateway; RAG and orchestration still run locally.) 124 commits as of this writing; production-stable on the OpenFOAM/HPC modes.
+The codebase is ~9,600 lines of Python (no exotic dependencies — stdlib + httpx + chromadb + rank_bm25 + sentence-transformers + ollama). By default all inference runs locally on a quarter-node Kestrel GPU allocation; no data leaves NLR's network. Two opt-in backends replace only the chat completion; RAG and orchestration still run locally: `OFA_BACKEND=litellm` / `--litellm` delegates to an internal OpenAI-compatible LiteLLM gateway, and `--vllm` uses the user's own multi-GPU / multi-node vLLM server for open-weight models too large for one GPU. 263 commits as of November 2026; production-stable on the OpenFOAM/HPC modes. An evaluation harness (`eval/`) scores answers per mode so models and retrieval changes can be compared.
 
 The remainder of this document covers what's in the repo, how the pieces fit together, and the operational/safety properties anyone evaluating `ofa` for wider use will want to know.
 
@@ -92,7 +93,7 @@ The remainder of this document covers what's in the repo, how the pieces fit tog
 ### Is
 
 - A **local-first** LLM assistant: model weights, indexed corpora, and runtime state all live on Kestrel under the user's account or `$OFA_ROOT`.
-- **Domain-specialised** through five mode-specific system prompts, six pre-built vector indices (~27,500 documents), per-user long-term memory, and a skill system.
+- **Domain-specialised** through eight mode-specific system prompts, eight pre-built vector indices (~30,000 documents), per-user long-term memory, and a skill system.
 - **Agentic on the CLI side**: it can run bash, read/write files, save OpenFOAM cases, retry on tool errors, and persist its working memory across sessions.
 - **Interoperable** via OpenAI's `/v1/chat/completions` shape — usable from VS Code BYOK, `opencode`, `curl`, or any client that speaks the same wire format.
 
@@ -139,7 +140,7 @@ Three layers, in order of how a request flows through them:
 
 1. **Surface** — either the interactive CLI (terminal stdin/stdout, agent loop) or the BYOK HTTP server (`POST /v1/chat/completions`).
 2. **Domain layer** — the same in both surfaces: system-prompt selection, long-term memory injection, RAG retrieval, optional skill content.
-3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally.
+3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally. `ofa --vllm` does the same against the user's own vLLM server (started with `tools/vllm-serve.sbatch` across one or more whole GPU nodes), reading its address and per-job key from `$OFA_SCRATCH/.ofa_vllm_endpoint.json`.
 
 ---
 
@@ -174,10 +175,10 @@ OpenAI-compatible HTTP shim. Three endpoints:
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/healthz` | none | Liveness probe; returns `{"status":"ok"}`. |
-| GET | `/v1/models` | bearer | Lists seven model IDs (`ofa-openfoam`, `ofa-hpc`, `ofa-code`, `ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`). |
+| GET | `/v1/models` | bearer | Lists eight model IDs (`ofa-openfoam`, `ofa-hpc`, `ofa-code`, `ofa-amrex`, `ofa-marbles`, `ofa-reframe`, `ofa-quantum-computing`, `ofa-vasp`). |
 | POST | `/v1/chat/completions` | bearer | OpenAI format; supports `stream: true` SSE; optional `tools` / `tool_choice` passthrough when `--serve-enable-tools` is set. |
 
-The model ID in the request body selects the mode → system prompt → RAG retriever. Inbound system messages from the client are dropped (the BYOK client's own prompt would override ofa's domain knowledge). RAG retrieval is applied only to the most recent user message.
+The model ID in the request body selects the mode → system prompt → RAG retriever. Inbound system messages from the client are dropped (the BYOK client's own prompt would override ofa's domain knowledge). Retrieved context is added to the most recent user message only; the retrieval query is that message's request plus up to two earlier requests (see §6.2).
 
 The full client setup (SSH port-forward + VS Code config) is documented in [docs/byok-vscode.md](byok-vscode.md). A helper at [tools/byok-update-config.py](../tools/byok-update-config.py) generates the VS Code `chatLanguageModels.json` provider entry in one shot.
 
@@ -283,7 +284,10 @@ Kestrel-remote side of a Remote-SSH session, it:
   `MODEL_CONTEXT` (`vscode-ext/src/modelProvider.ts`);
 - translates VS Code's tool calls to and from OpenAI `tool_calls`, which
   `ofa --serve --serve-enable-tools` then maps onto Ollama's native
-  format, so Agent mode can apply edits and run commands.
+  format, so Agent mode can apply edits and run commands;
+- selects the backend with `ofa.backend`: `ollama` (default), `litellm`,
+  or `vllm` (spawns `ofa --serve --vllm` against the user's own vLLM
+  server).
 
 Because both the extension and the server run Kestrel-side, the bearer
 token never reaches the laptop and VS Code's secret storage is not
@@ -300,14 +304,15 @@ Both surfaces share these five components, layered into the request before it re
 
 | File | Lines | Role |
 |---|---:|---|
-| `prompts/common.txt` | 117 | Cross-mode rules: tool-fence convention, RAG citation policy, two-channel long-term-memory contract (PREFS + LESSONS), output style. Included in every prompt. |
+| `prompts/common.txt` | 127 | Cross-mode rules: tool-fence convention, RAG citation policy, two-channel long-term-memory contract (PREFS + LESSONS), output style. Included in every prompt. |
 | `prompts/openfoam.txt` | 42 | Dictionary-generator mode — OpenFOAM 13 case file conventions. |
 | `prompts/hpc.txt` | 11 | Kestrel HPC documentation assistant. |
 | `prompts/code.txt` | 7 | General coding assistant. |
 | `prompts/cpp.txt` | 29 | Layered onto `code.txt` for C++ work. |
-| `prompts/amrex.txt` | 8 | AMReX C++ framework. |
-| `prompts/marbles.txt` | 10 | MARBLES lattice-Boltzmann thermal solver (built on AMReX). |
-| `prompts/quantum-computing.txt` | 27 | Quantum computing; enforces per-answer verification of gate matrices, tensor ordering, and unitarity. |
+| `prompts/amrex.txt` | 9 | AMReX C++ framework. |
+| `prompts/marbles.txt` | 11 | MARBLES lattice-Boltzmann thermal solver (built on AMReX). |
+| `prompts/quantum-computing.txt` | 22 | Quantum computing; enforces per-answer verification of gate matrices, tensor ordering, and unitarity. |
+| `prompts/vasp.txt` | 19 | VASP (Vienna Ab initio Simulation Package). |
 | `prompts/reframe.txt` | 10 | ReFrame RHEL9 migration. |
 | `prompts/plan.txt` | 6 | Plan-stage prompt used by `plan_file_list()` in OpenFOAM mode. |
 
@@ -333,7 +338,11 @@ Eight ChromaDB collections served from `$OFA_ROOT/vectordb/` (Chroma's persisten
 | `vasp_src` | 150 | VASP documentation (`repos/vasp/`, not git-tracked — see [RAG maintenance](rag-maintenance.md)) |
 | **Total** | **30,133** | — |
 
-**Hybrid retrieval**: each retriever combines dense (ChromaDB embedding similarity) and sparse (BM25 over tokens) scores. BM25 indices are pre-built at startup via `_init_rag()` and cached in memory for the session — first-query latency was prohibitive before the prebuild was introduced. The merge weights are tuned per retriever (see `retrieve_context`, `retrieve_hpc_context`, `retrieve_amrex_context`, `retrieve_marbles_context`, `retrieve_quantum_computing_context`, `_get_reframe_rag`).
+**Hybrid retrieval**: each retriever combines dense (ChromaDB embedding similarity) and sparse (BM25 over tokens) scores. BM25 indices are pre-built at startup via `_init_rag()` and cached in memory for the session — first-query latency was prohibitive before the prebuild was introduced. The merge weights are tuned per retriever (see `retrieve_context`, `retrieve_hpc_context`, `retrieve_amrex_context`, `retrieve_marbles_context`, `retrieve_quantum_computing_context`, `retrieve_vasp_context`, `_get_reframe_rag`).
+
+**Query construction**: the retrieval query is the latest user request followed by up to two earlier requests (`build_rag_query()`), so a follow-up such as "now run it on a GPU" keeps the topic of the earlier turns. Context blocks that VS Code wraps around a request are stripped first (`request_text()` extracts the `<userRequest>` text). The CLI and `ofa --serve` build the query the same way.
+
+**Current HPC docs first**: `retrieve_hpc_context()` places the top chunks from the RHEL9 upgrade docs (`RHEL9_upgrade/`) ahead of everything else, labelled CURRENT, and labels every chunk with its source file path. Without this, better retrieval of older RHEL8-era pages made answers about modules and toolchains worse.
 
 **Greeting bypass**: retrieval is skipped for trivial queries (`hi`, `hello`, `thanks`, etc.) to avoid spending tokens on irrelevant context.
 
@@ -421,9 +430,10 @@ Eight unit tests covered this in `test_ofa_compress.py` (see the caveat in §11 
 $OFA_ROOT/
 ├── bin/ofa                      # SLURM-aware shell wrapper
 ├── src/
-│   ├── ofa_main.py             # ~4,200 LOC: CLI, agent loop, RAG, memory
-│   ├── ofa_server.py           # ~1,040 LOC: BYOK HTTP shim
+│   ├── ofa_main.py             # ~5,200 LOC: CLI, agent loop, RAG, memory, backends
+│   ├── ofa_server.py           # ~1,200 LOC: BYOK HTTP shim
 │   ├── ofa_client.py           # ~  390 LOC: stdlib-only Python client
+│   ├── ofa_private_rag.py      # per-user private RAG store (--add-private)
 │   ├── ofa_site.py             # site.toml loader (portability layer)
 │   ├── build_index.py          # legacy index builder
 │   ├── build_index_v2.py       # current index builder
@@ -435,7 +445,12 @@ $OFA_ROOT/
 │   └── rebuild_tutorials_of13.py
 ├── vscode-ext/                  # VS Code extension (TypeScript; see §5.4)
 ├── tools/
-│   └── byok-update-config.py   # VS Code chatLanguageModels.json helper
+│   ├── byok-update-config.py   # VS Code chatLanguageModels.json helper
+│   ├── update-rag.sh / .sbatch # incremental RAG refresh + self-resubmitting daily job
+│   ├── vllm-env.sh             # builds the separate vLLM environment (env/envs/vllm)
+│   ├── vllm-serve.sbatch       # multi-GPU / multi-node vLLM server for --vllm
+│   └── vllm_parsers.py         # vLLM tool-call / reasoning parser plugin
+├── eval/                       # evaluation harness: questions.toml + run_eval.py
 ├── prompts/                    # 8 mode prompts + common.txt + cpp/plan helpers + skills/
 ├── vectordb/                   # ChromaDB persistent store (8 collections)
 ├── repos/                      # live git clones for RAG + grep
@@ -454,54 +469,52 @@ $OFA_ROOT/
 └── README.md
 ```
 
-Total Python under `src/`: **~5,600 LOC** across 12 files, plus the
+Total Python under `src/`: **~9,600 LOC** across 13 files, plus the
 TypeScript extension in `vscode-ext/src/`.
 
-### 7.2 `src/ofa_main.py` walkthrough (~4,200 LOC)
+### 7.2 `src/ofa_main.py` walkthrough (~5,200 LOC)
 
 Logical sections, in roughly the order they appear:
 
 | Section | Purpose |
 |---|---|
-| Path/env constants (~15–60) | `OFA_ROOT`, `OFA_SCRATCH`, `PROMPTS_DIR`, `VECTORDB_PATH`, `SKILLS_DIR`. |
-| Model registry (~60–230) | `MODEL_REGISTRY` (sampling params per model), `TESTED_MODELS`, `_print_model_registry`, `_print_active_model_banner`. |
-| Behavioural constants (~230–250) | Tool-output cap, session-compress thresholds, max-consecutive-errors. |
-| Terminal colouring (~245–280) | `_USE_COLOR`, `_c()`, `_banner()`. Respects `NO_COLOR`. |
-| Safe input helpers (~280–305) | `_safe_input()` treats Ctrl+C at approval prompts as "decline" instead of crash. |
-| Scratch resolution (~305–340) | `_resolve_scratch()` — `$OFA_SCRATCH` → `/scratch/$USER` → XDG → tmp. |
-| Session persistence (~370–510) | `save_session`, `load_session`, `manage_session_context` (compression). |
-| Long-term memory (~510–620) | `_save_marker_block`, `extract_and_save_prefs`, `extract_and_save_lessons`, `_read_memory_file`, `_count_memory_lines`. |
-| Skills (~620–720) | `_list_skill_files`, `_load_skill_text`, `_active_skill_names`. |
-| Thinking-channel filter (~840–920) | Streaming filter that hides `<thought>...</thought>` from display while preserving it in captured text. |
-| `_run_react_loop` (~920–1100) | The CLI agent loop: stream response → save prefs/lessons → execute tool calls → loop. |
-| Tool-fence parsing (~1100–1700) | `check_and_execute_bash`, `extract_plan`, `_looks_like_unfenced_tool_intent` + nudge. |
-| Ollama bootstrap (~1330–1700) | `ensure_ollama_running`, `_shutdown_ollama`. |
-| RAG retrievers (~1770–2680) | `retrieve_context` (OpenFOAM), `retrieve_hpc_context` (Kestrel docs), `retrieve_amrex_context` (AMReX-only), `retrieve_marbles_context` (MARBLES + light AMReX), `retrieve_quantum_computing_context` (quantum code + papers), `_get_reframe_rag`. Hybrid dense+BM25. |
-| `chat_stream` (~1820–1870) | The Ollama API call. All chat traffic flows through here. |
-| `interactive_mode` (~2100–2300) | Banner, slash-command dispatch, REPL loop. |
-| `single_query` / `hpc_single_query` (~2300–3070) | One-shot CLI mode and the plan→generate-per-file pattern used by `--save`. |
-| `main` (~3350–3540) | Argparse, dispatch to interactive vs single-query vs `--serve`. |
+| Path/env constants | `OFA_ROOT`, `OFA_SCRATCH`, `PROMPTS_DIR`, `VECTORDB_PATH`, `SKILLS_DIR`; backend selection (`OFA_BACKEND`, LiteLLM settings) and `_use_vllm_endpoint()` for `--vllm`. |
+| Model registry | `MODEL_REGISTRY` (sampling params per model), `VISION_MODELS`, `TESTED_MODELS`, `_print_model_registry`, `_print_active_model_banner`, `get_model_options()`. |
+| Behavioural constants | Tool-output cap, session-compress thresholds, max-consecutive-errors, sampling defaults. |
+| Terminal colouring | `_USE_COLOR`, `_c()`, `_banner()`. Respects `NO_COLOR`. |
+| Safe input helpers | `_safe_input()` treats Ctrl+C at approval prompts as "decline" instead of crash. |
+| Scratch resolution | `_resolve_scratch()` — `$OFA_SCRATCH` → `/scratch/$USER` → XDG → tmp. |
+| Session persistence | `save_session`, `load_session`, `manage_session_context` (compression). |
+| Long-term memory | `_save_marker_block`, `extract_and_save_prefs`, `extract_and_save_lessons`, `_read_memory_file`, `_count_memory_lines`. |
+| Skills | `_list_skill_files`, `_load_skill_text`, `_active_skill_names`. |
+| Thinking-channel filter | `make_thought_filter()` hides `<thought>...</thought>` from display while preserving it in captured text. |
+| `_run_react_loop` | The CLI agent loop: stream response → save prefs/lessons → execute tool calls → loop. |
+| Tool-fence parsing | `check_and_execute_bash`, `extract_plan`, `_looks_like_unfenced_tool_intent` + nudge. |
+| Ollama bootstrap | `ensure_ollama_running`, `_shutdown_ollama`, `_user_models_dir()` (per-user models mirror). |
+| RAG | `_init_rag`, `request_text` / `build_rag_query` (query construction), `retrieve_context` (OpenFOAM), `retrieve_hpc_context` (Kestrel docs), `retrieve_amrex_context`, `retrieve_marbles_context`, `retrieve_quantum_computing_context`, `retrieve_vasp_context`, `_get_reframe_rag`, `retrieve_private_context` / `_append_private_context`. Hybrid dense+BM25. |
+| `chat_stream` | The model call. All chat traffic flows through here; it dispatches to Ollama or, for `--litellm` / `--vllm`, to `_litellm_chat_stream` (OpenAI-compatible). |
+| `interactive_mode` | Banner, slash-command dispatch, REPL loop. |
+| `single_query` / `hpc_single_query` | One-shot CLI mode and the plan→generate-per-file pattern used by `--save`. |
+| `main` | Argparse, dispatch to interactive vs single-query vs `--serve`. |
 
-### 7.3 `src/ofa_server.py` walkthrough (~1,040 LOC)
+### 7.3 `src/ofa_server.py` walkthrough (~1,200 LOC)
 
 Linear file, easier to read top-to-bottom:
 
-| Function / class | Lines | Purpose |
-|---|---|---|
-| `_MODEL_MODES` | 50 | `ofa-hpc → "hpc"` mapping; advertises five model IDs. |
-| `_retrieve_for_mode` | 66 | Dispatches to the right RAG retriever in `ofa_main`. |
-| `_augment_user_message` | 89 | Fences RAG context and prepends it to the user message. |
-| `_augment_messages` | 118 | Drops inbound system messages, injects ofa's, RAG-fences last user msg. |
-| `_sse_chunk` / `_sse_done` | 147 | OpenAI SSE chunk formatting. |
-| `load_or_create_api_key` | 170 | Bearer token persistence with 0o600 file perms. |
-| `_ollama_chat_raw` | 213 | Used when `--serve-enable-tools` is on. Talks to Ollama's `/api/chat` directly with `tools` / `tool_choice`, yielding full chunk dicts so the caller sees `message.tool_calls`. |
-| `_ollama_tool_call_to_openai` | 252 | Translates an Ollama `tool_call` to OpenAI SSE delta format. |
-| `_Handler` | 281 | The `BaseHTTPRequestHandler` subclass. Methods: `_auth_ok` (5 header formats), `_log_auth_failure` (redacted), `do_GET` (healthz + models), `do_POST` (chat-completions). |
-| `_handle_stream` | ~370 | Streaming branch. Two paths (tools-on / tools-off) emitting OpenAI SSE chunks. |
-| `_handle_blocking` | ~460 | Non-streaming branch (full JSON response). |
-| `_read_or_random_port` | 580 | Persisted-or-random port helper, 0o600 file. |
-| `_default_serve_port` / `_default_local_port` | 613 / 629 | Per-user stable ports in 40000–49999 (REMOTE) and 49200–64200 (LOCAL). |
-| `serve()` | 645 | Bootstrap: ensure Ollama, init RAG, resolve ports, set bearer token, start `ThreadingHTTPServer`. Prints the labelled connection block. Blocks until Ctrl+C. |
+| Function / class | Purpose |
+|---|---|
+| `_MODEL_MODES` | `ofa-hpc → "hpc"` mapping; advertises eight model IDs. |
+| `_retrieve_for_mode` | Dispatches to the right RAG retriever in `ofa_main`. |
+| `_augment_user_message` | Fences RAG context and prepends it to the user message. |
+| `_augment_messages` | Drops inbound system messages, injects ofa's, builds the RAG query from recent requests and fences the result into the last user message. |
+| `_sse_chunk` / `_sse_done` | OpenAI SSE chunk formatting. |
+| `load_or_create_api_key` | Bearer token persistence with 0o600 file perms. |
+| `_ollama_chat_raw` | Used when `--serve-enable-tools` is on. Talks to Ollama's `/api/chat` directly with `tools` / `tool_choice`, yielding full chunk dicts so the caller sees `message.tool_calls`. |
+| `_ollama_tool_call_to_openai` | Translates an Ollama `tool_call` to OpenAI SSE delta format. |
+| `_Handler` | The `BaseHTTPRequestHandler` subclass. Methods: `_auth_ok` (5 header formats), `_log_auth_failure` (redacted), `do_GET` (healthz + models), `do_POST` (chat-completions), `_handle_stream` (SSE; tools-on / tools-off paths), `_handle_blocking` (full JSON response). |
+| `_read_or_random_port` | Persisted-or-random port helper, 0o600 file. |
+| `_default_serve_port` / `_default_local_port` | Per-user stable ports in 40000–49999 (REMOTE) and 49200–64200 (LOCAL). |
+| `serve()` | Bootstrap: ensure Ollama, init RAG, resolve ports, set bearer token, start `ThreadingHTTPServer`. Prints the labelled connection block. Blocks until Ctrl+C. |
 
 The whole thing depends on `ofa_main` only via `_retrieve_for_mode` and `_augment_messages` (RAG + system prompt) and `chat_stream` / `_ollama_chat_raw` (Ollama I/O). A colleague wanting to expose their own offline LLM via BYOK can use `ofa_server.py` as a template and replace those four call sites.
 
@@ -586,7 +599,7 @@ The user can override account / partition / walltime via `OFA_ACCOUNT` / `OFA_PA
 | Throughput | ~30–60 tokens/sec generation on a single H100 |
 | RAG retrieval | < 200 ms per query (ChromaDB warm; BM25 caches in memory) |
 | Index size on disk | ~740 MB (`vectordb/`) |
-| Model weights | ~34 GB for the default model; `models/` holds ~250 GB across all nine pulled models |
+| Model weights | ~34 GB for the default model; `models/` holds ~300 GB across the twelve pulled Ollama models. Weights for `--vllm` models live in each user's own space (hundreds of GB per model). |
 
 The dominant latency on first reply is GPU warm-up; on subsequent replies it's token generation. RAG and prompt construction are insignificant by comparison.
 
@@ -640,11 +653,14 @@ check — `npm run typecheck` — which is wired into CI via
 | `OFA_GRES` | `gpu:1` | salloc GRES. |
 | `OFA_JOB_NAME` | `ofa` | salloc job name (the VS Code extension sets `ofa-vscode`). |
 | `OFA_OLLAMA_PORT` | UID-derived | Pin the per-user `ollama serve` port. (`OFA_PORT` is an internal module global, not an env var.) |
-| `OFA_BACKEND` | `ollama` | Inference backend: `ollama` (local, default) or `litellm` (internal OpenAI-compatible gateway). |
+| `OFA_BACKEND` | `ollama` | Inference backend: `ollama` (local, default) or `litellm` (internal OpenAI-compatible gateway). `--vllm` sets it to the OpenAI-compatible path automatically. |
 | `OFA_LITELLM_API_KEY` | (unset) | LiteLLM API key (overrides the key file `$OFA_SCRATCH/.ofa_litellm_key`, which must be `0600`). |
 | `OFA_LITELLM_BASE_URL` | internal gateway | LiteLLM base URL (must include `/v1`). |
 | `OFA_LITELLM_MODEL` | built-in default | Gateway model name (from the LiteLLM web UI). |
 | `OFA_LITELLM_VISION` | `1` | Whether to send images to the gateway model (`1`/`0`). |
+| `OFA_VLLM_ENDPOINT` | `$OFA_SCRATCH/.ofa_vllm_endpoint.json` | Endpoint file `--vllm` reads (written by `tools/vllm-serve.sbatch`; holds the per-job key, mode `0600`). |
+| `OFA_REASONING_EFFORT` | per-model | `reasoning_effort` sent on the OpenAI-compatible path (`--litellm` / `--vllm`). |
+| `OFA_NATIVE_THINK` | (unset) | Experimental. `1` uses the model's own trained reasoning, shown as `<thought>`, instead of ofa's prompted thought channel. |
 | `OFA_MODELS_JSON` | (unset) | Path to an external model registry merged over `MODEL_REGISTRY`. |
 | `OFA_SITE_TOML` | `$OFA_ROOT/site.toml` | Site config file (see `src/ofa_site.py`). |
 | `OFA_PROTECTED_PREFIXES` | deploy roots | Extra path prefixes the agent refuses to write to. |
@@ -667,6 +683,7 @@ check — `npm run typecheck` — which is wired into CI via
 | `--save DIR` | Write the assistant's `=== FILE ===` blocks into `DIR`. |
 | `--no-rag` | Skip RAG retrieval. |
 | `--litellm` | Route inference to the internal LiteLLM gateway (frontier model) while keeping ofa's local RAG. Equivalent to `OFA_BACKEND=litellm`. Run once for setup steps. |
+| `--vllm` | Use the user's own multi-GPU / multi-node vLLM server (`tools/vllm-serve.sbatch`) while keeping ofa's local RAG. Composes with any mode and with `--serve`. |
 | `--fast` | OpenFOAM single-shot (skip plan stage). |
 | `--model ID` | Override `gemma4:31b-it-q8_0`. |
 | `--list-models` | Print model registry and exit. |
@@ -720,22 +737,24 @@ $ <shell command>     — run a shell command locally (cd persists)
 ### 12.5 Recent commit highlights
 
 ```
+48c6cff  vLLM: vendor-neutral xml_tools/think_tags parser plugin
+6dedb5c  vscode-ext 0.1.0-alpha.7: ofa.backend=vllm
+84d1f94  README: multi-GPU/multi-node vLLM usage; --serve honours --vllm/--litellm/--model
+f730981  Multi-node vLLM backend for models too large for one GPU (ofa --vllm)
+de7ed54  RAG: conversation-aware query + current (RHEL9) HPC docs first
+bf86e04  Opt-in OFA_NATIVE_THINK: model's native reasoning inlined as <thought>
+1b0d71f  Add evaluation harness (eval/)
+d81454b  Upgrade Ollama to 0.40.12; add nemotron-3.5-bolt:74b-a9b
+a0f2448  Per-user writable Ollama models mirror for the daemon
+28c5b43  portability: scheduler.kind dispatch (slurm|none) in bin/ofa
+1fce68b  Add optional LiteLLM backend: use ofa's local RAG with proprietary/frontier models
 a24a58b  docs(byok): rewrite byok-vscode.md to lean 5-step quick start
-e45be78  feat(serve): per-user stable Kestrel-side port (default)
 9816511  feat(serve): --serve-enable-tools forwards tools/tool_calls to Ollama
-3b137e9  feat(tools): byok-update-config.py to register all 5 OFA modes
-0fe7eb8  fix(serve): accept multiple auth header formats; bind 0.0.0.0 default
-08d7e18  docs(serve): label REMOTE vs LOCAL port explicitly
-b933e0b  feat(serve): dynamic port allocation on both sides
-79b52dc  feat(serve): print exact ssh tunnel command at startup
-a4f1124  refactor(banner): hide model menu from startup, expose via /models
 d2a83b4  feat(serve): add `ofa --serve` OpenAI-compatible BYOK shim for VS Code
-df81e1b  fix(context): make session compression effective and quiet when no-op
-497722d  feat(skills): on-demand skill loading via /skill
 00e3f76  feat(memory): autonomous long-term memory with prefs + lessons channels
 ```
 
-124 commits total at the time of writing.
+263 commits total at the time of writing.
 
 ---
 

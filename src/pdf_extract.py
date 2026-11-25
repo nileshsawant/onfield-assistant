@@ -161,13 +161,14 @@ def extract_pages(
 
     ``ocr`` controls vision-OCR via the local ofa model (nothing leaves the
     node):
-      * ``"off"`` (default) — text-layer extraction only.
-      * ``"auto"`` — OCR only pages whose text layer looks degraded
-        (``_needs_ocr``: many unmapped glyphs, or almost no text). Best
-        for scientific PDFs where most pages are fine but equation-dense
-        ones aren't.
-      * ``"force"`` — OCR every page. Slow; use for scanned documents with
-        no usable text layer at all.
+
+    * ``"off"`` (default) — text-layer extraction only.
+    * ``"auto"`` — OCR only pages whose text layer looks degraded
+      (``_needs_ocr``: many unmapped glyphs, or almost no text). Best
+      for scientific PDFs where most pages are fine but equation-dense
+      ones aren't.
+    * ``"force"`` — OCR every page. Slow; use for scanned documents with
+      no usable text layer at all.
 
     Raises ``ImportError`` if pdfplumber isn't installed. Raises
     ``FileNotFoundError`` if the PDF doesn't exist. Per-page extraction

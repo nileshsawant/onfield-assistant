@@ -167,11 +167,11 @@ VISION_MODELS = frozenset({
 
 
 def model_supports_vision(model: str | None = None) -> bool:
-    """True if the given model id (default: active MODEL) can accept images.
+    """Return True if the given model id (or the active model) accepts images.
 
-    For the litellm backend we can't consult the local VISION_MODELS set
-    (the model is remote), so honour the OFA_LITELLM_VISION flag instead
-    (default on — frontier models are usually multimodal).
+    On the OpenAI-compatible path (``--litellm`` / ``--vllm``) this is
+    ``LITELLM_VISION``: the ``OFA_LITELLM_VISION`` flag for a gateway, or
+    whether the served model is in ``VISION_MODELS`` for ``--vllm``.
     """
     if OFA_BACKEND == "litellm":
         return LITELLM_VISION

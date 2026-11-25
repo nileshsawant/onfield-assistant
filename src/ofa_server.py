@@ -14,18 +14,19 @@ What each /v1/chat/completions request does:
   3. Build the system prompt via ``ofa_main.load_system_prompt(mode)`` so
      long-term prefs + lessons are injected exactly the same way the CLI
      does.
-  4. Run RAG on the user's last message via the same retriever the CLI
-     uses for that mode, fence the result via ``_fence_rag``, and prepend
-     it to the user message.
+  4. Run RAG via the same retriever the CLI uses for that mode, with a
+     query built from the latest request plus up to two earlier ones
+     (``ofa_main.build_rag_query``); fence the result via ``_fence_rag``
+     and prepend it to the last user message.
   5. Stream the assistant response via ``ofa_main.chat_stream`` and
      repackage each chunk as an OpenAI SSE `data: { ... }` line.
 
-What we deliberately do NOT do in v1:
-  * Tool-calling. We advertise `toolCalling: false` in the BYOK config
-    so VS Code uses ofa as a smart chat backend, not as an agent that
-    expects OpenAI function-call JSON.
-  * /v1/embeddings. Out of scope; Copilot or another provider can handle
-    embeddings if VS Code needs them.
+Tool calling is opt-in: with ``--serve-enable-tools``, OpenAI-format
+``tools`` are forwarded to the model and its ``tool_calls`` translated
+back, so VS Code Agent mode and other agents can drive ofa.
+
+Not implemented: /v1/embeddings. Copilot or another provider can handle
+embeddings if VS Code needs them.
 
 Concurrency: ThreadingHTTPServer with a per-request handler. Ollama
 itself serialises generation under the hood; our handler is mostly I/O
@@ -65,9 +66,9 @@ _EMPTY_TURN_RETRIES = 2
 
 
 # ---- model-id ↔ ofa mode mapping ----------------------------------------
-# We advertise five distinct "models" to VS Code so the user can switch
+# We advertise eight distinct "models" to VS Code so the user can switch
 # RAG context + system prompt from the model dropdown without restarting
-# anything. They all hit the same underlying Ollama model.
+# anything. They all hit the same underlying model.
 _MODEL_MODES = {
     "ofa-openfoam":           "openfoam",
     "ofa-hpc":                "hpc",

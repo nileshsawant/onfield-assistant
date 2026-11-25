@@ -17,12 +17,20 @@ REFRAME_REPO_DIR = os.environ.get(
     os.path.join(OFA_ROOT, "repos", "reframe-universal"),
 )
 
-print("Loading embedding model...")
-model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
-embed_model = SentenceTransformer(model_path, device="cpu")
+embed_model = None
+client = None
 
-print(f"Connecting to ChromaDB at {VECTORDB_PATH}...")
-client = chromadb.PersistentClient(path=VECTORDB_PATH)
+
+def main():
+    global embed_model, client
+    print("Loading embedding model...")
+    model_path = os.environ.get("OFA_EMBEDDING_MODEL", os.path.join(OFA_ROOT, "embedding_model"))
+    embed_model = SentenceTransformer(model_path, device="cpu")
+
+    print(f"Connecting to ChromaDB at {VECTORDB_PATH}...")
+    client = chromadb.PersistentClient(path=VECTORDB_PATH)
+    process_reframe(REFRAME_REPO_DIR, "reframe_src", [".py", ".sh", ".md"])
+
 
 def process_reframe(repo_dir, coll_name, extensions):
     print(f"\nProcessing {repo_dir} -> Collection: {coll_name}")
@@ -78,4 +86,6 @@ def process_reframe(repo_dir, coll_name, extensions):
             print(f"  Inserted {b+len(batch_docs)}/{len(docs)}", end='\r')
         print("\nDone.")
 
-process_reframe(REFRAME_REPO_DIR, "reframe_src", [".py", ".sh", ".md"])
+
+if __name__ == "__main__":
+    main()

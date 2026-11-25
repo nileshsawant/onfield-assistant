@@ -5154,4 +5154,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # `import ofa_main` elsewhere (ofa_server, ofa_private_rag) must see this run's globals, not a fresh copy.
+    sys.modules.setdefault("ofa_main", sys.modules[__name__])
     main()

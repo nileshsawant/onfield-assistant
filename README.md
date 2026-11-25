@@ -429,6 +429,140 @@ current base URL, model, and key source, plus how to change each.
 The key file lives at `$OFA_SCRATCH/.ofa_litellm_key`. Compute nodes can
 reach the gateway, so `--litellm` works inside a normal SLURM allocation.
 
+## Use a large multi-GPU / multi-node model (vLLM backend)
+
+Some open-weight models are too large for the single H100 that `ofa` gets
+by default. For those, you start your **own** [vLLM](https://docs.vllm.ai)
+server across one or more whole GPU nodes with a batch job, then point
+`ofa` at it with `--vllm`. Everything stays on Kestrel. RAG, prompts and the
+agent loop still run in `ofa`'s own allocation, and only the chat completion
+goes to your vLLM nodes.
+
+Tensor parallelism is used across the 4 GPUs within a node and pipeline
+parallelism across nodes. Ray is not needed.
+
+### Tested models
+
+All three are ungated US open-weight models under the OpenMDW-1.1 license.
+
+| Model (Hugging Face repo) | Nodes | Size | Notes | Eval score | Time per answer |
+| --- | --- | --- | --- | --- | --- |
+| `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | 232 GB | vision, tools, thinking | 0.86 | ~4 s |
+| `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | 377 GB | tools, thinking | 0.88 | ~37 s |
+| *(default, for reference)* `gemma4:31b-it-q8_0` via Ollama | ¼ | 34 GB | vision, tools, thinking | ~0.91 | ~14 s |
+
+Scores come from `eval/run_eval.py` (37 questions across all modes). The
+default single-GPU model is still the best all-rounder, especially in code
+mode. The big models are for experimentation, or for tasks where you've seen
+the default struggle. `NVIDIA-Nemotron-3-Ultra-550B` (2 nodes) was tried and
+dropped: its vLLM engine hung mid-run.
+
+### 1. Download the weights (once)
+
+The vLLM environment is already part of the shared install
+(`$OFA_ROOT/env/envs/vllm`; on a new site, build it with
+`tools/vllm-env.sh` from a GPU-OS login node). Weights go in **your** space.
+`/scratch` is fast, but files untouched for 28 days are purged. Use
+`/projects/<allocation>` for anything you want to keep.
+
+The download is hundreds of GB, so run it as a batch job rather than on a
+login node:
+
+```bash
+module load assistant
+mkdir -p /scratch/$USER/ofa-vllm-models
+sbatch -A <account> -p shared -c 16 --mem=32G -t 12:00:00 --wrap '
+  export HF_HOME=/scratch/$USER/.cache/huggingface HF_HUB_DISABLE_TELEMETRY=1
+  '"$OFA_ROOT"'/env/envs/vllm/bin/hf download nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 \
+      --local-dir /scratch/$USER/ofa-vllm-models/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --max-workers 16'
+```
+
+Swap in `arcee-ai/Trinity-Large-Thinking-FP8-Block` (and the matching
+`--local-dir`) for Trinity.
+
+### 2. Start the server
+
+Submit `tools/vllm-serve.sbatch` from a RHEL9 login node (kl3/kl5). Use
+whole nodes, 4 GPUs each, with the per-model arguments below. These are the
+settings the eval scores above were measured with.
+
+```bash
+M=/scratch/$USER/ofa-vllm-models
+TOOLS='--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_tools --max-num-seqs 16'
+
+# Nemotron 3.5 Super VL: 1 node
+OFA_VLLM_MODEL=$M/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 \
+OFA_VLLM_ARGS="$TOOLS --reasoning-parser nemotron_v3 --gpu-memory-utilization 0.88 \
+  --limit-mm-per-prompt {\"image\":1,\"video\":0} \
+  --speculative_config.method mtp --speculative_config.num_speculative_tokens 3" \
+sbatch -A <account> -p gpu-h100s --nodes=1 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
+
+# Trinity Large Thinking: 2 nodes
+OFA_VLLM_MODEL=$M/Trinity-Large-Thinking-FP8-Block \
+OFA_VLLM_ARGS="$TOOLS --reasoning-parser think_tags" \
+sbatch -A <account> -p gpu-h100s --nodes=2 -t 04:00:00 $OFA_ROOT/tools/vllm-serve.sbatch
+```
+
+`gpu-h100s` allows up to 4 h; use `gpu-h100` (2 days) for longer sessions.
+Loading the weights takes about **20–30 minutes**. Follow
+`ofa-vllm-<jobid>.log` until it prints:
+
+```
+vLLM ready: http://<node>:<port>/v1 (model '<name>'). Run: ofa --vllm
+```
+
+At that point the job has written the endpoint and a per-job API key to
+`$OFA_SCRATCH/.ofa_vllm_endpoint.json` (mode 0600, removed when the job
+ends). Only one vLLM server per user is tracked at a time.
+
+### 3. Use it
+
+```bash
+ofa --vllm                  # interactive, code mode
+ofa --vllm --hpc            # composes with any mode flag
+ofa --vllm "explain this SLURM error"
+ofa --vllm --serve          # OpenAI-compatible server for opencode / AMReX Agent / BYOK clients
+```
+
+`ofa` still gets its usual small allocation and talks to the vLLM nodes over
+the network. It checks the server's health first, so you'll get a clear
+message if the server is still loading or the job has ended. The VS Code
+extension's `ofa.backend` setting does not offer vLLM yet. From VS Code, use
+`ofa --vllm` in a terminal.
+
+Stop the server with `scancel <jobid>` when you're done. It holds whole GPU
+nodes for as long as the job runs.
+
+### Settings
+
+Set these in the environment when you submit `vllm-serve.sbatch`:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OFA_VLLM_MODEL` | Local model directory (required) | — |
+| `OFA_VLLM_NAME` | Served model name, which is what `ofa` reports | basename of `OFA_VLLM_MODEL` |
+| `OFA_VLLM_ARGS` | Extra `vllm serve` arguments | *(none)* |
+| `OFA_VLLM_MAX_LEN` | Max context length | `131072` |
+| `OFA_VLLM_STARTUP_TIMEOUT` | Seconds to wait for `/health` before releasing the nodes | `5400` |
+| `OFA_VLLM_ENV` | vLLM environment | `$OFA_ROOT/env/envs/vllm` |
+| `OFA_VLLM_NCCL_PLUGIN` | NCCL OFI (Slingshot) plugin dir; set empty to fall back to TCP | Kestrel's build |
+
+`ofa` reads `OFA_VLLM_ENDPOINT` to use an endpoint file other than
+`$OFA_SCRATCH/.ofa_vllm_endpoint.json`.
+
+### Troubleshooting
+
+- **`GPU preflight failed on at least one node`**: the job checks every GPU
+  on every node before loading the weights. The log names the bad node.
+  Resubmit with `--exclude=<node>` and report the node to HPC operations.
+- **`vLLM not healthy after …s`**: loading weights from a busy filesystem
+  can be slow. Raise `OFA_VLLM_STARTUP_TIMEOUT`, or check the log for the
+  first `ERROR` line.
+- **`ofa --vllm` says the server is not responding**: run `squeue -j <jobid>`.
+  The server is either still loading or the job has ended.
+- **Weights directory missing**: `/scratch` purged it. Download again, or
+  keep weights under `/projects`.
+
 ## Use `ofa` from VS Code Chat (the OnField Assistant extension)
 
 VS Code's Chat / Copilot Chat picker can drive `ofa` if you install the

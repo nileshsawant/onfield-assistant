@@ -4,6 +4,8 @@
 #
 #   tools/vllm-env.sh            # create/update at $OFA_VLLM_ENV
 #   OFA_VLLM_VERSION=0.32.0 tools/vllm-env.sh
+#   OFA_VLLM_NIGHTLY=1 OFA_VLLM_ENV=$OFA_ROOT/env/envs/vllm-nightly tools/vllm-env.sh
+#       # newest nightly (CUDA 13 wheels); pin a build with OFA_VLLM_VERSION=<printed version>
 #
 # Run on a login node with the same OS as the GPU nodes (Kestrel: kl5).
 set -euo pipefail
@@ -11,7 +13,12 @@ umask 022
 
 OFA_ROOT="${OFA_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OFA_VLLM_ENV="${OFA_VLLM_ENV:-$OFA_ROOT/env/envs/vllm}"
-OFA_VLLM_VERSION="${OFA_VLLM_VERSION:-0.32.0}"
+OFA_VLLM_NIGHTLY="${OFA_VLLM_NIGHTLY:-0}"
+if [[ "$OFA_VLLM_NIGHTLY" == 1 ]]; then
+    OFA_VLLM_VERSION="${OFA_VLLM_VERSION:-nightly}"
+else
+    OFA_VLLM_VERSION="${OFA_VLLM_VERSION:-0.32.0}"
+fi
 OFA_VLLM_PYTHON="${OFA_VLLM_PYTHON:-3.12}"
 MM="$OFA_ROOT/env/micromamba"
 
@@ -24,7 +31,14 @@ fi
 # PIP_CACHE_DIR off the home quota; the vLLM wheel set (torch + CUDA libs) is ~10 GB.
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/scratch/$USER/.cache/pip}"
 "$OFA_VLLM_ENV/bin/python" -m pip install --upgrade pip
-"$OFA_VLLM_ENV/bin/python" -m pip install "vllm==$OFA_VLLM_VERSION" "huggingface_hub[cli]"
+if [[ "$OFA_VLLM_NIGHTLY" == 1 ]]; then
+    spec=vllm; [[ "$OFA_VLLM_VERSION" == nightly ]] || spec="vllm==$OFA_VLLM_VERSION"
+    "$OFA_VLLM_ENV/bin/python" -m pip install --pre "$spec" "huggingface_hub[cli]" \
+        --extra-index-url https://wheels.vllm.ai/nightly/cu130 \
+        --extra-index-url https://download.pytorch.org/whl/cu130
+else
+    "$OFA_VLLM_ENV/bin/python" -m pip install "vllm==$OFA_VLLM_VERSION" "huggingface_hub[cli]"
+fi
 
 # pip pulls the newest CUDA compiler wheels, but FlashInfer's runtime JIT needs
 # them to match torch's CUDA headers ("CUDA compiler and toolkit headers are incompatible").

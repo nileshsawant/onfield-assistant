@@ -20,6 +20,7 @@
 #   OFA_VLLM_MAX_LEN     max context length (default 131072)
 #   OFA_VLLM_ARGS        extra `vllm serve` arguments
 #   OFA_VLLM_ENV         vLLM environment (default $OFA_ROOT/env/envs/vllm; see tools/vllm-env.sh)
+#   OFA_VLLM_TP / OFA_VLLM_PP  tensor / pipeline parallel sizes (default: GPUs per node / nodes)
 #   OFA_VLLM_STARTUP_TIMEOUT  seconds to wait for /health before giving up (default 5400)
 #   OFA_VLLM_IDLE_MINUTES     stop after this many minutes without requests (default 60; 0 = never)
 #   OFA_VLLM_ENDPOINT    endpoint file to write (default $OFA_SCRATCH/.ofa_vllm_endpoint.json)
@@ -37,6 +38,8 @@ OFA_SCRATCH="${OFA_SCRATCH:-/scratch/$USER}"
 NAME="${OFA_VLLM_NAME:-$(basename "$OFA_VLLM_MODEL")}"
 NNODES="$SLURM_JOB_NUM_NODES"
 GPUS_PER_NODE="$(nvidia-smi -L | wc -l)"
+TP="${OFA_VLLM_TP:-$GPUS_PER_NODE}"
+PP="${OFA_VLLM_PP:-$NNODES}"
 HEAD="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)"
 API_PORT=$((40000 + RANDOM % 10000))
 MASTER_PORT=$((30000 + RANDOM % 10000))
@@ -44,7 +47,7 @@ API_KEY="$("$OFA_VLLM_ENV/bin/python" -c 'import secrets; print(secrets.token_ur
 ENDPOINT="${OFA_VLLM_ENDPOINT:-$OFA_SCRATCH/.ofa_vllm_endpoint.json}"
 trap 'rm -f "$ENDPOINT"' EXIT
 
-echo "vLLM: $NAME on $NNODES node(s) x $GPUS_PER_NODE GPUs (tp=$GPUS_PER_NODE pp=$NNODES), head $HEAD:$API_PORT"
+echo "vLLM: $NAME on $NNODES node(s) x $GPUS_PER_NODE GPUs (tp=$TP pp=$PP), head $HEAD:$API_PORT"
 
 # Weights are on a shared filesystem; never reach out to the Hub from compute nodes.
 export HF_HUB_OFFLINE=1 VLLM_NO_USAGE_STATS=1 DO_NOT_TRACK=1
@@ -64,7 +67,7 @@ if [[ -n "$OFA_VLLM_NCCL_PLUGIN" && -d "$OFA_VLLM_NCCL_PLUGIN/lib" ]]; then
 fi
 export XDG_CACHE_HOME="$OFA_SCRATCH/.cache"
 export FLASHINFER_WORKSPACE_BASE="$OFA_SCRATCH" VLLM_CACHE_ROOT="$XDG_CACHE_HOME/vllm"
-export OFA_VLLM_ENV OFA_VLLM_MODEL NAME NNODES GPUS_PER_NODE HEAD API_PORT MASTER_PORT API_KEY
+export OFA_VLLM_ENV OFA_VLLM_MODEL NAME NNODES GPUS_PER_NODE TP PP HEAD API_PORT MASTER_PORT API_KEY
 # Registers the xml_tools / think_tags parsers (see tools/vllm_parsers.py).
 PARSERS="$OFA_ROOT/tools/vllm_parsers.py"
 export OFA_VLLM_MAX_LEN="${OFA_VLLM_MAX_LEN:-131072}"
@@ -84,7 +87,7 @@ print(socket.gethostname(), "GPUs OK", n)'; then
 fi
 
 srun "${STEP[@]}" --kill-on-bad-exit=1 bash -c '
-    common=(--tensor-parallel-size "$GPUS_PER_NODE" --pipeline-parallel-size "$NNODES"
+    common=(--tensor-parallel-size "$TP" --pipeline-parallel-size "$PP"
             --nnodes "$NNODES" --node-rank "$SLURM_NODEID"
             --master-addr "$HEAD" --master-port "$MASTER_PORT"
             --max-model-len "$OFA_VLLM_MAX_LEN")

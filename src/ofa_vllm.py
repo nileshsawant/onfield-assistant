@@ -32,7 +32,8 @@ OFA_SCRATCH = os.environ.get("OFA_SCRATCH") or f"/scratch/{os.environ.get('USER'
 
 _TOOLS = "--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_tools --max-num-seqs 16"
 
-# name -> weights directory under OFA_VLLM_MODELS_DIR, whole GPU nodes, `vllm serve` args.
+# name -> weights directory under OFA_VLLM_MODELS_DIR, whole GPU nodes, `vllm serve` args;
+# optional "env" (directory under env/envs, default "vllm") and "tp"/"pp" overrides.
 RECIPES: dict[str, dict] = {
     "nemotron-3.5-super-vl:120b-a12b": {
         "dir": "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
@@ -125,6 +126,11 @@ def _submit(model: str, exclude: str) -> str:
     env = dict(os.environ, OFA_ROOT=OFA_ROOT, OFA_SCRATCH=OFA_SCRATCH, OFA_VLLM_MODEL=weights,
                OFA_VLLM_NAME=model, OFA_VLLM_ARGS=recipe["args"], OFA_VLLM_ENDPOINT=endpoint_path(model),
                OFA_VLLM_IDLE_MINUTES=os.environ.get("OFA_VLLM_IDLE_MINUTES", "60"))
+    if "env" in recipe:
+        env["OFA_VLLM_ENV"] = os.path.join(OFA_ROOT, "env", "envs", recipe["env"])
+    for key in ("tp", "pp"):
+        if key in recipe:
+            env[f"OFA_VLLM_{key.upper()}"] = str(recipe[key])
     args = ["--parsable", "-J", _job_name(model),
             "-p", os.environ.get("OFA_VLLM_PARTITION", "gpu-h100s"),
             "-t", os.environ.get("OFA_VLLM_WALLTIME", "04:00:00"),
@@ -196,7 +202,13 @@ def ensure_server(model: str) -> str | None:
                          f"Log: {os.path.join(_log_dir(), _safe(model) + '-' + jid + '.log')}")
             jid, state, reason = queued
             mins = int(time.time() - start) // 60
-            status = (f"queued ({reason})" if state == "PENDING" else "loading the model") + f", {mins} min"
+            if state != "PENDING":
+                status = "loading the model"
+            elif reason in ("Priority", "Resources", "None") or reason.startswith("Nodes required"):
+                status = "waiting for free GPU nodes"
+            else:
+                status = f"queued ({reason})"
+            status += f", {mins} min"
             if tty:
                 print(f"\rofa: {model} job {jid}: {status}    ", end="", file=sys.stderr, flush=True)
             elif time.time() - last_print >= 60:

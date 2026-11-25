@@ -445,7 +445,6 @@ vLLM nodes.
 ```bash
 ofa --model nemotron-3.5-super-vl:120b-a12b         # 1 GPU node, vision
 ofa --model trinity-large-thinking:fp8 --hpc        # 2 GPU nodes; any mode works
-ofa --model inkling-2-small:594b-a17b               # 2 GPU nodes, vision
 export OFA_MODEL=nemotron-3.5-super-vl:120b-a12b    # or make it your default
 ```
 
@@ -476,18 +475,18 @@ To stop a server early, find it with `squeue --me` (job name
 | --- | --- | --- | --- | --- | --- |
 | `nemotron-3.5-super-vl:120b-a12b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | vision, tools, thinking | 0.86 | ~4 s |
 | `trinity-large-thinking:fp8` | `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | tools, thinking | 0.88 | ~37 s |
-| `inkling-2-small:594b-a17b` | `thinkingmachines/Inkling-2-Small` | 2 | vision, tools, thinking; Apache 2.0 | not yet evaluated | — |
 | *(default, for reference)* `gemma4:31b-it-q8_0` | via Ollama | ¼ | vision, tools, thinking | ~0.91 | ~14 s |
 
-Nemotron and Trinity are ungated US open-weight models under the OpenMDW-1.1
-license; Inkling 2 Small (Thinking Machines Lab, US) is Apache 2.0 and uses a
-newer vLLM build (`env/envs/vllm-nightly`).
+Both are ungated US open-weight models under the OpenMDW-1.1 license.
 
 Scores come from `eval/run_eval.py` (37 questions across all modes). The
 default single-GPU model is still the best all-rounder, especially in code
 mode. The big models are for experimentation, or for tasks where you've seen
 the default struggle. `NVIDIA-Nemotron-3-Ultra-550B` (2 nodes) was tried and
-dropped: its vLLM engine hung mid-run.
+dropped: its vLLM engine hung mid-run. `thinkingmachines/Inkling-2-Small`
+(2 nodes, nightly vLLM) is on hold: vLLM only runs it with tensor parallelism
+across both nodes, and on Kestrel that start-up deadlocks in the first
+warm-up pass.
 
 ### Settings
 

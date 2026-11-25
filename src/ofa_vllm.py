@@ -33,7 +33,7 @@ OFA_SCRATCH = os.environ.get("OFA_SCRATCH") or f"/scratch/{os.environ.get('USER'
 _TOOLS = "--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_tools --max-num-seqs 16"
 
 # name -> weights directory under OFA_VLLM_MODELS_DIR, whole GPU nodes, `vllm serve` args;
-# optional "env" (directory under env/envs, default "vllm") and "tp"/"pp" overrides.
+# optional "env" (directory under env/envs, default "vllm"), "tp"/"pp" overrides, and "environ" (extra variables).
 RECIPES: dict[str, dict] = {
     "nemotron-3.5-super-vl:120b-a12b": {
         "dir": "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
@@ -46,15 +46,6 @@ RECIPES: dict[str, dict] = {
         "dir": "Trinity-Large-Thinking-FP8-Block",
         "nodes": 2,
         "args": _TOOLS + " --reasoning-parser think_tags",
-    },
-    # NVFP4 weights (394 GB) need 2 nodes; the vLLM model asserts pipeline_parallel_size == 1, hence TP8.
-    "inkling-2-small:594b-a17b": {
-        "dir": "Inkling-2-Small",
-        "nodes": 2, "tp": 8, "pp": 1,
-        "env": "vllm-nightly",
-        "args": "--enable-auto-tool-choice --tool-call-parser inkling --reasoning-parser inkling --max-num-seqs 16"
-                " --speculative-config {\"method\":\"dspark\",\"num_speculative_tokens\":7,"
-                "\"draft_sample_method\":\"probabilistic\"}",
     },
 }
 
@@ -140,6 +131,7 @@ def _submit(model: str, exclude: str) -> str:
     for key in ("tp", "pp"):
         if key in recipe:
             env[f"OFA_VLLM_{key.upper()}"] = str(recipe[key])
+    env.update(recipe.get("environ", {}))
     args = ["--parsable", "-J", _job_name(model),
             "-p", os.environ.get("OFA_VLLM_PARTITION", "gpu-h100s"),
             "-t", os.environ.get("OFA_VLLM_WALLTIME", "04:00:00"),

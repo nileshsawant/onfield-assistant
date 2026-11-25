@@ -126,11 +126,14 @@ def _litellm_api_key() -> str:
         return ""
 
 
+VLLM_ACTIVE = False  # True once _use_vllm_endpoint() points the OpenAI-compatible backend at a vLLM server
+
+
 def _use_vllm_endpoint() -> None:
     """Point the OpenAI-compatible backend at the user's vLLM server, as
     recorded by tools/vllm-serve.sbatch in $OFA_SCRATCH/.ofa_vllm_endpoint.json
     (0600: holds the per-job API key)."""
-    global OFA_BACKEND, OFA_LITELLM_BASE_URL, MODEL, LITELLM_VISION
+    global OFA_BACKEND, OFA_LITELLM_BASE_URL, MODEL, LITELLM_VISION, VLLM_ACTIVE
     path = os.environ.get("OFA_VLLM_ENDPOINT") or os.path.join(OFA_SCRATCH, ".ofa_vllm_endpoint.json")
     try:
         with open(path) as f:
@@ -151,6 +154,7 @@ def _use_vllm_endpoint() -> None:
               f"(check: squeue -j {ep.get('job_id', '?')}).", file=sys.stderr)
         sys.exit(1)
     OFA_BACKEND = "litellm"
+    VLLM_ACTIVE = True
     OFA_LITELLM_BASE_URL = base_url
     MODEL = served_model
     # Unlike a remote gateway, we know what we're serving: text-only models reject images.
@@ -5128,8 +5132,8 @@ def main():
         # Explicit data-flow notice: unlike ofa's local default, litellm mode
         # sends prompts + retrieved context off-node.
         print(_c(
-            f"LLM backend = LiteLLM ({OFA_LITELLM_BASE_URL}), model '{MODEL}'. "
-            f"Prompts and retrieved context are sent to that endpoint "
+            f"LLM backend = {'your vLLM server' if VLLM_ACTIVE else 'LiteLLM'} ({OFA_LITELLM_BASE_URL}), "
+            f"model '{MODEL}'. Prompts and retrieved context are sent to that endpoint "
             f"(not local-only).", "yellow"),
             file=sys.stderr)
 

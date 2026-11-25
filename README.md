@@ -526,9 +526,11 @@ ofa --vllm --serve          # OpenAI-compatible server for opencode / AMReX Agen
 
 `ofa` still gets its usual small allocation and talks to the vLLM nodes over
 the network. It checks the server's health first, so you'll get a clear
-message if the server is still loading or the job has ended. The VS Code
-extension's `ofa.backend` setting does not offer vLLM yet. From VS Code, use
-`ofa --vllm` in a terminal.
+message if the server is still loading or the job has ended.
+
+In VS Code, set **`ofa.backend`** to `vllm`, then run **OFA: Disconnect** →
+**OFA: Connect** once the vLLM job's log shows `vLLM ready`. All `ofa · *`
+entries in the Chat model picker then use your vLLM model.
 
 Stop the server with `scancel <jobid>` when you're done. It holds whole GPU
 nodes for as long as the job runs.

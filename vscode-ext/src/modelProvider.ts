@@ -60,6 +60,8 @@ const MODEL_CONTEXT: Readonly<Record<string, { numCtx: number; numPredict: numbe
  *  message here, not what ofa injects afterward). */
 const RAG_HEADROOM_TOKENS = 4096;
 const MIN_INPUT_TOKENS = 2048;
+/** tools/vllm-serve.sbatch's default --max-model-len (OFA_VLLM_MAX_LEN) and ofa's num_predict for vLLM models. */
+const VLLM_CONTEXT = { numCtx: 131072, numPredict: 32768 };
 
 /** Compute the advertised input/output token limits for the model
  *  currently selected via the ofa.model setting, so Copilot Chat's
@@ -68,8 +70,11 @@ const MIN_INPUT_TOKENS = 2048;
  *  a stale fixed value — an overly conservative constant here silently
  *  rejects conversations the model could actually handle. */
 function getModelLimits(): { maxInputTokens: number; maxOutputTokens: number } {
-    const configured = vscode.workspace.getConfiguration('ofa').get<string>('model', '') ?? '';
-    const entry = MODEL_CONTEXT[configured] ?? MODEL_CONTEXT[''];
+    const cfg = vscode.workspace.getConfiguration('ofa');
+    const configured = cfg.get<string>('model', '') ?? '';
+    const entry = cfg.get<string>('backend', 'ollama') === 'vllm'
+        ? VLLM_CONTEXT
+        : MODEL_CONTEXT[configured] ?? MODEL_CONTEXT[''];
     const maxOutputTokens = entry.numPredict;
     const maxInputTokens = Math.max(MIN_INPUT_TOKENS, entry.numCtx - entry.numPredict - RAG_HEADROOM_TOKENS);
     return { maxInputTokens, maxOutputTokens };
@@ -99,7 +104,8 @@ class OfaChatProvider implements vscode.LanguageModelChatProvider<vscode.Languag
         // while disconnected — both need to refresh without a reconnect
         // (setEndpoint() is the only other trigger for that).
         this.configSub = vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('ofa.model') || e.affectsConfiguration('ofa.enableTools')) {
+            if (e.affectsConfiguration('ofa.model') || e.affectsConfiguration('ofa.backend')
+                || e.affectsConfiguration('ofa.enableTools')) {
                 this._onDidChange.fire();
             }
         });

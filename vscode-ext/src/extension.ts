@@ -253,10 +253,11 @@ async function bringUp(flow: FlowOptions): Promise<void> {
     const backend = cfg.get<string>('backend', 'ollama');
     // In litellm mode the model id is gateway-specific and can't be a fixed
     // enum, so it comes from the free-text ofa.litellmModel setting; local
-    // (ollama) mode uses the ofa.model enum.
+    // (ollama) mode uses the ofa.model enum. In vllm mode the served model
+    // comes from the vLLM endpoint file.
     const effectiveModel = backend === 'litellm'
         ? cfg.get<string>('litellmModel', '')
-        : cfg.get<string>('model', '');
+        : backend === 'vllm' ? '' : cfg.get<string>('model', '');
 
     // Scheduler defaults are intentionally empty here: an unset value means
     // "don't pass OFA_PARTITION/etc.", so bin/ofa resolves it from site.toml

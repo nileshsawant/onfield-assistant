@@ -2,7 +2,7 @@
   "name": "ofa-vscode",
   "displayName": "OnField Assistant (ofa)",
   "description": "One-click SLURM + ofa connection for VS Code Chat on Kestrel and other HPC systems.",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "publisher": "nileshsawant",
   "license": "UNLICENSED",
   "repository": {
@@ -148,13 +148,15 @@
           "default": "ollama",
           "enum": [
             "ollama",
-            "litellm"
+            "litellm",
+            "vllm"
           ],
           "enumDescriptions": [
             "(default) Local inference on your allocated Kestrel GPU node via Ollama. Nothing leaves NLR.",
-            "Route model calls to an OpenAI-compatible LiteLLM gateway (set ofa.litellm.baseUrl) for proprietary/frontier models, while still using ofa's LOCAL RAG. Set ofa.model to a gateway model id (e.g. gemini-3.7-flash). NOTE: your prompt + retrieved context are sent to the gateway (not local-only). The API KEY is NOT set here \u2014 ofa reads it on the node from $OFA_LITELLM_API_KEY or the 0600 file $OFA_SCRATCH/.ofa_litellm_key."
+            "Route model calls to an OpenAI-compatible LiteLLM gateway (set ofa.litellm.baseUrl) for proprietary/frontier models, while still using ofa's LOCAL RAG. Set ofa.model to a gateway model id (e.g. gemini-3.7-flash). NOTE: your prompt + retrieved context are sent to the gateway (not local-only). The API KEY is NOT set here \u2014 ofa reads it on the node from $OFA_LITELLM_API_KEY or the 0600 file $OFA_SCRATCH/.ofa_litellm_key.",
+            "Use YOUR OWN multi-GPU / multi-node vLLM server (e.g. Nemotron 3.5 Super VL, Trinity Large), started separately with `sbatch $OFA_ROOT/tools/vllm-serve.sbatch` (see the ofa README). Spawns `ofa --serve --vllm`, which reads the endpoint and per-job key from $OFA_SCRATCH/.ofa_vllm_endpoint.json. The model is whatever that server serves; ofa.model is ignored. Wait for 'vLLM ready' in the job log before connecting. Nothing leaves NLR."
           ],
-          "markdownDescription": "LLM backend for `ofa --serve`. `ollama` = local (default, nothing leaves NLR). `litellm` = route to an internal OpenAI-compatible gateway for proprietary models while keeping ofa's local RAG. Passed as `OFA_BACKEND`. When `litellm`, also set **`ofa.litellm.baseUrl`** and **`ofa.model`** (to a gateway model id). The API key is read on the compute node (never through VS Code): write it to `$OFA_SCRATCH/.ofa_litellm_key` (chmod 600) or export `OFA_LITELLM_API_KEY`. Run **OFA: Disconnect** then **OFA: Connect** after changing."
+          "markdownDescription": "LLM backend for `ofa --serve`. `ollama` = local (default, nothing leaves NLR). `litellm` = route to an internal OpenAI-compatible gateway for proprietary models while keeping ofa's local RAG. `vllm` = your own large-model server started with `tools/vllm-serve.sbatch` (passed as `--vllm`; `ofa.model` is ignored). `ollama`/`litellm` are passed as `OFA_BACKEND`. When `litellm`, also set **`ofa.litellm.baseUrl`** and **`ofa.model`** (to a gateway model id). The API key is read on the compute node (never through VS Code): write it to `$OFA_SCRATCH/.ofa_litellm_key` (chmod 600) or export `OFA_LITELLM_API_KEY`. Run **OFA: Disconnect** then **OFA: Connect** after changing."
         },
         "ofa.litellm.baseUrl": {
           "type": "string",

@@ -61,10 +61,11 @@ export interface SlurmOptions {
      *  bin/ofa itself so this stays forward-compatible with entries
      *  added via $OFA_ROOT/models.json / $OFA_MODELS_JSON. */
     model: string;
-    /** LLM backend: "ollama" (local, default) or "litellm" (route to an
+    /** LLM backend: "ollama" (local, default), "litellm" (route to an
      *  OpenAI-compatible gateway for proprietary/frontier models while
-     *  still using ofa's local RAG). Empty = leave OFA_BACKEND unset
-     *  (bin/ofa defaults to ollama). */
+     *  still using ofa's local RAG), or "vllm" (the user's own server from
+     *  tools/vllm-serve.sbatch, selected with --vllm). Empty = leave
+     *  OFA_BACKEND unset (bin/ofa defaults to ollama). */
     backend: string;
     /** LiteLLM gateway base URL (must include /v1), used only when
      *  backend === "litellm". The API KEY is intentionally NOT handled
@@ -129,6 +130,7 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         // below for how the absolute path is discovered.
         const innerParts = [shellQuote(opts.ofaBinPath), '--serve', '--serve-quiet'];
         if (opts.enableTools) innerParts.push('--serve-enable-tools');
+        if (opts.backend === 'vllm') innerParts.push('--vllm');
         const inner = innerParts.join(' ');
 
         const env: NodeJS.ProcessEnv = { ...process.env, OFA_JOB_NAME: 'ofa-vscode' };
@@ -137,7 +139,8 @@ export function connect(opts: SlurmOptions, logger: Logger): Promise<OfaEndpoint
         if (opts.walltime) env.OFA_WALLTIME = opts.walltime;
         if (opts.gres) env.OFA_GRES = opts.gres;
         if (opts.model) env.OFA_MODEL = opts.model;
-        if (opts.backend) env.OFA_BACKEND = opts.backend;
+        // --vllm selects the backend itself; ofa only understands ollama|litellm in OFA_BACKEND.
+        if (opts.backend && opts.backend !== 'vllm') env.OFA_BACKEND = opts.backend;
         if (opts.litellmBaseUrl) env.OFA_LITELLM_BASE_URL = opts.litellmBaseUrl;
 
         logger.info(`spawn (via bash -lc): ${inner}`);

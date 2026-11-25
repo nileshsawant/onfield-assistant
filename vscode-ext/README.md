@@ -65,6 +65,7 @@ All settings live under `ofa.*` in VS Code settings. Highlights:
 | `ofa.slurm.gres` | `gpu:1` | Slurm GRES (adjust on typed-GPU sites). |
 | `ofa.slurm.account` | `""` | Empty = auto-detect via `sacctmgr`. |
 | `ofa.model` | `gemma4:31b-it-q8_0` | Backing LLM. Also determines the advertised token limits. |
+| `ofa.backend` | `ollama` | `ollama` (local), `litellm` (gateway), or `vllm` (your own multi-GPU server from `tools/vllm-serve.sbatch`; spawns `ofa --serve --vllm`). |
 | `ofa.enableTools` | `true` | Pass `--serve-enable-tools` to ofa. |
 | `ofa.autoConnectOnStartup` | `false` | Auto-run Connect on workspace open. |
 | `ofa.silentReconnect` | `true` | Reallocate silently on SLURM expiry. |

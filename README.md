@@ -127,6 +127,12 @@ Useful flags:
 * [`site.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/site.example.toml) — verify partition names, GRES, walltime, account-discovery command.
 * [`collections.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/collections.toml) — replace the Kestrel-specific RAG corpora (`amrex`, `marbles-papers`, `HPC`, …) with sources that make sense for your users.
 * [`prompts/`](https://github.com/nileshsawant/onfield-assistant/tree/main/prompts) — the mode prompts template the site *identity* (name, org, long name) automatically via `site.toml`, but leave Kestrel-specific *technical* content (CUDA module versions, partition names like `standard/hbw`, `/nopt/nrel` protected paths, Gila cross-references in `openfoam.txt`, the RHEL8→RHEL9 body in `reframe.txt`) as literal text. Rewrite those bits for your cluster; templating them would produce prompts that lie confidently about your setup.
+* **Large multi-GPU models (optional)** — the installer does not set these up. Without them, `ofa --model <large model>` stops right away with a message, and everything else works. To offer them, follow [Use a large multi-GPU / multi-node model](#use-a-large-multi-gpu--multi-node-model-vllm-backend):
+  * build the vLLM env with `tools/vllm-env.sh`;
+  * build `llama-server` for your GPUs' CUDA architecture;
+  * download the weights into `vllm-models/` and `llamacpp-models/`;
+  * set the Kestrel-specific defaults in your module file: `OFA_VLLM_PARTITION`, `OFA_VLLM_GPUS_PER_NODE`, `OFA_LLAMACPP_LIBS` (CUDA runtime for llama.cpp), and `OFA_VLLM_NCCL_PLUGIN` / `OFA_VLLM_LIBFABRIC` (Slingshot NCCL plugin; set the plugin to empty on other networks).
+  * Edit `RECIPES` in `src/ofa_vllm.py` if your nodes have a different GPU count or memory.
 
 Once you're satisfied, source the env and go:
 
@@ -503,6 +509,10 @@ dropped: its vLLM engine hung mid-run.
 | `OFA_VLLM_EXCLUDE` | Nodes to avoid, e.g. a GPU node that keeps failing | *(none)* |
 | `OFA_VLLM_MODELS_DIR` | Where the shared vLLM weights live | `$OFA_ROOT/vllm-models` |
 | `OFA_LLAMACPP_MODELS_DIR` | Where the shared GGUF files live | `$OFA_ROOT/llamacpp-models` |
+| `OFA_VLLM_GPUS_PER_NODE` | GPUs requested per server node | `4` |
+| `OFA_LLAMACPP_BIN` | `llama-server` binary | `$OFA_ROOT/lib/llama.cpp/bin/llama-server` |
+| `OFA_LLAMACPP_LIBS` | CUDA runtime libraries `llama-server` was built against | Kestrel's CUDA 12.8 `lib64` |
+| `OFA_VLLM_NCCL_PLUGIN` / `OFA_VLLM_LIBFABRIC` | Slingshot NCCL plugin and libfabric; empty plugin = TCP | Kestrel's builds |
 
 The server recipes (nodes, GPU layout, vLLM environment and `vllm serve`
 arguments per model) are in `src/ofa_vllm.py`. To add a model, download its

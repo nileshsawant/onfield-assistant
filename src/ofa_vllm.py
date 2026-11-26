@@ -152,6 +152,13 @@ def _submit(model: str, exclude: str) -> str:
                OFA_VLLM_IDLE_MINUTES=os.environ.get("OFA_VLLM_IDLE_MINUTES", "60"))
     if "env" in recipe:
         env["OFA_VLLM_ENV"] = os.path.join(OFA_ROOT, "env", "envs", recipe["env"])
+    engine = (env.get("OFA_LLAMACPP_BIN") or os.path.join(OFA_ROOT, "lib", "llama.cpp", "bin", "llama-server")
+              if llamacpp else
+              os.path.join(env.get("OFA_VLLM_ENV") or os.path.join(OFA_ROOT, "env", "envs", "vllm"), "bin", "vllm"))
+    if not os.access(engine, os.X_OK):
+        sys.exit(f"ofa: {engine} not found; {model} needs "
+                 + ("llama.cpp built into lib/llama.cpp" if llamacpp else "a vLLM env from tools/vllm-env.sh")
+                 + " (see 'Use a large multi-GPU / multi-node model' in the README).")
     for key in ("tp", "pp"):
         if key in recipe:
             env[f"OFA_VLLM_{key.upper()}"] = str(recipe[key])

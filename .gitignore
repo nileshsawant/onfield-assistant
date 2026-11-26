@@ -26,6 +26,7 @@ share/python-wheels/
 vectordb/
 models/
 vllm-models/
+llamacpp-models/
 embedding_model/
 reranker_model/
 

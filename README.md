@@ -437,14 +437,16 @@ reach the gateway, so `--litellm` works inside a normal SLURM allocation.
 
 Some open-weight models are too large for the single H100 that `ofa` gets
 by default. You select them exactly like any other model, and `ofa` runs
-them on their own [vLLM](https://docs.vllm.ai) server across one or more
-whole GPU nodes. Everything stays on Kestrel. RAG, prompts and the agent loop
-still run in `ofa`'s own allocation, and only the chat completion goes to the
-vLLM nodes.
+them on their own [vLLM](https://docs.vllm.ai) or
+[llama.cpp](https://github.com/ggml-org/llama.cpp) server on one or more whole
+GPU nodes. Everything stays on Kestrel. RAG, prompts and the agent loop still
+run in `ofa`'s own allocation, and only the chat completion goes to the
+model's nodes.
 
 ```bash
 ofa --model nemotron-3.5-super-vl:120b-a12b         # 1 GPU node, vision
 ofa --model trinity-large-thinking:fp8 --hpc        # 2 GPU nodes; any mode works
+ofa --model inkling-2-small:594b-a17b               # 1 GPU node (llama.cpp), vision
 export OFA_MODEL=nemotron-3.5-super-vl:120b-a12b    # or make it your default
 ```
 
@@ -463,7 +465,8 @@ What happens:
   **60 minutes without requests** (or at its 4-hour walltime), so it does not
   hold nodes while unused. If it has stopped, `ofa` says so; run `ofa` again
   to start a fresh one.
-- The weights are shared in `$OFA_ROOT/vllm-models`; nothing is downloaded.
+- The weights are shared in `$OFA_ROOT/vllm-models` and
+  `$OFA_ROOT/llamacpp-models`; nothing is downloaded.
 
 To stop a server early, find it with `squeue --me` (job name
 `ofa-vllm-<model>`) and `scancel <jobid>`. Server logs are in
@@ -475,18 +478,20 @@ To stop a server early, find it with `squeue --me` (job name
 | --- | --- | --- | --- | --- | --- |
 | `nemotron-3.5-super-vl:120b-a12b` | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16` | 1 | vision, tools, thinking | 0.86 | ~4 s |
 | `trinity-large-thinking:fp8` | `arcee-ai/Trinity-Large-Thinking-FP8-Block` | 2 | tools, thinking | 0.88 | ~37 s |
+| `inkling-2-small:594b-a17b` | `unsloth/Inkling-2-Small-GGUF` (`UD-Q3_K_XL`) | 1 | vision, tools, thinking; llama.cpp; 32K context | HPC only: 0.84 | ~29 s |
 | *(default, for reference)* `gemma4:31b-it-q8_0` | via Ollama | ¼ | vision, tools, thinking | ~0.91 | ~14 s |
 
-Both are ungated US open-weight models under the OpenMDW-1.1 license.
+Nemotron and Trinity are ungated US open-weight models under the OpenMDW-1.1
+license. Inkling 2 Small (Thinking Machines Lab, US) is Apache 2.0; it runs
+as a 3-bit GGUF build under llama.cpp, because vLLM can only split it across
+two nodes on Kestrel's H100s, where it is about 3× slower and limited to a
+~13K-token context.
 
 Scores come from `eval/run_eval.py` (37 questions across all modes). The
 default single-GPU model is still the best all-rounder, especially in code
 mode. The big models are for experimentation, or for tasks where you've seen
 the default struggle. `NVIDIA-Nemotron-3-Ultra-550B` (2 nodes) was tried and
-dropped: its vLLM engine hung mid-run. `thinkingmachines/Inkling-2-Small`
-(2 nodes, nightly vLLM) is on hold: vLLM only runs it with tensor parallelism
-across both nodes, and on Kestrel that start-up deadlocks in the first
-warm-up pass.
+dropped: its vLLM engine hung mid-run.
 
 ### Settings
 
@@ -496,7 +501,8 @@ warm-up pass.
 | `OFA_VLLM_WALLTIME` | Walltime for the server job | `04:00:00` |
 | `OFA_VLLM_IDLE_MINUTES` | Stop the server after this many minutes without requests (`0` = never) | `60` |
 | `OFA_VLLM_EXCLUDE` | Nodes to avoid, e.g. a GPU node that keeps failing | *(none)* |
-| `OFA_VLLM_MODELS_DIR` | Where the shared weights live | `$OFA_ROOT/vllm-models` |
+| `OFA_VLLM_MODELS_DIR` | Where the shared vLLM weights live | `$OFA_ROOT/vllm-models` |
+| `OFA_LLAMACPP_MODELS_DIR` | Where the shared GGUF files live | `$OFA_ROOT/llamacpp-models` |
 
 The server recipes (nodes, GPU layout, vLLM environment and `vllm serve`
 arguments per model) are in `src/ofa_vllm.py`. To add a model, download its
@@ -505,6 +511,25 @@ settings to `MODEL_REGISTRY` in `src/ofa_main.py`. Models that need a newer
 vLLM than the default environment can use a separate one, built with
 `OFA_VLLM_NIGHTLY=1 OFA_VLLM_ENV=$OFA_ROOT/env/envs/vllm-nightly tools/vllm-env.sh`
 and named in the recipe's `env`.
+
+Recipes with `"engine": "llamacpp"` run a GGUF file from
+`$OFA_ROOT/llamacpp-models` with `tools/llamacpp-serve.sbatch` on one node.
+That uses `llama-server` built from source into `$OFA_ROOT/lib/llama.cpp`
+(version in `lib/llama.cpp/VERSION`), with CUDA, for the H100s (`sm_90`), and
+with its web UI disabled. To rebuild on a GPU node:
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/llama.cpp && cd llama.cpp
+export CUDA_HOME=/nopt/nlr/apps/kestrel-gpu/cuda/12.8.1 PATH=/nopt/nlr/apps/kestrel-gpu/cuda/12.8.1/bin:$PATH
+cmake -S . -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=90 -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF
+cmake --build build -j 32 --target llama-server
+cp build/bin/llama-server $OFA_ROOT/lib/llama.cpp/bin/
+```
+
+If a multi-node vLLM model hangs in its first warm-up with all GPUs at 100%,
+NCCL's Slingshot plugin likely needs these libfabric settings in the server
+environment: `FI_CXI_DISABLE_HOST_REGISTER=1 FI_MR_CACHE_MONITOR=userfaultfd
+NCCL_CROSS_NIC=1 NCCL_NET_GDR_LEVEL=PHB NCCL_SOCKET_IFNAME=hsn`.
 
 ### Troubleshooting
 

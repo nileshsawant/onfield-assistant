@@ -34,6 +34,8 @@ _TOOLS = "--trust-remote-code --enable-auto-tool-choice --tool-call-parser xml_t
 
 # name -> weights directory under OFA_VLLM_MODELS_DIR, whole GPU nodes, `vllm serve` args;
 # optional "env" (directory under env/envs, default "vllm"), "tp"/"pp" overrides, and "environ" (extra variables).
+# "engine": "llamacpp" recipes instead give a GGUF "file" (and optional "mmproj") under OFA_LLAMACPP_MODELS_DIR
+# and llama-server args; they run tools/llamacpp-serve.sbatch on one node.
 RECIPES: dict[str, dict] = {
     "nemotron-3.5-super-vl:120b-a12b": {
         "dir": "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
@@ -46,6 +48,17 @@ RECIPES: dict[str, dict] = {
         "dir": "Trinity-Large-Thinking-FP8-Block",
         "nodes": 2,
         "args": _TOOLS + " --reasoning-parser think_tags",
+    },
+    # vLLM can only run it with TP8 across 2 nodes, where it has ~23 GiB/GPU left for KV cache (13K tokens)
+    # and ~20 tok/s; the 3-bit GGUF fits one node and runs ~54 tok/s at 32K context.
+    "inkling-2-small:594b-a17b": {
+        "engine": "llamacpp",
+        "file": "Inkling-2-Small-GGUF/UD-Q3_K_XL/Inkling-2-Small-UD-Q3_K_XL-00001-of-00007.gguf",
+        "mmproj": "Inkling-2-Small-GGUF/mmproj-F16.gguf",
+        "nodes": 1,
+        "args": "--jinja -c 32768 -np 1 -b 1024 -ub 256 --tensor-split 1,1,1,0.9"
+                " --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0"
+                " --chat-template-kwargs {\"reasoning_effort\":\"high\"}",
     },
 }
 
@@ -118,13 +131,24 @@ def _log_dir() -> str:
 
 def _submit(model: str, exclude: str) -> str:
     recipe = RECIPES[model]
-    weights = os.path.join(os.environ.get("OFA_VLLM_MODELS_DIR", os.path.join(OFA_ROOT, "vllm-models")),
-                           recipe["dir"])
-    if not os.path.isdir(weights):
-        sys.exit(f"ofa: weights for {model} not found at {weights} (set OFA_VLLM_MODELS_DIR).")
+    llamacpp = recipe.get("engine") == "llamacpp"
+    if llamacpp:
+        models_dir = os.environ.get("OFA_LLAMACPP_MODELS_DIR", os.path.join(OFA_ROOT, "llamacpp-models"))
+        weights = os.path.join(models_dir, recipe["file"])
+        exists = os.path.isfile(weights)
+        args = recipe["args"]
+        if "mmproj" in recipe:
+            args += " --mmproj " + os.path.join(models_dir, recipe["mmproj"])
+    else:
+        weights = os.path.join(os.environ.get("OFA_VLLM_MODELS_DIR", os.path.join(OFA_ROOT, "vllm-models")),
+                               recipe["dir"])
+        exists = os.path.isdir(weights)
+        args = recipe["args"]
+    if not exists:
+        sys.exit(f"ofa: weights for {model} not found at {weights} (set OFA_VLLM_MODELS_DIR / OFA_LLAMACPP_MODELS_DIR).")
     os.makedirs(os.path.dirname(endpoint_path(model)), mode=0o700, exist_ok=True)
     env = dict(os.environ, OFA_ROOT=OFA_ROOT, OFA_SCRATCH=OFA_SCRATCH, OFA_VLLM_MODEL=weights,
-               OFA_VLLM_NAME=model, OFA_VLLM_ARGS=recipe["args"], OFA_VLLM_ENDPOINT=endpoint_path(model),
+               OFA_VLLM_NAME=model, OFA_VLLM_ARGS=args, OFA_VLLM_ENDPOINT=endpoint_path(model),
                OFA_VLLM_IDLE_MINUTES=os.environ.get("OFA_VLLM_IDLE_MINUTES", "60"))
     if "env" in recipe:
         env["OFA_VLLM_ENV"] = os.path.join(OFA_ROOT, "env", "envs", recipe["env"])
@@ -143,7 +167,8 @@ def _submit(model: str, exclude: str) -> str:
         args += ["-A", acct]
     if exclude:
         args += ["--exclude", exclude]
-    r = _slurm("sbatch", *args, os.path.join(OFA_ROOT, "tools", "vllm-serve.sbatch"), env=env)
+    r = _slurm("sbatch", *args, os.path.join(OFA_ROOT, "tools", "llamacpp-serve.sbatch" if llamacpp
+                                             else "vllm-serve.sbatch"), env=env)
     if r.returncode != 0:
         sys.exit(f"ofa: could not submit the {model} server job:\n{r.stderr.strip()}")
     return r.stdout.strip().split(";")[0]

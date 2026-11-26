@@ -1038,7 +1038,7 @@ def serve(host: str = "0.0.0.0", port: int | None = None,
 
     if ofa_main.OFA_BACKEND == "litellm":
         print(f"[ofa-serve] LLM backend = "
-              f"{'your vLLM server' if ofa_main.VLLM_ACTIVE else 'LiteLLM'} "
+              f"{'your model server' if ofa_main.VLLM_ACTIVE else 'LiteLLM'} "
               f"({ofa_main.OFA_LITELLM_BASE_URL}), model '{ofa_main.MODEL}'. "
               f"Prompts + retrieved context are sent to that endpoint.",
               file=sys.stderr)

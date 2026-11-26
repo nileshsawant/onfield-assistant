@@ -140,7 +140,7 @@ Three layers, in order of how a request flows through them:
 
 1. **Surface** — either the interactive CLI (terminal stdin/stdout, agent loop) or the BYOK HTTP server (`POST /v1/chat/completions`).
 2. **Domain layer** — the same in both surfaces: system-prompt selection, long-term memory injection, RAG retrieval, optional skill content.
-3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally. `ofa --vllm` does the same against the user's own vLLM server (started with `tools/vllm-serve.sbatch` across one or more whole GPU nodes), reading its address and per-job key from `$OFA_SCRATCH/.ofa_vllm_endpoint.json`. For the models with a recipe in `src/ofa_vllm.py` (currently Nemotron 3.5 Super VL and Trinity Large Thinking), `ofa --model <name>` does this automatically: on the login node it reuses the user's running server for that model or submits one and waits for it, and the server stops itself after `OFA_VLLM_IDLE_MINUTES` (default 60) without requests.
+3. **Inference layer** — Ollama running `gemma4:31b-it-q8_0` (the default; see `MODEL_REGISTRY` in `src/ofa_main.py` for the full set) on an H100. Both surfaces use the same Ollama process via `ofa_main.chat_stream()`. Optionally (`OFA_BACKEND=litellm` / `ofa --litellm`), the inference layer instead delegates the chat completion to an internal OpenAI-compatible LiteLLM gateway — the domain layer (RAG, prompts, agent loop) is unchanged and still runs locally. `ofa --vllm` does the same against the user's own vLLM server (started with `tools/vllm-serve.sbatch` across one or more whole GPU nodes), reading its address and per-job key from `$OFA_SCRATCH/.ofa_vllm_endpoint.json`. For the models with a recipe in `src/ofa_vllm.py` (currently Nemotron 3.5 Super VL and Trinity Large Thinking on vLLM, and Inkling 2 Small on llama.cpp), `ofa --model <name>` does this automatically: on the login node it reuses the user's running server for that model or submits one and waits for it, and the server stops itself after `OFA_VLLM_IDLE_MINUTES` (default 60) without requests.
 
 ---
 
@@ -450,6 +450,7 @@ $OFA_ROOT/
 │   ├── update-rag.sh / .sbatch # incremental RAG refresh + self-resubmitting daily job
 │   ├── vllm-env.sh             # builds the separate vLLM environment (env/envs/vllm)
 │   ├── vllm-serve.sbatch       # multi-GPU / multi-node vLLM server for --vllm
+│   ├── llamacpp-serve.sbatch   # single-node llama.cpp server (GGUF models)
 │   └── vllm_parsers.py         # vLLM tool-call / reasoning parser plugin
 ├── eval/                       # evaluation harness: questions.toml + run_eval.py
 ├── prompts/                    # 8 mode prompts + common.txt + cpp/plan helpers + skills/

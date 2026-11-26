@@ -168,6 +168,7 @@ VISION_MODELS = frozenset({
     "gemma4:31b", "gemma4:31b-it-q8_0", "gemma4:26b",
     "llama4:scout", "muse-glimmer:30b", "nemotron-3.5-bolt:74b-a9b",
     "NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16", "nemotron-3.5-super-vl:120b-a12b",
+    "inkling-2-small:594b-a17b",
 })
 
 
@@ -324,6 +325,11 @@ MODEL_REGISTRY = {
     "trinity-large-thinking:fp8": {
         "temperature": 0.6, "top_p": 0.95, "num_ctx": 131072, "num_predict": 32768, "thought_tags": [],
     },
+    # Thinking Machines Inkling 2 Small (Apache 2.0), 594B MoE, 17B active, vision; served by llama.cpp
+    # (3-bit GGUF, one node, 32K context). Sampling per the model card: T=1.0, top_p=1.0.
+    "inkling-2-small:594b-a17b": {
+        "temperature": 1.0, "top_p": 1.0, "num_ctx": 32768, "num_predict": 8192, "thought_tags": [],
+    },
     # Microsoft phi-4 — small, strong reasoning.
     #   * Sampling matches the Microsoft phi-4 model card recommendation
     #     for chat use: T=0.8, top_p=1.0 (top_p=1 effectively disables
@@ -446,7 +452,8 @@ def _print_model_registry():
     def _status(name):
         if ofa_vllm.is_vllm_model(name):
             n = ofa_vllm.RECIPES[name]["nodes"]
-            return f"vLLM, {n} GPU node{'s' if n > 1 else ''}, starts automatically"
+            engine = "llama.cpp" if ofa_vllm.RECIPES[name].get("engine") == "llamacpp" else "vLLM"
+            return f"{engine}, {n} GPU node{'s' if n > 1 else ''}, starts automatically"
         return "pulled" if _is_model_pulled(name) else "not pulled"
     if ofa_vllm.is_vllm_model(MODEL):
         print(f"Active model: {MODEL} ({_status(MODEL)})\n")
@@ -5132,7 +5139,7 @@ def main():
         # Explicit data-flow notice: unlike ofa's local default, litellm mode
         # sends prompts + retrieved context off-node.
         print(_c(
-            f"LLM backend = {'your vLLM server' if VLLM_ACTIVE else 'LiteLLM'} ({OFA_LITELLM_BASE_URL}), "
+            f"LLM backend = {'your model server' if VLLM_ACTIVE else 'LiteLLM'} ({OFA_LITELLM_BASE_URL}), "
             f"model '{MODEL}'. Prompts and retrieved context are sent to that endpoint "
             f"(not local-only).", "yellow"),
             file=sys.stderr)

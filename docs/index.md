@@ -1,13 +1,13 @@
 # OnField Assistant (`ofa`) 🌵
 
-**Locally-hosted, RAG-augmented LLM assistant** for HPC and scientific-computing workflows. Runs Gemma 4 (31B, Q8_0, at its full 262144-token context) on a single GPU via Ollama and ships specialized modes for OpenFOAM, AMReX, MARBLES, ReFrame, VASP, quantum computing, HPC support, and general coding. Optionally, the same RAG and prompts can drive a model behind an internal LiteLLM gateway (`--litellm`) or a larger open-weight model on your own multi-GPU vLLM server (`--vllm`).
+**Locally-hosted, RAG-augmented LLM assistant** for HPC and scientific-computing workflows. Runs Gemma 4 (31B, Q8_0, at its full 262144-token context) on a single GPU via Ollama and ships specialized modes for OpenFOAM, AMReX, MARBLES, ReFrame, VASP, quantum computing, HPC support, and general coding. Optionally, the same RAG and prompts can drive a model behind an internal LiteLLM gateway (`--litellm`) or a larger open-weight model that `ofa --model` starts automatically on its own GPU node(s) with vLLM or llama.cpp.
 
 - **Repository:** [github.com/nileshsawant/onfield-assistant](https://github.com/nileshsawant/onfield-assistant)
 - **Ships with:** a VS Code extension that puts all eight modes in Copilot Chat's model picker, a `--serve` OpenAI-compatible HTTP endpoint for other editors / opencode, a stdlib-only `ofa_client` Python module, an evaluation harness (`eval/`) for comparing models and retrieval changes, and a one-command `install.sh` for standing ofa up on any Linux HPC.
 
 ## What lives where
 
-- **User & porting guide:** [Getting started](getting-started.md) — end-to-end usage, CLI flags, the optional LiteLLM and multi-GPU vLLM backends, installation on a new HPC, and the VS Code extension walkthrough.
+- **User & porting guide:** [Getting started](getting-started.md) — end-to-end usage, CLI flags, the optional LiteLLM backend and the large multi-GPU models, installation on a new HPC, and the VS Code extension walkthrough.
 - **VS Code / other clients:** [Use ofa from VS Code](byok-vscode.md) — the manual BYOK route over an ssh tunnel. Superseded by the extension for Remote-SSH users; still the reference for other editors.
 - **Architecture:** [High-level layout](architecture.md) and the [in-depth technical overview](ofa-technical-overview.md).
 - **RAG maintenance:** [Updating the RAG corpora](rag-maintenance.md) — operator playbook for git-tracked, vendored, and copyright-restricted corpora, plus the per-user private-data layer (`ofa --add-private`).

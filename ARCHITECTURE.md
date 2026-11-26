@@ -4,7 +4,7 @@
 The OnField Assistant (`ofa`) is an AI-powered CLI wrapper designed to help HPC users navigate complex CFD case setups, explore OpenFOAM C++ source code, and retrieve HPC hardware documentation directly from the console. It leverages locally hosted Large Language Models (via Ollama) augmented with highly specialized domain knowledge through Retrieval-Augmented Generation (RAG).
 
 ## Core Components
-* **LLM Backend**: Ollama running locally on the user's GPU allocation (default model `gemma4:31b-it-q8_0` at its full 262144-token context; see `MODEL_REGISTRY` in `src/ofa_main.py`). Optional alternatives: an OpenAI-compatible LiteLLM gateway (`--litellm`) or the user's own multi-node vLLM server (`--vllm`). Retrieval and prompts stay local in every case.
+* **LLM Backend**: Ollama running locally on the user's GPU allocation (default model `gemma4:31b-it-q8_0` at its full 262144-token context; see `MODEL_REGISTRY` in `src/ofa_main.py`). Optional alternatives: an OpenAI-compatible LiteLLM gateway (`--litellm`), a larger model that `ofa --model` starts automatically on its own GPU node(s) with vLLM or llama.cpp (`src/ofa_vllm.py`), or a hand-started vLLM server (`--vllm`). Retrieval and prompts stay local in every case.
 * **Vector Database**: ChromaDB (Persistent).
 * **Embeddings**: `sentence-transformers` for dense vector semantic representations.
 * **Lexical Search**: `rank-bm25` (Okapi BM25) for exact keyword and token matching.

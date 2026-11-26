@@ -21,6 +21,9 @@ else
 fi
 OFA_VLLM_PYTHON="${OFA_VLLM_PYTHON:-3.12}"
 MM="$OFA_ROOT/env/micromamba"
+# install.sh's Miniforge ships mamba/conda rather than micromamba.
+[[ -x "$MM" ]] || MM="$OFA_ROOT/env/bin/mamba"
+[[ -x "$MM" ]] || MM="$OFA_ROOT/env/bin/conda"
 
 if [[ ! -x "$OFA_VLLM_ENV/bin/python" ]]; then
     echo "Creating Python $OFA_VLLM_PYTHON env at $OFA_VLLM_ENV"
@@ -29,7 +32,7 @@ if [[ ! -x "$OFA_VLLM_ENV/bin/python" ]]; then
 fi
 
 # PIP_CACHE_DIR off the home quota; the vLLM wheel set (torch + CUDA libs) is ~10 GB.
-export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/scratch/$USER/.cache/pip}"
+[[ -n "${PIP_CACHE_DIR:-}" || ! -d "/scratch/$USER" ]] || export PIP_CACHE_DIR="/scratch/$USER/.cache/pip"
 "$OFA_VLLM_ENV/bin/python" -m pip install --upgrade pip
 if [[ "$OFA_VLLM_NIGHTLY" == 1 ]]; then
     spec=vllm; [[ "$OFA_VLLM_VERSION" == nightly ]] || spec="vllm==$OFA_VLLM_VERSION"

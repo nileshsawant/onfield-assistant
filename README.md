@@ -107,6 +107,7 @@ What it does, in order (each step is opt-out via a flag):
 6. **`site.toml` wizard** — interactive prompts for site name, scheduler (`slurm` or `none`), partition/GRES/ntasks, GPU-stack module, protected paths, etc. Writes `site.toml` at the repo root. Falls back to the annotated `site.example.toml` in `--non-interactive` mode.
 7. **RAG indices** — if `repos/` is populated (per `collections.toml`), rebuilds the ChromaDB collections. **A fresh clone ships no corpora** (`repos/*` is gitignored) — the installer lists the source dirs `collections.toml` expects so you can populate the ones you want, then run `src/rebuild_indices.py`.
 8. **`env.sh` + Lmod template** — writes a sourceable activation script and an Lmod modulefile template under `tools/`.
+9. **Large-model engines (opt-in)** — `--with-vllm` builds the vLLM env in `env/envs/vllm`, and `--with-llamacpp` builds `llama-server` into `lib/llama.cpp` for the large multi-GPU models. Their weights are downloaded separately.
 
 Sites behind a proxy or internal mirror: `curl`, `pip`, and `hf` honor the standard `HTTPS_PROXY`, `PIP_INDEX_URL`, and `HF_ENDPOINT` environment variables, so set those before running the installer.
 
@@ -119,6 +120,8 @@ Useful flags:
 ./install.sh --non-interactive          # scripted install, opt-in steps default to skipped
 ./install.sh --force                    # redo work even if artifacts already exist
 ./install.sh --prefix /path/to/checkout # install target (default: install.sh's dir)
+./install.sh --with-vllm                # also build the vLLM env for the large models (~10 GB)
+./install.sh --with-llamacpp            # also build llama-server with CUDA (git, cmake, CUDA toolkit)
 ./install.sh --help                     # full flag list + env-var overrides
 ```
 
@@ -127,11 +130,10 @@ Useful flags:
 * [`site.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/site.example.toml) — verify partition names, GRES, walltime, account-discovery command.
 * [`collections.toml`](https://github.com/nileshsawant/onfield-assistant/blob/main/collections.toml) — replace the Kestrel-specific RAG corpora (`amrex`, `marbles-papers`, `HPC`, …) with sources that make sense for your users.
 * [`prompts/`](https://github.com/nileshsawant/onfield-assistant/tree/main/prompts) — the mode prompts template the site *identity* (name, org, long name) automatically via `site.toml`, but leave Kestrel-specific *technical* content (CUDA module versions, partition names like `standard/hbw`, `/nopt/nrel` protected paths, Gila cross-references in `openfoam.txt`, the RHEL8→RHEL9 body in `reframe.txt`) as literal text. Rewrite those bits for your cluster; templating them would produce prompts that lie confidently about your setup.
-* **Large multi-GPU models (optional)** — the installer does not set these up. Without them, `ofa --model <large model>` stops right away with a message, and everything else works. To offer them, follow [Use a large multi-GPU / multi-node model](#use-a-large-multi-gpu--multi-node-model-vllm-backend):
-  * build the vLLM env with `tools/vllm-env.sh`;
-  * build `llama-server` for your GPUs' CUDA architecture;
+* **Large multi-GPU models (optional)** — not set up by default. Without them, `ofa --model <large model>` stops right away with a message, and everything else works. To offer them (see [Use a large multi-GPU / multi-node model](#use-a-large-multi-gpu--multi-node-model-vllm-backend)):
+  * run `./install.sh --with-vllm --with-llamacpp`. Run it on a GPU node, or set `OFA_INSTALL_CUDA_ARCH` (e.g. `90` for H100); load your CUDA module or set `OFA_INSTALL_CUDA_HOME`;
   * download the weights into `vllm-models/` and `llamacpp-models/`;
-  * set the Kestrel-specific defaults in your module file: `OFA_VLLM_PARTITION`, `OFA_VLLM_GPUS_PER_NODE`, `OFA_LLAMACPP_LIBS` (CUDA runtime for llama.cpp), and `OFA_VLLM_NCCL_PLUGIN` / `OFA_VLLM_LIBFABRIC` (Slingshot NCCL plugin; set the plugin to empty on other networks).
+  * set the Kestrel-specific defaults in `env.sh` or your module file (commented examples are generated): `OFA_VLLM_PARTITION`, `OFA_VLLM_GPUS_PER_NODE`, and `OFA_VLLM_NCCL_PLUGIN` / `OFA_VLLM_LIBFABRIC` (Slingshot NCCL plugin; set the plugin to empty on other networks).
   * Edit `RECIPES` in `src/ofa_vllm.py` if your nodes have a different GPU count or memory.
 
 Once you're satisfied, source the env and go:
@@ -526,7 +528,8 @@ Recipes with `"engine": "llamacpp"` run a GGUF file from
 `$OFA_ROOT/llamacpp-models` with `tools/llamacpp-serve.sbatch` on one node.
 That uses `llama-server` built from source into `$OFA_ROOT/lib/llama.cpp`
 (version in `lib/llama.cpp/VERSION`), with CUDA, for the H100s (`sm_90`), and
-with its web UI disabled. To rebuild on a GPU node:
+with its web UI disabled. On a new site `./install.sh --with-llamacpp` builds
+it. To rebuild an existing install by hand, on a GPU node:
 
 ```bash
 git clone --depth 1 https://github.com/ggml-org/llama.cpp && cd llama.cpp

@@ -16,6 +16,9 @@
 #   8. Optionally rebuilds the RAG indices from collections.toml.
 #   9. Writes $OFA_ROOT/env.sh (sourceable) and
 #      $OFA_ROOT/tools/modulefile.lua.template (Lmod).
+#  10. Opt-in (--with-vllm / --with-llamacpp): the engines for the large
+#      multi-GPU models that `ofa --model` starts on their own GPU nodes.
+#      Their weights (hundreds of GB) are downloaded separately; see README.
 #
 # Prereqs:
 #   * bash 4+, curl, tar, coreutils (readlink -f), find, unzstd (zstd
@@ -43,6 +46,8 @@ SKIP_INDICES=0
 NON_INTERACTIVE=0
 FORCE=0
 VERBOSE=0
+WITH_VLLM=0
+WITH_LLAMACPP=0
 INSTALL_PREFIX=""
 
 usage() {
@@ -66,6 +71,10 @@ Options:
                          (re-downloads Miniforge, Ollama, embedding model,
                          overwrites site.toml).
   --verbose              Enable set -x tracing.
+  --with-vllm            Also build the vLLM env (env/envs/vllm, ~10 GB) for
+                         the large multi-GPU models (tools/vllm-env.sh).
+  --with-llamacpp        Also build llama.cpp's llama-server with CUDA into
+                         lib/llama.cpp. Needs git, cmake and the CUDA toolkit.
   --prefix PATH          Install target. Default: the directory install.sh
                          lives in (i.e. the repo root you cloned).
   -h, --help             This message.
@@ -77,6 +86,13 @@ Environment overrides (all optional):
   OFA_INSTALL_EMBEDDING_MODEL  HuggingFace repo id (default: BAAI/bge-small-en-v1.5).
   OFA_INSTALL_KEEP_INSTALLER   Set to 1 to keep the downloaded miniforge/ollama
                                tarballs after install for debugging.
+  OFA_INSTALL_CUDA_HOME        CUDA toolkit for --with-llamacpp (default: $CUDA_HOME,
+                               else the toolkit of the nvcc on PATH).
+  OFA_INSTALL_CUDA_ARCH        GPU architecture for --with-llamacpp, e.g. 90 (H100),
+                               80 (A100). Default: detected with nvidia-smi.
+  OFA_INSTALL_LLAMACPP_REF     llama.cpp branch/tag/commit (default: master).
+  OFA_INSTALL_JOBS             Parallel build jobs for --with-llamacpp (default: 8).
+  OFA_VLLM_VERSION             vLLM release for --with-vllm (default: tools/vllm-env.sh's).
 EOF
 }
 
@@ -88,6 +104,8 @@ while [[ $# -gt 0 ]]; do
         --non-interactive) NON_INTERACTIVE=1; shift ;;
         --force)           FORCE=1; shift ;;
         --verbose)         VERBOSE=1; shift ;;
+        --with-vllm)       WITH_VLLM=1; shift ;;
+        --with-llamacpp)   WITH_LLAMACPP=1; shift ;;
         --prefix)          INSTALL_PREFIX="${2:-}"; shift 2 ;;
         -h|--help)         usage; exit 0 ;;
         *) echo "Unknown flag: $1" >&2; usage >&2; exit 2 ;;
@@ -513,7 +531,65 @@ rebuild_indices() {
 }
 
 # ---------------------------------------------------------------------------
-# 8. env.sh + Lmod modulefile template.
+# 8. Opt-in engines for the large multi-GPU models (src/ofa_vllm.py RECIPES).
+# ---------------------------------------------------------------------------
+install_vllm() {
+    [[ $WITH_VLLM -eq 1 ]] || return 0
+    if [[ -x "$OFA_ROOT/env/envs/vllm/bin/vllm" && $FORCE -eq 0 ]]; then
+        log "env/envs/vllm already present; skipping (--force to update)"
+        return 0
+    fi
+    log "building the vLLM env (large download, ~10 GB)"
+    OFA_ROOT="$OFA_ROOT" bash "$OFA_ROOT/tools/vllm-env.sh"
+}
+
+install_llamacpp() {
+    [[ $WITH_LLAMACPP -eq 1 ]] || return 0
+    local dest="$OFA_ROOT/lib/llama.cpp" ref="${OFA_INSTALL_LLAMACPP_REF:-master}"
+    if [[ -x "$dest/bin/llama-server" && $FORCE -eq 0 ]]; then
+        log "lib/llama.cpp/bin/llama-server already present; skipping (--force to rebuild)"
+        return 0
+    fi
+    local tool
+    for tool in git cmake; do
+        command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: --with-llamacpp needs $tool" >&2; return 1; }
+    done
+    local cuda_home="${OFA_INSTALL_CUDA_HOME:-${CUDA_HOME:-}}"
+    if [[ -z "$cuda_home" ]] && command -v nvcc >/dev/null 2>&1; then
+        cuda_home="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
+    fi
+    if [[ ! -x "$cuda_home/bin/nvcc" ]]; then
+        echo "ERROR: --with-llamacpp needs the CUDA toolkit: load your CUDA module or set OFA_INSTALL_CUDA_HOME" >&2
+        return 1
+    fi
+    local arch="${OFA_INSTALL_CUDA_ARCH:-}"
+    if [[ -z "$arch" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+        arch="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '. ')"
+    fi
+    if [[ -z "$arch" ]]; then
+        echo "ERROR: no GPU here to detect; set OFA_INSTALL_CUDA_ARCH to your GPU nodes' architecture (90 = H100, 80 = A100)" >&2
+        return 1
+    fi
+    local cuda_ver src
+    cuda_ver="$("$cuda_home/bin/nvcc" --version | sed -n 's/.*release \([0-9.]*\),.*/\1/p')"
+    src="$(mktemp -d -t llama.cpp.XXXXXX)"
+    log "building llama.cpp ($ref) with CUDA $cuda_ver for sm_$arch"
+    git clone --quiet --filter=blob:none https://github.com/ggml-org/llama.cpp "$src"
+    git -C "$src" checkout --quiet "$ref"
+    # The build-tree binary keeps an RPATH to this toolkit's libraries, so no LD_LIBRARY_PATH is needed.
+    PATH="$cuda_home/bin:$PATH" CUDACXX="$cuda_home/bin/nvcc" cmake -S "$src" -B "$src/build" \
+        -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="$arch" \
+        -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF
+    cmake --build "$src/build" -j "${OFA_INSTALL_JOBS:-8}" --target llama-server
+    mkdir -p "$dest/bin"
+    install -m 755 "$src/build/bin/llama-server" "$dest/bin/llama-server"
+    echo "llama.cpp $ref $(git -C "$src" rev-parse --short HEAD) $(date +%F) CUDA $cuda_ver sm_$arch" > "$dest/VERSION"
+    rm -rf "$src"
+    log "llama-server installed at $dest/bin ($(cat "$dest/VERSION"))"
+}
+
+# ---------------------------------------------------------------------------
+# 9. env.sh + Lmod modulefile template.
 # ---------------------------------------------------------------------------
 emit_env_files() {
     cat > "$OFA_ROOT/env.sh" <<EOF
@@ -530,6 +606,10 @@ export OFA_VECTORDB="\$OFA_ROOT/vectordb"
 export PATH="\$OFA_ROOT/bin:\$OFA_ROOT/env/bin:\$PATH"
 # Make 'import ofa_client' work in any Python env loaded after this.
 export PYTHONPATH="\$OFA_ROOT/src:\${PYTHONPATH:-}"
+# Large multi-GPU models: the defaults are Kestrel's. Uncomment and adjust
+# (see 'Use a large multi-GPU / multi-node model' in README.md).
+# export OFA_VLLM_PARTITION=gpu OFA_VLLM_GPUS_PER_NODE=4
+# export OFA_VLLM_NCCL_PLUGIN=     # empty = TCP; or your Slingshot NCCL plugin dir
 EOF
     log "wrote $OFA_ROOT/env.sh"
 
@@ -556,6 +636,12 @@ prepend_path("PYTHONPATH", pathJoin(root, "src"))
 setenv("OFA_ROOT",      root)
 setenv("OLLAMA_MODELS", pathJoin(root, "models"))
 setenv("OFA_VECTORDB",  pathJoin(root, "vectordb"))
+
+-- Large multi-GPU models: the defaults are Kestrel's. Uncomment and adjust
+-- (see 'Use a large multi-GPU / multi-node model' in README.md).
+-- setenv("OFA_VLLM_PARTITION",     "gpu")
+-- setenv("OFA_VLLM_GPUS_PER_NODE", "4")
+-- setenv("OFA_VLLM_NCCL_PLUGIN",   "")   -- empty = TCP; or your Slingshot NCCL plugin dir
 EOF
     log "wrote $OFA_ROOT/tools/modulefile.lua.template"
 }
@@ -573,6 +659,8 @@ main() {
     pull_default_model
     site_wizard
     rebuild_indices
+    install_vllm
+    install_llamacpp
     emit_env_files
 
     cat <<EOF
@@ -602,6 +690,11 @@ Files worth reviewing before your first real run:
   $OFA_ROOT/collections.toml             RAG source-to-collection mapping
   $OFA_ROOT/prompts/*.txt                site-specific technical content
                                           (see 'ALSO REVIEW' in site.example.toml)
+
+Large multi-GPU models (optional): build their engines with --with-vllm /
+--with-llamacpp, download the weights into vllm-models/ and llamacpp-models/,
+and set the OFA_VLLM_* settings in env.sh or the module (README: 'Use a large
+multi-GPU / multi-node model').
 EOF
 }
 

@@ -458,8 +458,9 @@ $OFA_ROOT/
 ├── repos/                      # live git clones for RAG + grep
 ├── models/                     # Ollama model weights (gemma4:31b-it-q8_0, etc.)
 ├── embedding_model/             # bundled BAAI/bge-small-en-v1.5 weights
-├── env/                        # bundled Python 3.13 env; envs/vllm and envs/vllm-nightly for --vllm models
+├── env/                        # bundled Python 3.13 env; envs/vllm for the auto-started vLLM models
 ├── vllm-models/                # shared weights for the auto-started vLLM models (not in git)
+├── llamacpp-models/            # shared GGUF weights for the llama.cpp models (not in git)
 ├── install.sh                  # one-command install on a new HPC
 ├── site.example.toml           # annotated site config template
 ├── collections.toml            # RAG collection definitions

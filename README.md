@@ -526,10 +526,11 @@ cmake --build build -j 32 --target llama-server
 cp build/bin/llama-server $OFA_ROOT/lib/llama.cpp/bin/
 ```
 
-If a multi-node vLLM model hangs in its first warm-up with all GPUs at 100%,
-NCCL's Slingshot plugin likely needs these libfabric settings in the server
-environment: `FI_CXI_DISABLE_HOST_REGISTER=1 FI_MR_CACHE_MONITOR=userfaultfd
-NCCL_CROSS_NIC=1 NCCL_NET_GDR_LEVEL=PHB NCCL_SOCKET_IFNAME=hsn`.
+With NCCL's Slingshot plugin, `vllm-serve.sbatch` sets
+`FI_CXI_DISABLE_HOST_REGISTER=1 FI_MR_CACHE_MONITOR=userfaultfd
+NCCL_CROSS_NIC=1 NCCL_NET_GDR_LEVEL=PHB NCCL_SOCKET_IFNAME=hsn` unless they
+are already set; without them a multi-node model can hang in its first
+warm-up with all GPUs at 100%.
 
 ### Troubleshooting
 

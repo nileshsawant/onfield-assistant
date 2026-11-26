@@ -64,6 +64,11 @@ OFA_VLLM_NCCL_PLUGIN="${OFA_VLLM_NCCL_PLUGIN-/nopt/nlr/apps/kestrel-gpu/software
 if [[ -n "$OFA_VLLM_NCCL_PLUGIN" && -d "$OFA_VLLM_NCCL_PLUGIN/lib" ]]; then
     export LD_LIBRARY_PATH="$OFA_VLLM_NCCL_PLUGIN/lib:${OFA_VLLM_LIBFABRIC:-/opt/cray/libfabric/1.22.0/lib64}:${LD_LIBRARY_PATH:-}"
     export NCCL_NET_PLUGIN=ofi FI_PROVIDER="${FI_PROVIDER:-cxi}"
+    # Without these, multi-node start-up can deadlock in the first warm-up.
+    export FI_CXI_DISABLE_HOST_REGISTER="${FI_CXI_DISABLE_HOST_REGISTER:-1}" \
+           FI_MR_CACHE_MONITOR="${FI_MR_CACHE_MONITOR:-userfaultfd}" \
+           NCCL_CROSS_NIC="${NCCL_CROSS_NIC:-1}" NCCL_NET_GDR_LEVEL="${NCCL_NET_GDR_LEVEL:-PHB}" \
+           NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-hsn}"
 fi
 export XDG_CACHE_HOME="$OFA_SCRATCH/.cache"
 export FLASHINFER_WORKSPACE_BASE="$OFA_SCRATCH" VLLM_CACHE_ROOT="$XDG_CACHE_HOME/vllm"
